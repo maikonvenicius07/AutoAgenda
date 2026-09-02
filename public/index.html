@@ -86,6 +86,10 @@
         <h2>Planos automáticos</h2>
         <p>Horários fixos gerados automaticamente para os alunos.</p>
       </div>
+      <button type="button" id="novoPlano">+ Criar plano automático</button>
+    </div>
+    <div class="plan-help">
+      <b>Como funciona:</b> escolha um aluno, informe a data de início, os dias da semana e o horário. O AutoAgenda gera as próximas aulas automaticamente.
     </div>
     <div id="listaPlanos" class="grid"></div>
   </section>
@@ -142,6 +146,20 @@
     <div id="erroAula" class="erro hide"></div>
     <button id="salvarAula">Agendar aula</button>
   </form>
+</div>
+
+<!-- ESCOLHER ALUNO PARA NOVO PLANO -->
+<div id="mEscolherAlunoPlano" class="modal hide">
+  <div class="box">
+    <button type="button" class="x" data-close="mEscolherAlunoPlano">✕</button>
+    <h2>📅 Novo plano automático</h2>
+    <p class="modal-text">Escolha o aluno para quem deseja montar a agenda automática.</p>
+    <label>Aluno<select id="escolherAlunoPlano"></select></label>
+    <div class="plan-actions">
+      <button type="button" class="secondary" data-close="mEscolherAlunoPlano">Cancelar</button>
+      <button type="button" id="continuarNovoPlano">Continuar</button>
+    </div>
+  </div>
 </div>
 
 <!-- MODAL PLANO AUTOMÁTICO -->

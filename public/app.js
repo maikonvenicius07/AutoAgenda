@@ -154,7 +154,7 @@ function render() {
   const f = $('#filtroData').value;
   const fa = aulas.filter(a => dataISO(a.data_aula) === f);
   $('#listaAgenda').innerHTML = fa.length ? fa.map(a => aulaHtml(a, true)).join('') : '<div class="empty">Nenhuma aula nesta data.</div>';
-  $('#listaPlanos').innerHTML = planos.length ? planos.map(planoHtml).join('') : '<div class="empty">Nenhum plano automático criado ainda.</div>';
+  $('#listaPlanos').innerHTML = planos.length ? planos.map(planoHtml).join('') : '<div class="empty"><b>Nenhum plano automático criado ainda.</b><br><br>Clique em <b>+ Criar plano automático</b> acima ou em <b>📅 Montar agenda</b> no cartão do aluno.</div>';
 
   preencherSelects();
   bindDynamic();
@@ -173,6 +173,8 @@ function preencherSelects() {
   $('#pInstrutor').innerHTML = optsInstrutor;
   $('#pVeiculo').innerHTML = optsVeiculo;
   $('#pLocal').innerHTML = optsLocal;
+  const escolher = $('#escolherAlunoPlano');
+  if (escolher) escolher.innerHTML = optsAluno;
 }
 
 function bindDynamic() {
@@ -432,6 +434,25 @@ function aulasAindaProgramar(a) {
   return Math.max(0, contratadas - realizadas - agendadas);
 }
 
+function abrirSeletorNovoPlano() {
+  preencherSelects();
+  if (!alunos.length) {
+    toast('Cadastre um aluno antes de criar um plano automático.');
+    abrirTab('alunos');
+    return;
+  }
+  $('#escolherAlunoPlano').value = String(alunos[0].id);
+  open('mEscolherAlunoPlano');
+}
+
+$('#novoPlano').onclick = abrirSeletorNovoPlano;
+$('#continuarNovoPlano').onclick = () => {
+  const id = Number($('#escolherAlunoPlano').value);
+  if (!id) return toast('Escolha um aluno.');
+  close('mEscolherAlunoPlano');
+  abrirPlano(id);
+};
+
 function abrirPlano(id) {
   const a = alunos.find(x => Number(x.id) === id);
   if (!a) return;
@@ -527,8 +548,8 @@ $('#confirmarPlano').onclick = async () => {
     close('mPlano');
     toast(`✅ Agenda criada: ${r.aulas.length} encontros programados.`);
     await load();
-    abrirTab('agenda');
     if (r.aulas[0]?.data_aula) $('#filtroData').value = dataISO(r.aulas[0].data_aula);
+    abrirTab('planos');
     render();
   } catch (e) {
     if (e.status === 409) mostrarErroPlano('Existem conflitos. Clique em Ver prévia novamente e ajuste o horário.');

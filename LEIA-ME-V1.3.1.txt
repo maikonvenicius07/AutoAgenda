@@ -1,0 +1,15 @@
+AUTOAGENDA V1.3.1 — CORREÇÃO DA TELA PLANOS
+
+O que foi corrigido:
+- Adicionado botão + Criar plano automático diretamente na aba Planos.
+- Ao clicar, o sistema pede para escolher um aluno e abre a montagem da agenda.
+- Após confirmar um plano, o sistema abre automaticamente a aba Planos para mostrar o plano criado.
+- A tela vazia agora explica como criar o primeiro plano.
+
+IMPORTANTE:
+- Aulas antigas cadastradas manualmente não viram plano automaticamente.
+- Um plano só aparece na aba Planos depois de ser criado por Montar agenda / Criar plano automático e confirmado após a prévia.
+- Não é necessário alterar DATABASE_URL nem criar outro banco.
+
+ATUALIZAÇÃO NO GITHUB:
+Substitua public/index.html, public/app.js e public/style.css. O server.js pode permanecer o da V1.3.

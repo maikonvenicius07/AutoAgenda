@@ -18,3 +18,15 @@ nav{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:26px}
 .plan-student{background:#111;color:#fff;border-radius:11px;padding:12px;display:grid;gap:4px;border-left:5px solid var(--yellow)}.plan-student span,.plan-student small{color:#ddd}.plan-student strong{font-size:18px}.weekdays{border:1px solid #ddd;border-radius:10px;padding:12px}.weekdays legend{font-weight:800;padding:0 6px}.weekdays label{display:inline-flex!important;align-items:center;gap:5px!important;margin:4px 8px 4px 0;background:#f5f5f3;padding:8px 10px;border-radius:8px;cursor:pointer}.weekdays input{width:auto!important;margin:0!important}.plan-actions{display:flex;gap:10px;justify-content:flex-end}.preview-box{border:1px solid #ddd;border-radius:11px;max-height:330px;overflow:auto;background:#fafafa}.preview-summary{position:sticky;top:0;background:#111;color:#fff;padding:10px;display:flex;gap:12px;flex-wrap:wrap;z-index:2}.preview-row{padding:10px 12px;border-top:1px solid #e2e2e2;display:grid;grid-template-columns:1fr auto;gap:4px 10px}.preview-row small{color:#666}.preview-row span{grid-column:1/-1;font-size:12px}.preview-row.ok span{color:var(--green)}.preview-row.conflict{background:#fff0ef}.preview-row.conflict span{color:var(--red);font-weight:700}
 @media(max-width:850px){.stats4{grid-template-columns:repeat(2,1fr)}.grid{grid-template-columns:1fr}.student-numbers{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:700px){header{padding:10px 12px}.brand-car{width:52px;height:38px}.brand small{display:none}main{margin-top:12px}.lesson{grid-template-columns:62px 1fr}.lesson-actions{grid-column:1/-1;margin-top:8px}.head{align-items:flex-start;flex-direction:column}.agenda-tools{width:100%}.agenda-tools input{flex:1}.hero{padding:20px}.hero-car{width:145px;min-width:145px;opacity:.95}nav{grid-template-columns:1fr 1fr}.stats,.stats4{grid-template-columns:1fr 1fr}.form-2{grid-template-columns:1fr}.plan-actions{flex-direction:column}.preview-row{grid-template-columns:1fr}.student-top{align-items:flex-start}}
+
+.plan-help {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border: 1px solid #eadb86;
+  border-left: 5px solid #f6c800;
+  border-radius: 10px;
+  background: #fffbed;
+  color: #4e4a35;
+  font-size: 14px;
+}
+.modal-text { color: #666; margin-top: -4px; margin-bottom: 14px; }
