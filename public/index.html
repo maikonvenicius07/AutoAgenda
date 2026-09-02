@@ -3,40 +3,95 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#111111">
   <title>AutoAgenda</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <header>
-  <div class="brand"><img class="brand-car" src="assets/carro-autoescola.png" alt="Carro de autoescola"><div><h1>AutoAgenda</h1><small>Sua aula. Seu horário. Tudo organizado.</small></div></div>
+  <div class="brand">
+    <img class="brand-car" src="assets/carro-autoescola.png" alt="Carro de autoescola">
+    <div>
+      <h1>AutoAgenda</h1>
+      <small>Sua aula. Seu horário. Tudo organizado.</small>
+    </div>
+  </div>
   <button id="novaAula">+ Nova aula</button>
 </header>
 
 <main>
   <div id="db" class="db">Verificando banco...</div>
+
   <nav>
     <button class="tab active" data-tab="painel">🏠 Painel</button>
     <button class="tab" data-tab="alunos">👨‍🎓 Alunos</button>
     <button class="tab" data-tab="agenda">📅 Agenda</button>
+    <button class="tab" data-tab="planos">🔁 Planos</button>
   </nav>
 
   <section id="painel" class="panel active">
-    <div class="hero"><div class="hero-copy"><b>INSTRUTOR • CATEGORIA AB</b><h2>Organize suas aulas sem perder tempo</h2><p>Cadastre alunos, marque horários e acompanhe tudo em um só lugar.</p></div><img class="hero-car" src="assets/carro-autoescola.png" alt="Veículo de autoescola"></div>
-    <div class="stats"><div><span>Alunos</span><strong id="sAlunos">0</strong></div><div><span>Aulas hoje</span><strong id="sHoje">0</strong></div></div>
-    <div class="card"><h3>Agenda de hoje</h3><div id="hoje"></div></div>
+    <div class="hero">
+      <div class="hero-copy">
+        <b>INSTRUTOR • CATEGORIA AB</b>
+        <h2>Agenda inteligente para aulas práticas</h2>
+        <p>Cadastre o aluno uma vez, monte o plano de aulas e deixe o AutoAgenda reservar os próximos horários automaticamente.</p>
+      </div>
+      <img class="hero-car" src="assets/carro-autoescola.png" alt="Veículo de autoescola">
+    </div>
+
+    <div class="stats stats4">
+      <div><span>Alunos</span><strong id="sAlunos">0</strong></div>
+      <div><span>Aulas hoje</span><strong id="sHoje">0</strong></div>
+      <div><span>Aulas agendadas</span><strong id="sAgendadas">0</strong></div>
+      <div><span>Planos ativos</span><strong id="sPlanos">0</strong></div>
+    </div>
+
+    <div class="card">
+      <div class="head compact">
+        <div><h3>Agenda de hoje</h3><p>Visão rápida das aulas do dia.</p></div>
+        <button type="button" class="secondary mini" id="irAgenda">Ver agenda</button>
+      </div>
+      <div id="hoje"></div>
+    </div>
   </section>
 
   <section id="alunos" class="panel">
-    <div class="head"><div><h2>Alunos</h2><p>Edite ou exclua cadastros quando precisar.</p></div><button id="novoAluno">+ Novo aluno</button></div>
+    <div class="head">
+      <div>
+        <h2>Alunos</h2>
+        <p>Cadastre, edite e monte a agenda automática de cada aluno.</p>
+      </div>
+      <button id="novoAluno">+ Novo aluno</button>
+    </div>
     <div id="listaAlunos" class="grid"></div>
   </section>
 
   <section id="agenda" class="panel">
-    <div class="head"><div><h2>Agenda</h2><p>Altere horário, data ou exclua uma aula.</p></div><input id="filtroData" type="date"></div>
+    <div class="head">
+      <div>
+        <h2>Agenda</h2>
+        <p>Altere uma aula isolada ou, se ela fizer parte de um plano, aplique a mudança também às próximas.</p>
+      </div>
+      <div class="agenda-tools">
+        <input id="filtroData" type="date">
+        <button type="button" id="novaAulaAgenda">+ Nova aula</button>
+      </div>
+    </div>
     <div id="listaAgenda"></div>
+  </section>
+
+  <section id="planos" class="panel">
+    <div class="head">
+      <div>
+        <h2>Planos automáticos</h2>
+        <p>Horários fixos gerados automaticamente para os alunos.</p>
+      </div>
+    </div>
+    <div id="listaPlanos" class="grid"></div>
   </section>
 </main>
 
+<!-- MODAL ALUNO -->
 <div id="mAluno" class="modal hide">
   <form id="fAluno" class="box">
     <button type="button" class="x" data-close="mAluno">✕</button>
@@ -45,41 +100,109 @@
     <input id="nome" placeholder="Nome*" required>
     <input id="whats" placeholder="WhatsApp*" required>
     <input id="email" type="email" placeholder="E-mail">
-    <select id="cat"><option>A</option><option selected>B</option><option>AB</option><option>C</option><option>D</option><option>E</option></select>
-    <input id="contratadas" type="number" min="1" value="20" placeholder="Aulas contratadas">
-    <input id="realizadas" type="number" min="0" value="0" placeholder="Aulas realizadas">
+    <select id="cat">
+      <option>A</option><option selected>B</option><option>AB</option><option>C</option><option>D</option><option>E</option>
+    </select>
+    <label>Aulas contratadas<input id="contratadas" type="number" min="1" value="20"></label>
+    <label>Aulas realizadas anteriormente<input id="realizadas" type="number" min="0" value="0"></label>
     <textarea id="obs" placeholder="Observações"></textarea>
     <div id="erroAluno" class="erro hide"></div>
     <button id="salvarAluno">Salvar aluno</button>
   </form>
 </div>
 
+<!-- MODAL AULA MANUAL / EDIÇÃO -->
 <div id="mAula" class="modal hide">
   <form id="fAula" class="box">
     <button type="button" class="x" data-close="mAula">✕</button>
     <h2 id="tituloAula">Nova aula</h2>
     <input id="aulaId" type="hidden">
+    <input id="aulaPlanId" type="hidden">
     <label>Aluno<select id="aAluno" required></select></label>
     <label>Instrutor<select id="aInstrutor" required></select></label>
     <label>Veículo<select id="aVeiculo" required></select></label>
     <label>Local<select id="aLocal" required></select></label>
-    <label>Data<input id="aData" type="date" required></label>
-    <label>Horário<input id="aHora" type="time" value="08:00" required></label>
-    <label>Duração<select id="aDur"><option value="50">50 minutos</option><option value="60">60 minutos</option><option value="100">100 minutos</option></select></label>
+    <div class="form-2">
+      <label>Data<input id="aData" type="date" required></label>
+      <label>Horário<input id="aHora" type="time" value="08:00" required></label>
+    </div>
+    <div class="form-2">
+      <label>Duração<select id="aDur"><option value="50">50 minutos</option><option value="60">60 minutos</option><option value="100">100 minutos</option></select></label>
+      <label>Aulas consumidas<select id="aUnidades"><option value="1">1 aula</option><option value="2">2 aulas</option><option value="3">3 aulas</option><option value="4">4 aulas</option></select></label>
+    </div>
     <label>Status<select id="aStatus"><option value="AGENDADA">Agendada</option><option value="CONFIRMADA">Confirmada</option><option value="REALIZADA">Realizada</option><option value="CANCELADA">Cancelada</option><option value="FALTOU">Faltou</option></select></label>
     <label>Observações<textarea id="aObs" placeholder="Observações da aula"></textarea></label>
+
+    <div id="serieBox" class="series-box hide">
+      <b>🔁 Esta aula faz parte de um plano automático.</b>
+      <label class="check-line"><input id="aplicarProximas" type="checkbox"> Aplicar a mudança de dia/horário também a esta aula e às próximas do mesmo plano</label>
+      <small>Se deixar desmarcado, somente esta aula será alterada e as demais manterão os horários originais.</small>
+    </div>
+
     <div id="erroAula" class="erro hide"></div>
     <button id="salvarAula">Agendar aula</button>
   </form>
 </div>
 
+<!-- MODAL PLANO AUTOMÁTICO -->
+<div id="mPlano" class="modal hide">
+  <form id="fPlano" class="box box-wide">
+    <button type="button" class="x" data-close="mPlano">✕</button>
+    <h2>📅 Montar agenda automática</h2>
+    <input id="pAlunoId" type="hidden">
+
+    <div class="plan-student">
+      <span>Aluno</span>
+      <strong id="pAlunoNome">—</strong>
+      <small id="pAlunoResumo"></small>
+    </div>
+
+    <div class="form-2">
+      <label>Data de início<input id="pDataInicio" type="date" required></label>
+      <label>Horário fixo<input id="pHora" type="time" value="08:00" required></label>
+    </div>
+
+    <fieldset class="weekdays">
+      <legend>Dias da semana</legend>
+      <label><input type="checkbox" name="pDia" value="1"> Seg</label>
+      <label><input type="checkbox" name="pDia" value="2"> Ter</label>
+      <label><input type="checkbox" name="pDia" value="3"> Qua</label>
+      <label><input type="checkbox" name="pDia" value="4"> Qui</label>
+      <label><input type="checkbox" name="pDia" value="5"> Sex</label>
+      <label><input type="checkbox" name="pDia" value="6"> Sáb</label>
+    </fieldset>
+
+    <div class="form-2">
+      <label>Duração de cada aula<select id="pDuracao"><option value="50">50 minutos</option><option value="60">60 minutos</option></select></label>
+      <label>Aulas por encontro<select id="pPorEncontro"><option value="1">1 aula por encontro</option><option value="2">2 aulas consecutivas</option></select></label>
+    </div>
+
+    <div class="form-2">
+      <label>Instrutor<select id="pInstrutor" required></select></label>
+      <label>Veículo<select id="pVeiculo" required></select></label>
+    </div>
+    <label>Local<select id="pLocal" required></select></label>
+    <label>Quantidade de aulas a programar<input id="pTotal" type="number" min="1" value="1" required></label>
+    <label>Observações<textarea id="pObs" placeholder="Ex.: plano regular de aulas práticas"></textarea></label>
+
+    <div class="plan-actions">
+      <button type="button" id="previewPlano" class="secondary">👁️ Ver prévia</button>
+      <button type="button" id="confirmarPlano" class="hide">✅ Confirmar agenda</button>
+    </div>
+
+    <div id="erroPlano" class="erro hide"></div>
+    <div id="previewBox" class="preview-box hide"></div>
+  </form>
+</div>
+
+<!-- CONFIRMAÇÃO -->
 <div id="confirm" class="modal hide">
   <div class="box confirm-box">
-    <h2 id="confirmTitulo">Confirmar exclusão</h2>
+    <h2 id="confirmTitulo">Confirmar</h2>
     <p id="confirmTexto"></p>
     <div class="confirm-actions">
       <button type="button" id="confirmNao" class="secondary">Cancelar</button>
-      <button type="button" id="confirmSim" class="danger">Excluir</button>
+      <button type="button" id="confirmSim" class="danger">Confirmar</button>
     </div>
   </div>
 </div>
