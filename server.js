@@ -29,8 +29,7 @@ async function initDatabase() {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-
-    await client.query(`CREATE SCHEMA IF NOT EXISTS autoagenda`);
+    await client.query('CREATE SCHEMA IF NOT EXISTS autoagenda');
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS autoagenda.instrutores (
@@ -102,10 +101,10 @@ async function initDatabase() {
       )
     `);
 
-    await client.query(`CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_data ON autoagenda.aulas(data_aula)`);
-    await client.query(`CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_instrutor_data ON autoagenda.aulas(instrutor_id, data_aula)`);
-    await client.query(`CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_veiculo_data ON autoagenda.aulas(veiculo_id, data_aula)`);
-    await client.query(`CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_aluno_data ON autoagenda.aulas(aluno_id, data_aula)`);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_data ON autoagenda.aulas(data_aula)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_instrutor_data ON autoagenda.aulas(instrutor_id, data_aula)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_veiculo_data ON autoagenda.aulas(veiculo_id, data_aula)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_aluno_data ON autoagenda.aulas(aluno_id, data_aula)');
 
     await client.query(`
       INSERT INTO autoagenda.instrutores (nome, whatsapp, email, categorias)
@@ -141,24 +140,18 @@ app.get('/api/health', async (req, res) => {
     const result = await query(`
       SELECT NOW() AS agora,
              EXISTS (
-               SELECT 1
-               FROM information_schema.schemata
+               SELECT 1 FROM information_schema.schemata
                WHERE schema_name = 'autoagenda'
              ) AS schema_autoagenda
     `);
-    res.json({
-      ok: true,
-      database: true,
-      schema_autoagenda: result.rows[0].schema_autoagenda,
-      agora: result.rows[0].agora
-    });
+    res.json({ ok: true, database: true, schema_autoagenda: result.rows[0].schema_autoagenda, agora: result.rows[0].agora });
   } catch (error) {
     console.error(error);
     res.status(500).json({ ok: false, database: false, error: 'Falha ao conectar ao banco.' });
   }
 });
 
-// ALUNOS
+// ========================= ALUNOS =========================
 app.get('/api/alunos', async (req, res) => {
   try {
     const result = await query(`
@@ -178,25 +171,15 @@ app.get('/api/alunos', async (req, res) => {
 
 app.post('/api/alunos', async (req, res) => {
   try {
-    const {
-      nome,
-      whatsapp,
-      email,
-      categoria = 'B',
-      aulas_contratadas = 20,
-      observacoes = ''
-    } = req.body;
-
-    if (!nome || !whatsapp) {
-      return res.status(400).json({ error: 'Nome e WhatsApp são obrigatórios.' });
-    }
+    const { nome, whatsapp, email, categoria = 'B', aulas_contratadas = 20, observacoes = '' } = req.body;
+    if (!nome || !whatsapp) return res.status(400).json({ error: 'Nome e WhatsApp são obrigatórios.' });
 
     const result = await query(`
       INSERT INTO autoagenda.alunos
         (nome, whatsapp, email, categoria, aulas_contratadas, observacoes)
       VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING *
-    `, [nome.trim(), whatsapp.trim(), email || null, categoria, Number(aulas_contratadas) || 20, observacoes]);
+    `, [nome.trim(), whatsapp.trim(), email || null, categoria, Number(aulas_contratadas) || 20, observacoes || '']);
 
     res.status(201).json(result.rows[0]);
   } catch (error) {
@@ -208,37 +191,26 @@ app.post('/api/alunos', async (req, res) => {
 app.put('/api/alunos/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const {
-      nome,
-      whatsapp,
-      email,
-      categoria,
-      aulas_contratadas,
-      aulas_realizadas,
-      observacoes
-    } = req.body;
+    const { nome, whatsapp, email, categoria, aulas_contratadas, aulas_realizadas, observacoes } = req.body;
+
+    if (!nome || !whatsapp) return res.status(400).json({ error: 'Nome e WhatsApp são obrigatórios.' });
 
     const result = await query(`
       UPDATE autoagenda.alunos
-      SET nome = COALESCE($1, nome),
-          whatsapp = COALESCE($2, whatsapp),
+      SET nome = $1,
+          whatsapp = $2,
           email = $3,
-          categoria = COALESCE($4, categoria),
-          aulas_contratadas = COALESCE($5, aulas_contratadas),
-          aulas_realizadas = COALESCE($6, aulas_realizadas),
-          observacoes = COALESCE($7, observacoes),
+          categoria = $4,
+          aulas_contratadas = $5,
+          aulas_realizadas = $6,
+          observacoes = $7,
           atualizado_em = NOW()
       WHERE id = $8 AND ativo = TRUE
       RETURNING *
     `, [
-      nome || null,
-      whatsapp || null,
-      email ?? null,
-      categoria || null,
-      aulas_contratadas ?? null,
-      aulas_realizadas ?? null,
-      observacoes ?? null,
-      id
+      nome.trim(), whatsapp.trim(), email || null, categoria || 'B',
+      Number(aulas_contratadas) || 20, Number(aulas_realizadas) || 0,
+      observacoes || '', id
     ]);
 
     if (!result.rowCount) return res.status(404).json({ error: 'Aluno não encontrado.' });
@@ -249,6 +221,7 @@ app.put('/api/alunos/:id', async (req, res) => {
   }
 });
 
+// Exclusão lógica: preserva as aulas já vinculadas ao aluno.
 app.delete('/api/alunos/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -267,15 +240,10 @@ app.delete('/api/alunos/:id', async (req, res) => {
   }
 });
 
-// INSTRUTORES
+// ========================= APOIO =========================
 app.get('/api/instrutores', async (req, res) => {
   try {
-    const result = await query(`
-      SELECT id, nome, whatsapp, email, categorias, ativo
-      FROM autoagenda.instrutores
-      WHERE ativo = TRUE
-      ORDER BY nome
-    `);
+    const result = await query(`SELECT id, nome, whatsapp, email, categorias, ativo FROM autoagenda.instrutores WHERE ativo = TRUE ORDER BY nome`);
     res.json(result.rows);
   } catch (error) {
     console.error(error);
@@ -283,15 +251,9 @@ app.get('/api/instrutores', async (req, res) => {
   }
 });
 
-// VEÍCULOS
 app.get('/api/veiculos', async (req, res) => {
   try {
-    const result = await query(`
-      SELECT id, nome, placa, categoria, ativo
-      FROM autoagenda.veiculos
-      WHERE ativo = TRUE
-      ORDER BY nome
-    `);
+    const result = await query(`SELECT id, nome, placa, categoria, ativo FROM autoagenda.veiculos WHERE ativo = TRUE ORDER BY nome`);
     res.json(result.rows);
   } catch (error) {
     console.error(error);
@@ -299,15 +261,9 @@ app.get('/api/veiculos', async (req, res) => {
   }
 });
 
-// LOCAIS
 app.get('/api/locais', async (req, res) => {
   try {
-    const result = await query(`
-      SELECT id, nome, endereco, ativo
-      FROM autoagenda.locais
-      WHERE ativo = TRUE
-      ORDER BY nome
-    `);
+    const result = await query(`SELECT id, nome, endereco, ativo FROM autoagenda.locais WHERE ativo = TRUE ORDER BY nome`);
     res.json(result.rows);
   } catch (error) {
     console.error(error);
@@ -315,7 +271,7 @@ app.get('/api/locais', async (req, res) => {
   }
 });
 
-// AULAS
+// ========================= AULAS =========================
 app.get('/api/aulas', async (req, res) => {
   try {
     const { data_inicio, data_fim } = req.query;
@@ -329,23 +285,12 @@ app.get('/api/aulas', async (req, res) => {
 
     const result = await query(`
       SELECT
-        a.id,
-        a.aluno_id,
-        al.nome AS aluno_nome,
-        a.instrutor_id,
-        i.nome AS instrutor_nome,
-        a.veiculo_id,
-        v.nome AS veiculo_nome,
-        v.placa AS veiculo_placa,
-        a.local_id,
-        l.nome AS local_nome,
-        l.endereco AS local_endereco,
-        a.data_aula,
-        a.hora_inicio,
-        a.duracao_minutos,
-        a.status,
-        a.observacoes,
-        a.criado_em
+        a.id, a.aluno_id, al.nome AS aluno_nome,
+        a.instrutor_id, i.nome AS instrutor_nome,
+        a.veiculo_id, v.nome AS veiculo_nome, v.placa AS veiculo_placa,
+        a.local_id, l.nome AS local_nome, l.endereco AS local_endereco,
+        a.data_aula, a.hora_inicio, a.duracao_minutos,
+        a.status, a.observacoes, a.criado_em
       FROM autoagenda.aulas a
       JOIN autoagenda.alunos al ON al.id = a.aluno_id
       JOIN autoagenda.instrutores i ON i.id = a.instrutor_id
@@ -362,92 +307,63 @@ app.get('/api/aulas', async (req, res) => {
   }
 });
 
+async function verificarConflito(client, dados, excluirId = null) {
+  const inicio = `${dados.data_aula} ${dados.hora_inicio}:00`;
+  const params = [
+    dados.data_aula,
+    Number(dados.aluno_id),
+    Number(dados.instrutor_id),
+    Number(dados.veiculo_id),
+    inicio,
+    Number(dados.duracao_minutos)
+  ];
+
+  let excluir = '';
+  if (excluirId) {
+    params.push(Number(excluirId));
+    excluir = 'AND a.id <> $7';
+  }
+
+  return client.query(`
+    SELECT a.id, a.data_aula, a.hora_inicio, a.duracao_minutos,
+           al.nome AS aluno_nome, i.nome AS instrutor_nome,
+           v.nome AS veiculo_nome, v.placa AS veiculo_placa
+    FROM autoagenda.aulas a
+    JOIN autoagenda.alunos al ON al.id = a.aluno_id
+    JOIN autoagenda.instrutores i ON i.id = a.instrutor_id
+    JOIN autoagenda.veiculos v ON v.id = a.veiculo_id
+    WHERE a.data_aula = $1
+      AND a.status NOT IN ('CANCELADA', 'REMARCADA')
+      ${excluir}
+      AND (a.aluno_id = $2 OR a.instrutor_id = $3 OR a.veiculo_id = $4)
+      AND ((a.data_aula + a.hora_inicio) < ($5::timestamp + ($6 || ' minutes')::interval))
+      AND ($5::timestamp < (a.data_aula + a.hora_inicio + (a.duracao_minutos || ' minutes')::interval))
+    LIMIT 1
+  `, params);
+}
+
 app.post('/api/aulas', async (req, res) => {
   const client = await pool.connect();
   try {
-    const {
-      aluno_id,
-      instrutor_id,
-      veiculo_id,
-      local_id,
-      data_aula,
-      hora_inicio,
-      duracao_minutos = 50,
-      observacoes = ''
-    } = req.body;
-
+    const { aluno_id, instrutor_id, veiculo_id, local_id, data_aula, hora_inicio, duracao_minutos = 50, observacoes = '' } = req.body;
     if (!aluno_id || !instrutor_id || !veiculo_id || !local_id || !data_aula || !hora_inicio) {
       return res.status(400).json({ error: 'Preencha aluno, instrutor, veículo, local, data e horário.' });
     }
 
-    const inicio = `${data_aula} ${hora_inicio}:00`;
-
+    const dados = { aluno_id, instrutor_id, veiculo_id, data_aula, hora_inicio, duracao_minutos };
     await client.query('BEGIN');
-
-    const conflito = await client.query(`
-      SELECT a.id,
-             a.data_aula,
-             a.hora_inicio,
-             a.duracao_minutos,
-             al.nome AS aluno_nome,
-             i.nome AS instrutor_nome,
-             v.nome AS veiculo_nome,
-             v.placa AS veiculo_placa
-      FROM autoagenda.aulas a
-      JOIN autoagenda.alunos al ON al.id = a.aluno_id
-      JOIN autoagenda.instrutores i ON i.id = a.instrutor_id
-      JOIN autoagenda.veiculos v ON v.id = a.veiculo_id
-      WHERE a.data_aula = $1
-        AND a.status NOT IN ('CANCELADA', 'REMARCADA')
-        AND (
-          a.aluno_id = $2 OR
-          a.instrutor_id = $3 OR
-          a.veiculo_id = $4
-        )
-        AND (
-          (a.data_aula + a.hora_inicio)
-          <
-          ($5::timestamp + ($6 || ' minutes')::interval)
-        )
-        AND (
-          $5::timestamp
-          <
-          (a.data_aula + a.hora_inicio + (a.duracao_minutos || ' minutes')::interval)
-        )
-      LIMIT 1
-    `, [
-      data_aula,
-      Number(aluno_id),
-      Number(instrutor_id),
-      Number(veiculo_id),
-      inicio,
-      Number(duracao_minutos)
-    ]);
-
+    const conflito = await verificarConflito(client, dados);
     if (conflito.rowCount) {
       await client.query('ROLLBACK');
-      return res.status(409).json({
-        error: 'Conflito de horário.',
-        conflito: conflito.rows[0]
-      });
+      return res.status(409).json({ error: 'Conflito de horário.', conflito: conflito.rows[0] });
     }
 
     const result = await client.query(`
       INSERT INTO autoagenda.aulas
-        (aluno_id, instrutor_id, veiculo_id, local_id,
-         data_aula, hora_inicio, duracao_minutos, status, observacoes)
+        (aluno_id, instrutor_id, veiculo_id, local_id, data_aula, hora_inicio, duracao_minutos, status, observacoes)
       VALUES ($1,$2,$3,$4,$5,$6,$7,'AGENDADA',$8)
       RETURNING *
-    `, [
-      Number(aluno_id),
-      Number(instrutor_id),
-      Number(veiculo_id),
-      Number(local_id),
-      data_aula,
-      hora_inicio,
-      Number(duracao_minutos),
-      observacoes
-    ]);
+    `, [Number(aluno_id), Number(instrutor_id), Number(veiculo_id), Number(local_id), data_aula, hora_inicio, Number(duracao_minutos), observacoes || '']);
 
     await client.query('COMMIT');
     res.status(201).json(result.rows[0]);
@@ -460,25 +376,81 @@ app.post('/api/aulas', async (req, res) => {
   }
 });
 
+// NOVO: editar aula, inclusive dia e horário.
+app.put('/api/aulas/:id', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const id = Number(req.params.id);
+    const { aluno_id, instrutor_id, veiculo_id, local_id, data_aula, hora_inicio, duracao_minutos = 50, status = 'AGENDADA', observacoes = '' } = req.body;
+
+    if (!aluno_id || !instrutor_id || !veiculo_id || !local_id || !data_aula || !hora_inicio) {
+      return res.status(400).json({ error: 'Preencha aluno, instrutor, veículo, local, data e horário.' });
+    }
+
+    const existente = await client.query('SELECT id FROM autoagenda.aulas WHERE id = $1', [id]);
+    if (!existente.rowCount) return res.status(404).json({ error: 'Aula não encontrada.' });
+
+    const dados = { aluno_id, instrutor_id, veiculo_id, data_aula, hora_inicio, duracao_minutos };
+    await client.query('BEGIN');
+    const conflito = await verificarConflito(client, dados, id);
+    if (conflito.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Conflito de horário.', conflito: conflito.rows[0] });
+    }
+
+    const result = await client.query(`
+      UPDATE autoagenda.aulas
+      SET aluno_id = $1,
+          instrutor_id = $2,
+          veiculo_id = $3,
+          local_id = $4,
+          data_aula = $5,
+          hora_inicio = $6,
+          duracao_minutos = $7,
+          status = $8,
+          observacoes = $9,
+          atualizado_em = NOW()
+      WHERE id = $10
+      RETURNING *
+    `, [Number(aluno_id), Number(instrutor_id), Number(veiculo_id), Number(local_id), data_aula, hora_inicio, Number(duracao_minutos), status, observacoes || '', id]);
+
+    await client.query('COMMIT');
+    res.json(result.rows[0]);
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch {}
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao atualizar aula.' });
+  } finally {
+    client.release();
+  }
+});
+
+// NOVO: excluir aula definitivamente.
+app.delete('/api/aulas/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const result = await query('DELETE FROM autoagenda.aulas WHERE id = $1 RETURNING id', [id]);
+    if (!result.rowCount) return res.status(404).json({ error: 'Aula não encontrada.' });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao excluir aula.' });
+  }
+});
+
 app.patch('/api/aulas/:id/status', async (req, res) => {
   try {
     const id = Number(req.params.id);
     const { status } = req.body;
-
     const permitidos = ['AGENDADA', 'CONFIRMADA', 'REALIZADA', 'REMARCADA', 'CANCELADA', 'FALTOU'];
-    if (!permitidos.includes(status)) {
-      return res.status(400).json({ error: 'Status inválido.' });
-    }
+    if (!permitidos.includes(status)) return res.status(400).json({ error: 'Status inválido.' });
 
     const result = await query(`
-      UPDATE autoagenda.aulas
-      SET status = $1, atualizado_em = NOW()
-      WHERE id = $2
-      RETURNING *
+      UPDATE autoagenda.aulas SET status = $1, atualizado_em = NOW()
+      WHERE id = $2 RETURNING *
     `, [status, id]);
 
     if (!result.rowCount) return res.status(404).json({ error: 'Aula não encontrada.' });
-
     res.json(result.rows[0]);
   } catch (error) {
     console.error(error);
@@ -493,9 +465,7 @@ app.get('*', (req, res) => {
 async function start() {
   try {
     await initDatabase();
-    app.listen(PORT, () => {
-      console.log(`AutoAgenda rodando na porta ${PORT}`);
-    });
+    app.listen(PORT, () => console.log(`AutoAgenda rodando na porta ${PORT}`));
   } catch (error) {
     console.error('AutoAgenda não iniciou porque o banco não pôde ser preparado.');
     process.exit(1);
