@@ -1,0 +1,33 @@
+AUTOAGENDA V1.1 — BANCO COMPARTILHADO COM O MAU-MAU
+
+Este arquivo substitui o server.js existente no repositório AutoAgenda.
+
+O que mudou:
+- O AutoAgenda passa a usar o mesmo PostgreSQL do Mau-Mau.
+- As tabelas do AutoAgenda ficam em um schema separado chamado: autoagenda
+- O servidor cria automaticamente:
+  autoagenda.instrutores
+  autoagenda.alunos
+  autoagenda.veiculos
+  autoagenda.locais
+  autoagenda.aulas
+- As tabelas existentes do Mau-Mau não são alteradas.
+
+COMO ATUALIZAR NO GITHUB:
+1. Abra o repositório AutoAgenda.
+2. Clique no arquivo server.js.
+3. Use a opção de editar ou substituir o arquivo.
+4. Substitua pelo server.js deste pacote.
+5. Faça Commit changes.
+
+DEPOIS:
+1. No Render, crie o Web Service do AutoAgenda.
+2. Use o mesmo DATABASE_URL do banco mau-mau-ranking.
+3. Preferencialmente, estando o Web Service na mesma região Oregon, use a Internal Database URL.
+4. Configure NODE_ENV=production.
+5. Faça o deploy.
+
+IMPORTANTE:
+- Não publique DATABASE_URL no GitHub.
+- Não envie a URL do banco ou senha em prints.
+- O banco Free mostrado no Render expira em 23/09/2026. Para uso permanente, será necessário migrar/atualizar antes dessa data.
