@@ -46,3 +46,9 @@ TESTE
 OBSERVAÇÃO
 O aluno excluído deixa de aparecer na lista, mas suas aulas históricas permanecem no banco.
 A exclusão de aula é definitiva.
+
+ATUALIZAÇÃO VISUAL — CARRO DE AUTOESCOLA
+- Adicionado public/assets/carro-autoescola.png
+- O carro substitui o emoji no cabeçalho.
+- O mesmo veículo aparece em destaque no painel principal.
+- Mantida a identidade visual preta e amarela do AutoAgenda.
