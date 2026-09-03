@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#111111">
   <title>AutoAgenda</title>
-  <link rel="stylesheet" href="style.css?v=1.7.0">
+  <link rel="stylesheet" href="style.css?v=1.8.0">
 </head>
 <body>
 <header>
@@ -339,14 +339,63 @@
 
 <!-- MODAL INSTRUTOR -->
 <div id="mInstrutor" class="modal hide">
-  <form id="fInstrutor" class="box">
+  <form id="fInstrutor" class="box box-wide">
     <button type="button" class="x" data-close="mInstrutor">✕</button>
     <h2 id="tituloInstrutor">Novo instrutor</h2>
     <input id="instrutorId" type="hidden">
-    <label>Nome<input id="iNome" maxlength="150" required placeholder="Nome do instrutor"></label>
-    <label>WhatsApp<input id="iWhats" maxlength="30" placeholder="(69) 99999-9999"></label>
-    <label>E-mail<input id="iEmail" type="email" maxlength="180" placeholder="email@exemplo.com"></label>
-    <label>Categorias habilitadas<input id="iCategorias" maxlength="20" value="AB" placeholder="Ex.: AB"></label>
+    <div class="form-2">
+      <label>Nome<input id="iNome" maxlength="150" required placeholder="Nome do instrutor"></label>
+      <label>WhatsApp<input id="iWhats" maxlength="30" placeholder="(69) 99999-9999"></label>
+      <label>E-mail<input id="iEmail" type="email" maxlength="180" placeholder="email@exemplo.com"></label>
+      <label>Categorias habilitadas<input id="iCategorias" maxlength="20" value="AB" placeholder="Ex.: AB"></label>
+    </div>
+
+    <section class="availability-section">
+      <div class="availability-title">
+        <div>
+          <h3>🗓️ Disponibilidade do instrutor</h3>
+          <small>Por padrão, o instrutor usa o horário geral da autoescola.</small>
+        </div>
+        <label class="check-line"><input id="iUsarHorarioGeral" type="checkbox" checked> Usar horário geral</label>
+      </div>
+
+      <div id="iDisponibilidadeBox" class="hide">
+        <fieldset class="weekdays">
+          <legend>Dias em que trabalha</legend>
+          <label><input type="checkbox" name="iDia" value="0"> Dom</label>
+          <label><input type="checkbox" name="iDia" value="1"> Seg</label>
+          <label><input type="checkbox" name="iDia" value="2"> Ter</label>
+          <label><input type="checkbox" name="iDia" value="3"> Qua</label>
+          <label><input type="checkbox" name="iDia" value="4"> Qui</label>
+          <label><input type="checkbox" name="iDia" value="5"> Sex</label>
+          <label><input type="checkbox" name="iDia" value="6"> Sáb</label>
+        </fieldset>
+        <div class="availability-grid">
+          <label>Início do trabalho<input id="iHoraInicio" type="time"></label>
+          <label>Fim do trabalho<input id="iHoraFim" type="time"></label>
+          <label>Início do intervalo<input id="iIntervaloInicio" type="time"></label>
+          <label>Fim do intervalo<input id="iIntervaloFim" type="time"></label>
+        </div>
+        <small class="field-help">O intervalo é opcional. Ex.: almoço das 12:00 às 14:00.</small>
+      </div>
+    </section>
+
+    <section id="iFolgasArea" class="availability-section hide">
+      <div class="availability-title">
+        <div>
+          <h3>🏖️ Folgas e indisponibilidades</h3>
+          <small>Cadastre férias, folgas ou dias específicos em que o instrutor não poderá dar aula.</small>
+        </div>
+      </div>
+      <div class="availability-grid">
+        <label>Data inicial<input id="iFolgaInicio" type="date"></label>
+        <label>Data final<input id="iFolgaFim" type="date"></label>
+        <label class="availability-motivo">Motivo<input id="iFolgaMotivo" maxlength="250" placeholder="Ex.: folga, férias, curso"></label>
+        <button type="button" id="iAdicionarFolga" class="secondary">+ Adicionar indisponibilidade</button>
+      </div>
+      <div id="iListaFolgas" class="availability-list"></div>
+    </section>
+
     <div id="erroInstrutor" class="erro hide"></div>
     <button>Salvar instrutor</button>
   </form>
@@ -392,6 +441,6 @@
 </div>
 
 <div id="toast" class="toast hide"></div>
-<script src="app.js?v=1.7.0"></script>
+<script src="app.js?v=1.8.0"></script>
 </body>
 </html>

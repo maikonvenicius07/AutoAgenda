@@ -1,4 +1,4 @@
--- AutoAgenda V1.7.0
+-- AutoAgenda V1.8.0
 -- Schema compatível com o server.js atual.
 -- O servidor cria/migra automaticamente; este arquivo serve para referência e execução manual controlada.
 
@@ -10,10 +10,29 @@ CREATE TABLE IF NOT EXISTS autoagenda.instrutores (
   whatsapp VARCHAR(30),
   email VARCHAR(180),
   categorias VARCHAR(20) DEFAULT 'AB',
+  disponibilidade_personalizada BOOLEAN NOT NULL DEFAULT FALSE,
+  dias_trabalho INTEGER[],
+  hora_inicio TIME,
+  hora_fim TIME,
+  intervalo_inicio TIME,
+  intervalo_fim TIME,
   ativo BOOLEAN NOT NULL DEFAULT TRUE,
   criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
   atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS autoagenda.instrutor_indisponibilidades (
+  id SERIAL PRIMARY KEY,
+  instrutor_id INTEGER NOT NULL REFERENCES autoagenda.instrutores(id) ON DELETE CASCADE,
+  data_inicio DATE NOT NULL,
+  data_fim DATE NOT NULL,
+  motivo VARCHAR(250),
+  criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+  CHECK (data_fim >= data_inicio)
+);
+
+CREATE INDEX IF NOT EXISTS idx_autoagenda_instrutor_indisp_periodo
+ON autoagenda.instrutor_indisponibilidades(instrutor_id, data_inicio, data_fim);
 
 CREATE TABLE IF NOT EXISTS autoagenda.alunos (
   id SERIAL PRIMARY KEY,

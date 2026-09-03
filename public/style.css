@@ -96,3 +96,13 @@ nav{grid-template-columns:repeat(6,1fr)}
 .week-closed-slot span{font-size:18px}.week-closed-slot small{font-size:9px;font-weight:700}
 @media(max-width:1000px){.funcionamento-grid{grid-template-columns:1fr 1fr}}
 @media(max-width:700px){.funcionamento-grid{grid-template-columns:1fr}.funcionamento-actions{align-items:stretch;flex-direction:column}.funcionamento-actions button{width:100%}}
+
+/* ========================= V1.8 DISPONIBILIDADE DOS INSTRUTORES ========================= */
+.availability-section{border:1px solid #ddd;border-radius:12px;padding:12px;background:#fafafa;display:grid;gap:10px}
+.availability-title{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+.availability-title h3{margin:0 0 3px;font-size:15px}.availability-title small{color:#777}
+.availability-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;align-items:end}
+.availability-grid label{display:grid;gap:5px;font-size:12px;font-weight:700}.availability-grid input{width:100%;padding:10px;border:1px solid #ccc;border-radius:8px;background:#fff;font:inherit}
+.availability-motivo{grid-column:span 2}.availability-list{display:grid;gap:7px}.availability-item{display:flex;align-items:center;justify-content:space-between;gap:10px;border:1px solid #e0e0dc;border-radius:9px;background:#fff;padding:9px 10px}.availability-item>div{display:grid;gap:3px}.availability-item small{color:#777}
+@media(max-width:900px){.availability-grid{grid-template-columns:1fr 1fr}.availability-motivo{grid-column:span 2}}
+@media(max-width:650px){.availability-title{flex-direction:column}.availability-grid{grid-template-columns:1fr}.availability-motivo{grid-column:auto}}

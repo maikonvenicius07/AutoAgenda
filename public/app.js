@@ -232,6 +232,17 @@ function planoHtml(p) {
   </article>`;
 }
 
+function resumoDisponibilidadeInstrutor(x) {
+  if (!x?.disponibilidade_personalizada) return '🕒 Usa o horário geral da autoescola';
+  const dias = (Array.isArray(x.dias_trabalho) ? x.dias_trabalho : [])
+    .map(d => nomesDias[Number(d)]).join(', ');
+  const periodo = `${hora(x.hora_inicio)}–${hora(x.hora_fim)}`;
+  const intervalo = x.intervalo_inicio && x.intervalo_fim
+    ? ` · intervalo ${hora(x.intervalo_inicio)}–${hora(x.intervalo_fim)}`
+    : '';
+  return `🗓️ ${dias || 'Sem dias'} · ${periodo}${intervalo}`;
+}
+
 function totalHistoricoRecurso(x) {
   return Number(x.planos_total || 0) + Number(x.aulas_total || 0);
 }
@@ -253,7 +264,8 @@ function configItemHtml(tipo, x) {
   let detalhes = '';
   let editAttr = '';
   if (tipo === 'instrutor') {
-    detalhes = `${esc(x.categorias || 'AB')} · ${esc(x.whatsapp || 'Sem WhatsApp')}`;
+    const folgas = Number(x.indisponibilidades_futuras || 0);
+    detalhes = `${esc(x.categorias || 'AB')} · ${esc(x.whatsapp || 'Sem WhatsApp')}<br>${esc(resumoDisponibilidadeInstrutor(x))}${folgas ? `<br>🏖️ ${folgas} indisponibilidade(s) futura(s)` : ''}`;
     editAttr = `data-edit-instrutor="${x.id}"`;
   } else if (tipo === 'veiculo') {
     detalhes = `${esc(x.placa || 'Sem placa')} · Categoria ${esc(x.categoria || 'B')}`;
@@ -562,7 +574,7 @@ async function health() {
   try {
     const h = await api('/api/health');
     const seguranca = h.auth_required ? ' · 🔒 acesso protegido' : ' · ⚠️ acesso sem senha';
-    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '1.7.0'}${seguranca}.`;
+    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '1.8.0'}${seguranca}.`;
     $('#db').className = h.auth_required ? 'db ok' : 'db warn';
   } catch {
     $('#db').textContent = '🔴 Banco não conectado. Verifique DATABASE_URL no Render.';
@@ -786,25 +798,156 @@ $('#fAula').onsubmit = async e => {
 };
 
 // ========================= CONFIGURAÇÕES =========================
-function novoInstrutor() {
-  $('#fInstrutor').reset(); $('#instrutorId').value = ''; $('#iCategorias').value = 'AB';
-  $('#tituloInstrutor').textContent = 'Novo instrutor'; $('#erroInstrutor').classList.add('hide'); open('mInstrutor');
+function aplicarModoDisponibilidadeInstrutor() {
+  const usarGeral = $('#iUsarHorarioGeral').checked;
+  $('#iDisponibilidadeBox').classList.toggle('hide', usarGeral);
+  if (!usarGeral) {
+    const marcados = $$('input[name="iDia"]:checked');
+    if (!marcados.length) {
+      $$('input[name="iDia"]').forEach(c => c.checked = diasFuncionamento().includes(Number(c.value)));
+    }
+    if (!$('#iHoraInicio').value) $('#iHoraInicio').value = hora(configFuncionamento.hora_abertura || '07:00');
+    if (!$('#iHoraFim').value) $('#iHoraFim').value = hora(configFuncionamento.hora_encerramento || '20:00');
+  }
 }
-function editarInstrutor(id) {
-  const x = configInstrutores.find(v => Number(v.id) === id); if (!x) return;
-  $('#instrutorId').value = x.id; $('#iNome').value = x.nome || ''; $('#iWhats').value = x.whatsapp || ''; $('#iEmail').value = x.email || ''; $('#iCategorias').value = x.categorias || 'AB';
-  $('#tituloInstrutor').textContent = x.ativo === false ? 'Editar instrutor inativo' : 'Editar instrutor';
-  $('#erroInstrutor').classList.add('hide'); open('mInstrutor');
+
+function preencherDisponibilidadeInstrutor(x = null) {
+  const personalizada = x?.disponibilidade_personalizada === true;
+  $('#iUsarHorarioGeral').checked = !personalizada;
+  const dias = personalizada && Array.isArray(x?.dias_trabalho)
+    ? x.dias_trabalho.map(Number)
+    : diasFuncionamento();
+  $$('input[name="iDia"]').forEach(c => {
+    const aberto = diasFuncionamento().includes(Number(c.value));
+    c.disabled = !aberto;
+    c.checked = dias.includes(Number(c.value)) && aberto;
+    c.closest('label')?.classList.toggle('day-disabled', !aberto);
+  });
+  $('#iHoraInicio').value = hora(x?.hora_inicio || configFuncionamento.hora_abertura || '07:00');
+  $('#iHoraFim').value = hora(x?.hora_fim || configFuncionamento.hora_encerramento || '20:00');
+  $('#iIntervaloInicio').value = hora(x?.intervalo_inicio || '');
+  $('#iIntervaloFim').value = hora(x?.intervalo_fim || '');
+  aplicarModoDisponibilidadeInstrutor();
 }
-$('#novoInstrutor').onclick = novoInstrutor;
-$('#fInstrutor').onsubmit = async e => {
-  e.preventDefault(); $('#erroInstrutor').classList.add('hide');
-  const id = Number($('#instrutorId').value || 0);
-  const payload = { nome: $('#iNome').value, whatsapp: $('#iWhats').value, email: $('#iEmail').value, categorias: $('#iCategorias').value };
+
+async function carregarFolgasInstrutor(id) {
+  const box = $('#iListaFolgas');
+  if (!id) {
+    $('#iFolgasArea').classList.add('hide');
+    box.innerHTML = '';
+    return;
+  }
+  $('#iFolgasArea').classList.remove('hide');
+  box.innerHTML = '<div class="empty small-empty">Carregando...</div>';
   try {
-    await api(id ? `/api/instrutores/${id}` : '/api/instrutores', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) });
-    close('mInstrutor'); toast(id ? '✅ Instrutor atualizado.' : '✅ Instrutor cadastrado.');
-    await load(); abrirTab('configuracoes');
+    const lista = await api(`/api/instrutores/${id}/indisponibilidades`);
+    box.innerHTML = lista.length ? lista.map(f => {
+      const ini = dataISO(f.data_inicio);
+      const fim = dataISO(f.data_fim);
+      const periodo = ini === fim ? fmtData(ini) : `${fmtData(ini)} a ${fmtData(fim)}`;
+      return `<div class="availability-item">
+        <div><b>${periodo}</b><small>${esc(f.motivo || 'Indisponível')}</small></div>
+        <button type="button" class="mini delete" data-del-folga="${f.id}" title="Excluir indisponibilidade">🗑️</button>
+      </div>`;
+    }).join('') : '<div class="empty small-empty">Nenhuma folga ou indisponibilidade futura cadastrada.</div>';
+    $$('[data-del-folga]').forEach(b => b.onclick = async () => {
+      try {
+        await api(`/api/instrutores/${id}/indisponibilidades/${Number(b.dataset.delFolga)}`, { method:'DELETE' });
+        toast('✅ Indisponibilidade removida.');
+        await carregarFolgasInstrutor(id);
+        await load();
+      } catch (e) { toast(e.message); }
+    });
+  } catch (e) {
+    box.innerHTML = `<div class="erro">${esc(e.message)}</div>`;
+  }
+}
+
+function novoInstrutor() {
+  $('#fInstrutor').reset();
+  $('#instrutorId').value = '';
+  $('#iCategorias').value = 'AB';
+  $('#tituloInstrutor').textContent = 'Novo instrutor';
+  $('#erroInstrutor').classList.add('hide');
+  $('#iFolgasArea').classList.add('hide');
+  $('#iListaFolgas').innerHTML = '';
+  preencherDisponibilidadeInstrutor(null);
+  open('mInstrutor');
+}
+
+async function editarInstrutor(id) {
+  const x = configInstrutores.find(v => Number(v.id) === id); if (!x) return;
+  $('#instrutorId').value = x.id;
+  $('#iNome').value = x.nome || '';
+  $('#iWhats').value = x.whatsapp || '';
+  $('#iEmail').value = x.email || '';
+  $('#iCategorias').value = x.categorias || 'AB';
+  preencherDisponibilidadeInstrutor(x);
+  $('#tituloInstrutor').textContent = x.ativo === false ? 'Editar instrutor inativo' : 'Editar instrutor';
+  $('#erroInstrutor').classList.add('hide');
+  open('mInstrutor');
+  await carregarFolgasInstrutor(id);
+}
+
+$('#iUsarHorarioGeral').onchange = aplicarModoDisponibilidadeInstrutor;
+$('#novoInstrutor').onclick = novoInstrutor;
+
+$('#iAdicionarFolga').onclick = async () => {
+  const id = Number($('#instrutorId').value || 0);
+  if (!id) return toast('Salve o instrutor antes de cadastrar folgas.');
+  const inicio = $('#iFolgaInicio').value;
+  const fim = $('#iFolgaFim').value || inicio;
+  if (!inicio) return toast('Informe a data da indisponibilidade.');
+  try {
+    const r = await api(`/api/instrutores/${id}/indisponibilidades`, {
+      method:'POST',
+      body:JSON.stringify({
+        data_inicio: inicio,
+        data_fim: fim,
+        motivo: $('#iFolgaMotivo').value
+      })
+    });
+    $('#iFolgaInicio').value = '';
+    $('#iFolgaFim').value = '';
+    $('#iFolgaMotivo').value = '';
+    const afetadas = Number(r.aulas_futuras_no_periodo || 0);
+    toast(afetadas
+      ? `✅ Indisponibilidade cadastrada. ⚠️ ${afetadas} aula(s) futura(s) já existente(s) foram preservadas e precisam ser revisadas.`
+      : '✅ Indisponibilidade cadastrada.');
+    await carregarFolgasInstrutor(id);
+    await load();
+  } catch (e) { toast(e.message); }
+};
+
+$('#fInstrutor').onsubmit = async e => {
+  e.preventDefault();
+  $('#erroInstrutor').classList.add('hide');
+  const id = Number($('#instrutorId').value || 0);
+  const personalizada = !$('#iUsarHorarioGeral').checked;
+  const payload = {
+    nome: $('#iNome').value,
+    whatsapp: $('#iWhats').value,
+    email: $('#iEmail').value,
+    categorias: $('#iCategorias').value,
+    disponibilidade_personalizada: personalizada,
+    dias_trabalho: personalizada ? $$('input[name="iDia"]:checked').map(c => Number(c.value)) : [],
+    hora_inicio: personalizada ? $('#iHoraInicio').value : null,
+    hora_fim: personalizada ? $('#iHoraFim').value : null,
+    intervalo_inicio: personalizada ? $('#iIntervaloInicio').value : null,
+    intervalo_fim: personalizada ? $('#iIntervaloFim').value : null
+  };
+  try {
+    const r = await api(id ? `/api/instrutores/${id}` : '/api/instrutores', {
+      method: id ? 'PUT' : 'POST',
+      body: JSON.stringify(payload)
+    });
+    close('mInstrutor');
+    const fora = Number(r.aulas_futuras_fora_disponibilidade || 0);
+    toast(fora
+      ? `✅ Instrutor atualizado. ⚠️ ${fora} aula(s) futura(s) antiga(s) ficaram fora da nova disponibilidade e foram preservadas.`
+      : (id ? '✅ Instrutor atualizado.' : '✅ Instrutor cadastrado.'));
+    await load();
+    abrirTab('configuracoes');
   } catch (x) {
     $('#erroInstrutor').textContent = x.message;
     $('#erroInstrutor').classList.remove('hide');

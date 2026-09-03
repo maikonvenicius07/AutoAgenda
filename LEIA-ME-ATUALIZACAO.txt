@@ -1,41 +1,24 @@
-AUTOAGENDA V1.7.0 — HORÁRIO DE FUNCIONAMENTO
+AUTOAGENDA V1.8.0 — DISPONIBILIDADE DOS INSTRUTORES
 
-O QUE FOI IMPLEMENTADO
-- Configuração dos dias de funcionamento.
-- Horário de abertura e encerramento.
-- Duração padrão da aula.
-- Intervalo entre aulas.
-- Validação no backend para aula manual.
-- Validação na prévia e criação de plano automático.
-- Validação em reagendamento e alteração em série.
-- Intervalo considerado na regra de conflitos.
-- Agenda semanal passa a obedecer à configuração.
-- Dias fechados e horários fora da regra ficam bloqueados na grade.
-- Aulas antigas fora da nova regra são preservadas e continuam visíveis.
-
-BANCO
-- Nova tabela: autoagenda.configuracoes.
-- Migração automática no início do servidor.
-- Não execute schema.sql manualmente em produção.
-- Não altere DATABASE_URL.
-
-VALORES INICIAIS
-- Dias: todos habilitados.
-- Abertura: 07:00.
-- Encerramento: 20:00.
-- Duração padrão: 50 minutos.
-- Intervalo: 0 minuto.
+O QUE MUDOU
+- Disponibilidade individual por instrutor.
+- Dias de trabalho próprios.
+- Horário inicial e final próprios.
+- Intervalo opcional.
+- Cadastro de folgas/férias/dias indisponíveis.
+- Nova aula, plano automático e reagendamento respeitam essas regras.
+- Aulas antigas são preservadas.
 
 COMO ATUALIZAR
 1. Faça uma cópia da versão atual.
-2. Copie o conteúdo desta pasta para a raiz do repositório AutoAgenda.
-3. Substitua os arquivos existentes.
-4. Faça Commit changes no GitHub.
-5. Aguarde o deploy do Render.
-6. Pressione Ctrl + F5.
-7. Verifique AutoAgenda V1.7.0 no topo.
-8. Configure o horário real da autoescola.
-9. Execute CHECKLIST_V1.7.md.
+2. Extraia o ZIP V1.8.
+3. Copie o conteúdo da pasta para a raiz do repositório AutoAgenda.
+4. Não altere DATABASE_URL.
+5. Faça Commit changes no GitHub.
+6. Aguarde o Render concluir o deploy.
+7. Pressione Ctrl+F5.
+8. Confirme no topo: AutoAgenda V1.8.0.
+9. Execute CHECKLIST_V1.8.md.
 
-PRÓXIMA ETAPA
-ETAPA 4 — Disponibilidade individual dos instrutores.
+BANCO
+Não execute schema.sql manualmente. O server.js faz as migrações automaticamente.

@@ -1,19 +1,14 @@
-# Próximas melhorias do AutoAgenda
+# Próximas melhorias
 
-A **V1.7** implementa a ETAPA 3 — Horário de funcionamento.
+A V1.8 implementa a **ETAPA 4 — Disponibilidade individual dos instrutores**.
 
-## Próxima etapa: Disponibilidade individual dos instrutores
+Depois de testar e aprovar esta versão, o próximo passo do roteiro é:
 
-Implementar somente depois de testar e aprovar a V1.7:
+## ETAPA 5 — Disponibilidade dos veículos
 
-1. dias em que cada instrutor trabalha;
-2. horário inicial e final individual;
-3. intervalo/pausa do instrutor;
-4. folgas recorrentes;
-5. datas específicas indisponíveis;
-6. validação na aula manual;
-7. validação no plano automático;
-8. preparação para Encontrar horário livre;
-9. preservar aulas antigas.
+- situação: disponível, manutenção, indisponível e inativo;
+- períodos de indisponibilidade/manutenção;
+- impedir uso do veículo nesses períodos;
+- manter a regra atual de conflito simultâneo.
 
-Depois: **Disponibilidade dos veículos**.
+Somente depois dessa etapa avançar para **Encontrar horário livre**.

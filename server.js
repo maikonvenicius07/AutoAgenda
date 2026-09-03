@@ -6,7 +6,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '1.8.0';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -91,9 +91,27 @@ async function initDatabase() {
         whatsapp VARCHAR(30),
         email VARCHAR(180),
         categorias VARCHAR(20) DEFAULT 'AB',
+        disponibilidade_personalizada BOOLEAN NOT NULL DEFAULT FALSE,
+        dias_trabalho INTEGER[],
+        hora_inicio TIME,
+        hora_fim TIME,
+        intervalo_inicio TIME,
+        intervalo_fim TIME,
         ativo BOOLEAN NOT NULL DEFAULT TRUE,
         criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
         atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS autoagenda.instrutor_indisponibilidades (
+        id SERIAL PRIMARY KEY,
+        instrutor_id INTEGER NOT NULL REFERENCES autoagenda.instrutores(id) ON DELETE CASCADE,
+        data_inicio DATE NOT NULL,
+        data_fim DATE NOT NULL,
+        motivo VARCHAR(250),
+        criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+        CHECK (data_fim >= data_inicio)
       )
     `);
 
@@ -199,6 +217,26 @@ async function initDatabase() {
       )
     `);
 
+    // Migrações seguras da disponibilidade individual dos instrutores.
+    await client.query('ALTER TABLE autoagenda.instrutores ADD COLUMN IF NOT EXISTS disponibilidade_personalizada BOOLEAN NOT NULL DEFAULT FALSE');
+    await client.query('ALTER TABLE autoagenda.instrutores ADD COLUMN IF NOT EXISTS dias_trabalho INTEGER[]');
+    await client.query('ALTER TABLE autoagenda.instrutores ADD COLUMN IF NOT EXISTS hora_inicio TIME');
+    await client.query('ALTER TABLE autoagenda.instrutores ADD COLUMN IF NOT EXISTS hora_fim TIME');
+    await client.query('ALTER TABLE autoagenda.instrutores ADD COLUMN IF NOT EXISTS intervalo_inicio TIME');
+    await client.query('ALTER TABLE autoagenda.instrutores ADD COLUMN IF NOT EXISTS intervalo_fim TIME');
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS autoagenda.instrutor_indisponibilidades (
+        id SERIAL PRIMARY KEY,
+        instrutor_id INTEGER NOT NULL REFERENCES autoagenda.instrutores(id) ON DELETE CASCADE,
+        data_inicio DATE NOT NULL,
+        data_fim DATE NOT NULL,
+        motivo VARCHAR(250),
+        criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+        CHECK (data_fim >= data_inicio)
+      )
+    `);
+
     // Migrações seguras das versões anteriores.
     // CPF é opcional apenas para registros legados; novos cadastros exigem CPF válido.
     await client.query('ALTER TABLE autoagenda.alunos ADD COLUMN IF NOT EXISTS cpf VARCHAR(11)');
@@ -245,6 +283,7 @@ async function initDatabase() {
     await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_aluno_data ON autoagenda.aulas(aluno_id, data_aula)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_plan ON autoagenda.aulas(plan_id, data_aula, hora_inicio)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_planos_aluno_ativo ON autoagenda.planos_aula(aluno_id, ativo)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_instrutor_indisp_periodo ON autoagenda.instrutor_indisponibilidades(instrutor_id, data_inicio, data_fim)');
 
     await client.query(`
       INSERT INTO autoagenda.instrutores (nome, whatsapp, email, categorias)
@@ -500,6 +539,216 @@ function normalizarConfiguracaoFuncionamento(payload) {
     duracao_padrao_minutos: duracao,
     intervalo_minutos: intervalo
   };
+}
+
+
+function normalizarDisponibilidadeInstrutor(payload, configFuncionamento) {
+  const personalizada = payload?.disponibilidade_personalizada === true ||
+    String(payload?.disponibilidade_personalizada || '').toLowerCase() === 'true';
+
+  if (!personalizada) {
+    return {
+      disponibilidade_personalizada: false,
+      dias_trabalho: null,
+      hora_inicio: null,
+      hora_fim: null,
+      intervalo_inicio: null,
+      intervalo_fim: null
+    };
+  }
+
+  const dias = Array.from(new Set(
+    (Array.isArray(payload?.dias_trabalho) ? payload.dias_trabalho : [])
+      .map(Number)
+      .filter(n => Number.isInteger(n) && n >= 0 && n <= 6)
+  )).sort((a,b) => a-b);
+
+  if (!dias.length) throw erroHttp(400, 'Selecione pelo menos um dia de trabalho para o instrutor.');
+
+  const diasEscola = Array.isArray(configFuncionamento?.dias_funcionamento)
+    ? configFuncionamento.dias_funcionamento.map(Number)
+    : [0,1,2,3,4,5,6];
+  const diasFora = dias.filter(d => !diasEscola.includes(d));
+  if (diasFora.length) {
+    throw erroHttp(400, 'O instrutor não pode trabalhar em dias em que a autoescola está fechada.');
+  }
+
+  const horaInicio = String(payload?.hora_inicio || '').slice(0,5);
+  const horaFim = String(payload?.hora_fim || '').slice(0,5);
+  const inicio = minutosDoHorario(horaInicio);
+  const fim = minutosDoHorario(horaFim);
+  if (!Number.isFinite(inicio) || !Number.isFinite(fim) || fim <= inicio) {
+    throw erroHttp(400, 'Informe um horário válido de início e fim para o instrutor.');
+  }
+
+  const abertura = minutosDoHorario(configFuncionamento?.hora_abertura || '07:00');
+  const encerramento = minutosDoHorario(configFuncionamento?.hora_encerramento || '20:00');
+  if (inicio < abertura || fim > encerramento) {
+    throw erroHttp(
+      400,
+      `A disponibilidade do instrutor deve ficar dentro do funcionamento da autoescola (${configFuncionamento.hora_abertura}–${configFuncionamento.hora_encerramento}).`
+    );
+  }
+
+  const intervaloInicioTxt = String(payload?.intervalo_inicio || '').slice(0,5);
+  const intervaloFimTxt = String(payload?.intervalo_fim || '').slice(0,5);
+  const temIntervalo = Boolean(intervaloInicioTxt || intervaloFimTxt);
+  let intervaloInicio = null;
+  let intervaloFim = null;
+
+  if (temIntervalo) {
+    const ii = minutosDoHorario(intervaloInicioTxt);
+    const ifim = minutosDoHorario(intervaloFimTxt);
+    if (!Number.isFinite(ii) || !Number.isFinite(ifim) || ifim <= ii) {
+      throw erroHttp(400, 'Informe corretamente o início e o fim do intervalo do instrutor.');
+    }
+    if (ii < inicio || ifim > fim) {
+      throw erroHttp(400, 'O intervalo do instrutor deve ficar dentro do seu horário de trabalho.');
+    }
+    intervaloInicio = intervaloInicioTxt;
+    intervaloFim = intervaloFimTxt;
+  }
+
+  return {
+    disponibilidade_personalizada: true,
+    dias_trabalho: dias,
+    hora_inicio: horaInicio,
+    hora_fim: horaFim,
+    intervalo_inicio: intervaloInicio,
+    intervalo_fim: intervaloFim
+  };
+}
+
+function normalizarInstrutorDisponibilidadeRow(row) {
+  return {
+    ...row,
+    disponibilidade_personalizada: row?.disponibilidade_personalizada === true,
+    dias_trabalho: Array.isArray(row?.dias_trabalho) ? row.dias_trabalho.map(Number).sort((a,b)=>a-b) : null,
+    hora_inicio: row?.hora_inicio ? String(row.hora_inicio).slice(0,5) : null,
+    hora_fim: row?.hora_fim ? String(row.hora_fim).slice(0,5) : null,
+    intervalo_inicio: row?.intervalo_inicio ? String(row.intervalo_inicio).slice(0,5) : null,
+    intervalo_fim: row?.intervalo_fim ? String(row.intervalo_fim).slice(0,5) : null
+  };
+}
+
+function avaliarDisponibilidadeInstrutorBase(instrutor, dados, configFuncionamento) {
+  if (!instrutor?.disponibilidade_personalizada) return { ok: true };
+
+  const data = String(dados.data_aula || dados.data_inicio || '').slice(0,10);
+  const horaInicio = String(dados.hora_inicio || '').slice(0,5);
+  const duracao = Number(dados.duracao_minutos || dados.duracao_base_minutos || configFuncionamento?.duracao_padrao_minutos || 50);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return { ok:false, motivo:'Data inválida.' };
+
+  const dia = diaSemanaDaData(data);
+  const dias = Array.isArray(instrutor.dias_trabalho) ? instrutor.dias_trabalho.map(Number) : [];
+  if (!dias.includes(dia)) {
+    return { ok:false, motivo:`O instrutor não trabalha no ${NOMES_DIAS[dia]}.` };
+  }
+
+  const inicio = minutosDoHorario(horaInicio);
+  const fim = inicio + duracao;
+  const dispInicio = minutosDoHorario(instrutor.hora_inicio);
+  const dispFim = minutosDoHorario(instrutor.hora_fim);
+  if (inicio < dispInicio || fim > dispFim) {
+    return { ok:false, motivo:`O instrutor está disponível somente das ${instrutor.hora_inicio} às ${instrutor.hora_fim}.` };
+  }
+
+  if (instrutor.intervalo_inicio && instrutor.intervalo_fim) {
+    const intIni = minutosDoHorario(instrutor.intervalo_inicio);
+    const intFim = minutosDoHorario(instrutor.intervalo_fim);
+    if (inicio < intFim && fim > intIni) {
+      return { ok:false, motivo:`O instrutor está em intervalo das ${instrutor.intervalo_inicio} às ${instrutor.intervalo_fim}.` };
+    }
+  }
+
+  return { ok:true };
+}
+
+async function obterInstrutorDisponibilidade(client, instrutorId) {
+  const r = await client.query(`
+    SELECT id, nome, ativo, disponibilidade_personalizada, dias_trabalho,
+           TO_CHAR(hora_inicio, 'HH24:MI') AS hora_inicio,
+           TO_CHAR(hora_fim, 'HH24:MI') AS hora_fim,
+           TO_CHAR(intervalo_inicio, 'HH24:MI') AS intervalo_inicio,
+           TO_CHAR(intervalo_fim, 'HH24:MI') AS intervalo_fim
+    FROM autoagenda.instrutores
+    WHERE id = $1
+  `, [Number(instrutorId)]);
+  if (!r.rowCount) throw erroHttp(404, 'Instrutor não encontrado.');
+  return normalizarInstrutorDisponibilidadeRow(r.rows[0]);
+}
+
+async function validarDisponibilidadeInstrutor(client, instrutorId, dados, configFuncionamento = null) {
+  const cfg = configFuncionamento || await obterConfigFuncionamento(client);
+  const instrutor = await obterInstrutorDisponibilidade(client, instrutorId);
+  const base = avaliarDisponibilidadeInstrutorBase(instrutor, dados, cfg);
+  if (!base.ok) {
+    const data = String(dados.data_aula || dados.data_inicio || '').slice(0,10);
+    const h = String(dados.hora_inicio || '').slice(0,5);
+    throw erroHttp(400, `Instrutor indisponível em ${data}${h ? ` às ${h}` : ''}: ${base.motivo}`);
+  }
+
+  const data = String(dados.data_aula || dados.data_inicio || '').slice(0,10);
+  const bloqueio = await client.query(`
+    SELECT id, data_inicio, data_fim, motivo
+    FROM autoagenda.instrutor_indisponibilidades
+    WHERE instrutor_id = $1
+      AND $2::date BETWEEN data_inicio AND data_fim
+    ORDER BY data_inicio, id
+    LIMIT 1
+  `, [Number(instrutorId), data]);
+
+  if (bloqueio.rowCount) {
+    const b = bloqueio.rows[0];
+    const motivo = b.motivo ? ` Motivo: ${b.motivo}.` : '';
+    throw erroHttp(400, `Instrutor indisponível em ${data}: existe uma folga/indisponibilidade cadastrada.${motivo}`);
+  }
+
+  return instrutor;
+}
+
+async function validarOcorrenciasInstrutor(client, instrutorId, ocorrencias, configFuncionamento = null) {
+  const cfg = configFuncionamento || await obterConfigFuncionamento(client);
+  const instrutor = await obterInstrutorDisponibilidade(client, instrutorId);
+
+  const bloqueiosQ = await client.query(`
+    SELECT data_inicio, data_fim, motivo
+    FROM autoagenda.instrutor_indisponibilidades
+    WHERE instrutor_id = $1
+      AND data_fim >= $2::date
+      AND data_inicio <= $3::date
+    ORDER BY data_inicio
+  `, [
+    Number(instrutorId),
+    ocorrencias.length ? ocorrencias[0].data_aula : hojeApp(),
+    ocorrencias.length ? ocorrencias[ocorrencias.length - 1].data_aula : hojeApp()
+  ]);
+  const bloqueios = bloqueiosQ.rows;
+
+  for (const o of ocorrencias) {
+    const base = avaliarDisponibilidadeInstrutorBase(instrutor, o, cfg);
+    if (!base.ok) {
+      throw erroHttp(400, `Instrutor indisponível em ${o.data_aula} às ${o.hora_inicio}: ${base.motivo}`);
+    }
+    const bloqueio = bloqueios.find(b => o.data_aula >= String(b.data_inicio).slice(0,10) && o.data_aula <= String(b.data_fim).slice(0,10));
+    if (bloqueio) {
+      const motivo = bloqueio.motivo ? ` Motivo: ${bloqueio.motivo}.` : '';
+      throw erroHttp(400, `Instrutor indisponível em ${o.data_aula}: existe uma folga/indisponibilidade cadastrada.${motivo}`);
+    }
+  }
+  return instrutor;
+}
+
+async function contarAulasFuturasForaDisponibilidade(client, instrutorId, instrutorConfig, configFuncionamento) {
+  if (!instrutorConfig?.disponibilidade_personalizada) return 0;
+  const r = await client.query(`
+    SELECT data_aula, hora_inicio, duracao_minutos
+    FROM autoagenda.aulas
+    WHERE instrutor_id = $1
+      AND data_aula >= $2::date
+      AND status IN ('AGENDADA','CONFIRMADA')
+  `, [Number(instrutorId), hojeApp()]);
+  return r.rows.filter(a => !avaliarDisponibilidadeInstrutorBase(instrutorConfig, a, configFuncionamento).ok).length;
 }
 
 function gerarOcorrencias({ data_inicio, hora_inicio, duracao_base_minutos, aulas_por_encontro, total_aulas, dias_semana }) {
@@ -1064,15 +1313,26 @@ app.get('/api/instrutores', async (req, res) => {
     const mostrarTodos = incluirInativos(req);
     const result = await query(`
       SELECT i.id, i.nome, i.whatsapp, i.email, i.categorias, i.ativo,
+             i.disponibilidade_personalizada,
+             i.dias_trabalho,
+             TO_CHAR(i.hora_inicio, 'HH24:MI') AS hora_inicio,
+             TO_CHAR(i.hora_fim, 'HH24:MI') AS hora_fim,
+             TO_CHAR(i.intervalo_inicio, 'HH24:MI') AS intervalo_inicio,
+             TO_CHAR(i.intervalo_fim, 'HH24:MI') AS intervalo_fim,
              COALESCE((SELECT COUNT(*) FROM autoagenda.planos_aula p WHERE p.instrutor_id=i.id AND p.ativo=TRUE),0)::int AS planos_ativos,
              COALESCE((SELECT COUNT(*) FROM autoagenda.aulas a WHERE a.instrutor_id=i.id AND a.data_aula >= $1::date AND a.status IN ('AGENDADA','CONFIRMADA')),0)::int AS aulas_futuras,
              COALESCE((SELECT COUNT(*) FROM autoagenda.planos_aula p WHERE p.instrutor_id=i.id),0)::int AS planos_total,
-             COALESCE((SELECT COUNT(*) FROM autoagenda.aulas a WHERE a.instrutor_id=i.id),0)::int AS aulas_total
+             COALESCE((SELECT COUNT(*) FROM autoagenda.aulas a WHERE a.instrutor_id=i.id),0)::int AS aulas_total,
+             COALESCE((
+               SELECT COUNT(*)
+               FROM autoagenda.instrutor_indisponibilidades d
+               WHERE d.instrutor_id=i.id AND d.data_fim >= $1::date
+             ),0)::int AS indisponibilidades_futuras
       FROM autoagenda.instrutores i
       WHERE ($2::boolean = TRUE OR i.ativo = TRUE)
       ORDER BY i.ativo DESC, i.nome
     `, [hojeApp(), mostrarTodos]);
-    res.json(result.rows);
+    res.json(result.rows.map(normalizarInstrutorDisponibilidadeRow));
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao consultar instrutores.' });
@@ -1086,12 +1346,20 @@ app.post('/api/instrutores', async (req, res) => {
     const whatsapp = textoOpcional(req.body?.whatsapp, 30);
     const email = textoOpcional(req.body?.email, 180);
     const categorias = String(req.body?.categorias || 'AB').trim().toUpperCase().slice(0, 20) || 'AB';
+    const configFuncionamento = await obterConfigFuncionamento(client);
+    const disp = normalizarDisponibilidadeInstrutor(req.body || {}, configFuncionamento);
     await garantirInstrutorSemDuplicidade(client, { nome, whatsapp, email });
     const r = await client.query(`
-      INSERT INTO autoagenda.instrutores (nome, whatsapp, email, categorias)
-      VALUES ($1,$2,$3,$4) RETURNING *
-    `, [nome, whatsapp, email, categorias]);
-    res.status(201).json(r.rows[0]);
+      INSERT INTO autoagenda.instrutores
+        (nome, whatsapp, email, categorias, disponibilidade_personalizada,
+         dias_trabalho, hora_inicio, hora_fim, intervalo_inicio, intervalo_fim)
+      VALUES ($1,$2,$3,$4,$5,$6::int[],$7::time,$8::time,$9::time,$10::time)
+      RETURNING *
+    `, [
+      nome, whatsapp, email, categorias, disp.disponibilidade_personalizada,
+      disp.dias_trabalho, disp.hora_inicio, disp.hora_fim, disp.intervalo_inicio, disp.intervalo_fim
+    ]);
+    res.status(201).json(normalizarInstrutorDisponibilidadeRow(r.rows[0]));
   } catch (error) {
     console.error(error);
     res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao cadastrar instrutor.' });
@@ -1106,18 +1374,117 @@ app.put('/api/instrutores/:id', async (req, res) => {
     const whatsapp = textoOpcional(req.body?.whatsapp, 30);
     const email = textoOpcional(req.body?.email, 180);
     const categorias = String(req.body?.categorias || 'AB').trim().toUpperCase().slice(0, 20) || 'AB';
+    const configFuncionamento = await obterConfigFuncionamento(client);
+    const disp = normalizarDisponibilidadeInstrutor(req.body || {}, configFuncionamento);
     await garantirInstrutorSemDuplicidade(client, { nome, whatsapp, email }, id);
     const r = await client.query(`
       UPDATE autoagenda.instrutores
-      SET nome=$1, whatsapp=$2, email=$3, categorias=$4, atualizado_em=NOW()
-      WHERE id=$5 RETURNING *
-    `, [nome, whatsapp, email, categorias, id]);
+      SET nome=$1, whatsapp=$2, email=$3, categorias=$4,
+          disponibilidade_personalizada=$5,
+          dias_trabalho=$6::int[], hora_inicio=$7::time, hora_fim=$8::time,
+          intervalo_inicio=$9::time, intervalo_fim=$10::time,
+          atualizado_em=NOW()
+      WHERE id=$11
+      RETURNING *
+    `, [
+      nome, whatsapp, email, categorias, disp.disponibilidade_personalizada,
+      disp.dias_trabalho, disp.hora_inicio, disp.hora_fim, disp.intervalo_inicio, disp.intervalo_fim, id
+    ]);
     if (!r.rowCount) return res.status(404).json({ error: 'Instrutor não encontrado.' });
-    res.json(r.rows[0]);
+
+    const instrutor = normalizarInstrutorDisponibilidadeRow(r.rows[0]);
+    const fora = await contarAulasFuturasForaDisponibilidade(client, id, instrutor, configFuncionamento);
+    res.json({ ...instrutor, aulas_futuras_fora_disponibilidade: fora });
   } catch (error) {
     console.error(error);
     res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao atualizar instrutor.' });
   } finally { client.release(); }
+});
+
+// Folgas e dias específicos indisponíveis do instrutor.
+app.get('/api/instrutores/:id/indisponibilidades', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const de = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.de || '')) ? String(req.query.de) : hojeApp();
+    const r = await query(`
+      SELECT id, instrutor_id, data_inicio, data_fim, motivo, criado_em
+      FROM autoagenda.instrutor_indisponibilidades
+      WHERE instrutor_id = $1
+        AND data_fim >= $2::date
+      ORDER BY data_inicio, data_fim, id
+    `, [id, de]);
+    res.json(r.rows);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao consultar indisponibilidades do instrutor.' });
+  }
+});
+
+app.post('/api/instrutores/:id/indisponibilidades', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const instrutorId = Number(req.params.id);
+    const dataInicio = String(req.body?.data_inicio || '').slice(0,10);
+    const dataFim = String(req.body?.data_fim || req.body?.data_inicio || '').slice(0,10);
+    const motivo = textoOpcional(req.body?.motivo, 250);
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dataInicio) || !/^\d{4}-\d{2}-\d{2}$/.test(dataFim)) {
+      throw erroHttp(400, 'Informe uma data válida para a indisponibilidade.');
+    }
+    if (dataFim < dataInicio) throw erroHttp(400, 'A data final não pode ser anterior à data inicial.');
+
+    const instrutorQ = await client.query('SELECT id FROM autoagenda.instrutores WHERE id=$1', [instrutorId]);
+    if (!instrutorQ.rowCount) return res.status(404).json({ error: 'Instrutor não encontrado.' });
+
+    const sobreposta = await client.query(`
+      SELECT id
+      FROM autoagenda.instrutor_indisponibilidades
+      WHERE instrutor_id=$1
+        AND data_inicio <= $3::date
+        AND data_fim >= $2::date
+      LIMIT 1
+    `, [instrutorId, dataInicio, dataFim]);
+    if (sobreposta.rowCount) throw erroHttp(409, 'Já existe uma folga/indisponibilidade cadastrada nesse período.');
+
+    const r = await client.query(`
+      INSERT INTO autoagenda.instrutor_indisponibilidades
+        (instrutor_id, data_inicio, data_fim, motivo)
+      VALUES ($1,$2,$3,$4)
+      RETURNING *
+    `, [instrutorId, dataInicio, dataFim, motivo]);
+
+    const afetadas = await client.query(`
+      SELECT COUNT(*)::int AS total
+      FROM autoagenda.aulas
+      WHERE instrutor_id=$1
+        AND data_aula BETWEEN $2::date AND $3::date
+        AND data_aula >= $4::date
+        AND status IN ('AGENDADA','CONFIRMADA')
+    `, [instrutorId, dataInicio, dataFim, hojeApp()]);
+
+    res.status(201).json({
+      ...r.rows[0],
+      aulas_futuras_no_periodo: Number(afetadas.rows[0]?.total || 0)
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao cadastrar indisponibilidade.' });
+  } finally { client.release(); }
+});
+
+app.delete('/api/instrutores/:id/indisponibilidades/:indispId', async (req, res) => {
+  try {
+    const r = await query(`
+      DELETE FROM autoagenda.instrutor_indisponibilidades
+      WHERE id=$1 AND instrutor_id=$2
+      RETURNING id
+    `, [Number(req.params.indispId), Number(req.params.id)]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Indisponibilidade não encontrada.' });
+    res.json({ ok:true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao excluir indisponibilidade.' });
+  }
 });
 
 app.patch('/api/instrutores/:id/ativo', async (req, res) => {
@@ -1430,6 +1797,7 @@ app.post('/api/planos/preview', async (req, res) => {
 
     const ocorrencias = gerarOcorrencias({ ...base, total_aulas: totalSolicitado });
     await validarOcorrenciasFuncionamento(client, ocorrencias, configFuncionamento);
+    await validarOcorrenciasInstrutor(client, base.instrutor_id, ocorrencias, configFuncionamento);
     const conflitos = await listarConflitosPlano(client, base, ocorrencias, configFuncionamento);
     const conflitoMap = new Map(conflitos.map(c => [`${c.data_aula}|${c.hora_inicio}`, c]));
     const preview = ocorrencias.map(o => {
@@ -1485,6 +1853,7 @@ app.post('/api/planos', async (req, res) => {
     const dias = normalizarDias(base.dias_semana, base.data_inicio);
     const ocorrencias = gerarOcorrencias({ ...base, total_aulas: totalSolicitado, dias_semana: dias });
     await validarOcorrenciasFuncionamento(client, ocorrencias, configFuncionamento);
+    await validarOcorrenciasInstrutor(client, base.instrutor_id, ocorrencias, configFuncionamento);
 
     await client.query('BEGIN');
 
@@ -1636,6 +2005,7 @@ app.post('/api/aulas', async (req, res) => {
     const duracaoFinal = validarInteiroPositivo(duracao_minutos, configFuncionamento.duracao_padrao_minutos, 480);
     const dados = { aluno_id, instrutor_id, veiculo_id, data_aula, hora_inicio, duracao_minutos: duracaoFinal };
     await validarHorarioFuncionamento(client, dados, configFuncionamento);
+    await validarDisponibilidadeInstrutor(client, instrutor_id, dados, configFuncionamento);
     await client.query('BEGIN');
     const conflito = await verificarConflito(client, dados, [], configFuncionamento.intervalo_minutos);
     if (conflito.rowCount) {
@@ -1707,11 +2077,12 @@ app.put('/api/aulas/:id', async (req, res) => {
     const reativandoHorario =
       !['AGENDADA','CONFIRMADA'].includes(String(existente.rows[0].status)) &&
       ['AGENDADA','CONFIRMADA'].includes(status);
+    const instrutorAlterado = Number(existente.rows[0].instrutor_id) !== Number(instrutor_id);
 
-    if (horarioAlterado || reativandoHorario) {
-      await validarHorarioFuncionamento(client, {
-        data_aula, hora_inicio, duracao_minutos: duracaoFinal
-      }, configFuncionamento);
+    if (horarioAlterado || reativandoHorario || instrutorAlterado) {
+      const dadosDisponibilidade = { data_aula, hora_inicio, duracao_minutos: duracaoFinal };
+      await validarHorarioFuncionamento(client, dadosDisponibilidade, configFuncionamento);
+      await validarDisponibilidadeInstrutor(client, instrutor_id, dadosDisponibilidade, configFuncionamento);
     }
 
     await client.query('BEGIN');
@@ -1826,11 +2197,13 @@ app.put('/api/aulas/:id/serie', async (req, res) => {
     });
 
     for (const n of novas) {
-      await validarHorarioFuncionamento(client, {
+      const dadosDisponibilidade = {
         data_aula: n.data_aula_nova,
         hora_inicio: n.hora_inicio_nova,
         duracao_minutos: n.duracao_minutos_nova
-      }, configFuncionamento);
+      };
+      await validarHorarioFuncionamento(client, dadosDisponibilidade, configFuncionamento);
+      await validarDisponibilidadeInstrutor(client, n.instrutor_id_novo, dadosDisponibilidade, configFuncionamento);
 
       const conflito = await verificarConflito(client, {
         aluno_id: n.aluno_id,
