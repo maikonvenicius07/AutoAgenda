@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#111111">
   <title>AutoAgenda</title>
-  <link rel="stylesheet" href="style.css?v=1.8.1">
+  <link rel="stylesheet" href="style.css?v=1.9.0">
 </head>
 <body>
 <header>
@@ -140,7 +140,7 @@
 
     <div class="config-summary">
       <div><span>Instrutores ativos</span><b id="cfgQtdInstrutores">0</b></div>
-      <div><span>Veículos ativos</span><b id="cfgQtdVeiculos">0</b></div>
+      <div><span>Veículos disponíveis</span><b id="cfgQtdVeiculos">0</b></div>
       <div><span>Locais ativos</span><b id="cfgQtdLocais">0</b></div>
     </div>
     <div id="cfgInativosInfo" class="config-inactive-info">Nenhum recurso inativo.</div>
@@ -407,13 +407,30 @@
 
 <!-- MODAL VEÍCULO -->
 <div id="mVeiculo" class="modal hide">
-  <form id="fVeiculo" class="box">
+  <form id="fVeiculo" class="box box-wide">
     <button type="button" class="x" data-close="mVeiculo">✕</button>
     <h2 id="tituloVeiculo">Novo veículo</h2>
     <input id="veiculoId" type="hidden">
-    <label>Nome do veículo<input id="vNome" maxlength="100" required placeholder="Ex.: Volkswagen Up"></label>
-    <label>Placa<input id="vPlaca" maxlength="15" placeholder="ABC1D23"></label>
-    <label>Categoria<select id="vCategoria"><option>A</option><option selected>B</option><option>AB</option><option>C</option><option>D</option><option>E</option></select></label>
+    <div class="form-2">
+      <label>Nome do veículo<input id="vNome" maxlength="100" required placeholder="Ex.: Volkswagen Up"></label>
+      <label>Placa<input id="vPlaca" maxlength="15" placeholder="ABC1D23"></label>
+      <label>Categoria<select id="vCategoria"><option>A</option><option selected>B</option><option>AB</option><option>C</option><option>D</option><option>E</option></select></label>
+      <label>Situação<select id="vSituacao"><option value="DISPONIVEL" selected>Disponível</option><option value="MANUTENCAO">Manutenção</option><option value="INDISPONIVEL">Indisponível</option><option value="INATIVO">Inativo</option></select></label>
+    </div>
+    <p class="field-help">Veículos em manutenção, indisponíveis ou inativos não podem ser usados em novas aulas e planos.</p>
+
+    <section id="vIndisponibilidadesArea" class="availability-section hide">
+      <div class="availability-title"><div><h3>🔧 Manutenções e indisponibilidades</h3><small>Bloqueie períodos específicos sem apagar aulas existentes.</small></div></div>
+      <div class="availability-grid">
+        <label>Tipo<select id="vIndispTipo"><option value="MANUTENCAO">Manutenção</option><option value="INDISPONIVEL">Indisponível</option></select></label>
+        <label>Data inicial<input id="vIndispInicio" type="date"></label>
+        <label>Data final<input id="vIndispFim" type="date"></label>
+        <label class="availability-motivo">Motivo<input id="vIndispMotivo" maxlength="250" placeholder="Ex.: revisão, pneu, oficina"></label>
+        <button type="button" id="vAdicionarIndisp" class="secondary">+ Adicionar período</button>
+      </div>
+      <div id="vListaIndisp" class="availability-list"></div>
+    </section>
+
     <div id="erroVeiculo" class="erro hide"></div>
     <button>Salvar veículo</button>
   </form>
@@ -445,6 +462,6 @@
 </div>
 
 <div id="toast" class="toast hide"></div>
-<script src="app.js?v=1.8.1"></script>
+<script src="app.js?v=1.9.0"></script>
 </body>
 </html>

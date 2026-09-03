@@ -110,3 +110,6 @@ nav{grid-template-columns:repeat(6,1fr)}
 /* ========================= V1.8.1 AUDITORIA, SEGURANÇA E INTEGRIDADE ========================= */
 .privacy-note{margin:0 0 12px;padding:10px 12px;border:1px solid #d7dfeb;border-left:4px solid var(--blue);border-radius:9px;background:#f4f7fb;color:#475569;font-size:12px}
 .student.inactive{opacity:.72;border-top-color:#aaa;border-style:dashed}.student.inactive .progress>div{background:#aaa}
+
+/* V1.9 — disponibilidade dos veículos */
+.availability-grid select{width:100%;padding:10px;border:1px solid #ccc;border-radius:8px;background:#fff;font:inherit}

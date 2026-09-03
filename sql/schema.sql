@@ -1,4 +1,4 @@
--- AutoAgenda V1.8.1
+-- AutoAgenda V1.9.0
 -- Schema compatível com o server.js atual.
 -- O servidor cria/migra automaticamente; este arquivo serve para referência e execução manual controlada.
 
@@ -55,10 +55,25 @@ CREATE TABLE IF NOT EXISTS autoagenda.veiculos (
   nome VARCHAR(100) NOT NULL,
   placa VARCHAR(15),
   categoria VARCHAR(10) DEFAULT 'B',
+  situacao VARCHAR(20) NOT NULL DEFAULT 'DISPONIVEL',
   ativo BOOLEAN NOT NULL DEFAULT TRUE,
   criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
   atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS autoagenda.veiculo_indisponibilidades (
+  id SERIAL PRIMARY KEY,
+  veiculo_id INTEGER NOT NULL REFERENCES autoagenda.veiculos(id) ON DELETE CASCADE,
+  data_inicio DATE NOT NULL,
+  data_fim DATE NOT NULL,
+  tipo VARCHAR(20) NOT NULL DEFAULT 'INDISPONIVEL',
+  motivo VARCHAR(250),
+  criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+  CHECK (data_fim >= data_inicio)
+);
+
+CREATE INDEX IF NOT EXISTS idx_autoagenda_veiculo_indisp_periodo
+ON autoagenda.veiculo_indisponibilidades(veiculo_id, data_inicio, data_fim);
 
 CREATE TABLE IF NOT EXISTS autoagenda.locais (
   id SERIAL PRIMARY KEY,

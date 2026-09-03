@@ -7,7 +7,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '1.8.1';
+const APP_VERSION = '1.9.0';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -162,9 +162,23 @@ async function initDatabase() {
         nome VARCHAR(100) NOT NULL,
         placa VARCHAR(15),
         categoria VARCHAR(10) DEFAULT 'B',
+        situacao VARCHAR(20) NOT NULL DEFAULT 'DISPONIVEL',
         ativo BOOLEAN NOT NULL DEFAULT TRUE,
         criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
         atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS autoagenda.veiculo_indisponibilidades (
+        id SERIAL PRIMARY KEY,
+        veiculo_id INTEGER NOT NULL REFERENCES autoagenda.veiculos(id) ON DELETE CASCADE,
+        data_inicio DATE NOT NULL,
+        data_fim DATE NOT NULL,
+        tipo VARCHAR(20) NOT NULL DEFAULT 'INDISPONIVEL',
+        motivo VARCHAR(250),
+        criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+        CHECK (data_fim >= data_inicio)
       )
     `);
 
@@ -258,6 +272,29 @@ async function initDatabase() {
       )
     `);
 
+    // Migrações seguras da disponibilidade dos veículos.
+    await client.query("ALTER TABLE autoagenda.veiculos ADD COLUMN IF NOT EXISTS situacao VARCHAR(20) NOT NULL DEFAULT 'DISPONIVEL'");
+    await client.query(`
+      UPDATE autoagenda.veiculos
+      SET situacao = CASE
+        WHEN ativo = FALSE THEN 'INATIVO'
+        WHEN situacao IS NULL OR situacao = '' THEN 'DISPONIVEL'
+        ELSE UPPER(situacao)
+      END
+    `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS autoagenda.veiculo_indisponibilidades (
+        id SERIAL PRIMARY KEY,
+        veiculo_id INTEGER NOT NULL REFERENCES autoagenda.veiculos(id) ON DELETE CASCADE,
+        data_inicio DATE NOT NULL,
+        data_fim DATE NOT NULL,
+        tipo VARCHAR(20) NOT NULL DEFAULT 'INDISPONIVEL',
+        motivo VARCHAR(250),
+        criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+        CHECK (data_fim >= data_inicio)
+      )
+    `);
+
     // Migrações seguras das versões anteriores.
     // CPF é opcional apenas para registros legados; novos cadastros exigem CPF válido.
     await client.query('ALTER TABLE autoagenda.alunos ADD COLUMN IF NOT EXISTS cpf VARCHAR(11)');
@@ -308,6 +345,7 @@ async function initDatabase() {
     await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_plan ON autoagenda.aulas(plan_id, data_aula, hora_inicio)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_planos_aluno_ativo ON autoagenda.planos_aula(aluno_id, ativo)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_instrutor_indisp_periodo ON autoagenda.instrutor_indisponibilidades(instrutor_id, data_inicio, data_fim)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_veiculo_indisp_periodo ON autoagenda.veiculo_indisponibilidades(veiculo_id, data_inicio, data_fim)');
 
     await client.query(`
       INSERT INTO autoagenda.instrutores (nome, whatsapp, email, categorias)
@@ -816,6 +854,96 @@ async function contarAulasFuturasForaDisponibilidade(client, instrutorId, instru
   return r.rows.filter(a => !avaliarDisponibilidadeInstrutorBase(instrutorConfig, a, configFuncionamento).ok).length;
 }
 
+
+const SITUACOES_VEICULO = ['DISPONIVEL','MANUTENCAO','INDISPONIVEL','INATIVO'];
+const TIPOS_INDISPONIBILIDADE_VEICULO = ['MANUTENCAO','INDISPONIVEL'];
+
+function normalizarSituacaoVeiculo(valor, padrao = 'DISPONIVEL') {
+  const s = String(valor || padrao).trim().toUpperCase();
+  if (!SITUACOES_VEICULO.includes(s)) throw erroHttp(400, 'Situação do veículo inválida.');
+  return s;
+}
+
+function normalizarTipoIndisponibilidadeVeiculo(valor) {
+  const s = String(valor || 'INDISPONIVEL').trim().toUpperCase();
+  if (!TIPOS_INDISPONIBILIDADE_VEICULO.includes(s)) throw erroHttp(400, 'Tipo de indisponibilidade do veículo inválido.');
+  return s;
+}
+
+async function obterVeiculoDisponibilidade(client, veiculoId) {
+  const r = await client.query(`
+    SELECT id, nome, placa, categoria, ativo,
+           UPPER(COALESCE(situacao,'DISPONIVEL')) AS situacao
+    FROM autoagenda.veiculos
+    WHERE id=$1
+  `, [Number(veiculoId)]);
+  if (!r.rowCount) throw erroHttp(404, 'Veículo não encontrado.');
+  return r.rows[0];
+}
+
+async function validarDisponibilidadeVeiculo(client, veiculoId, dados) {
+  const veiculo = await obterVeiculoDisponibilidade(client, veiculoId);
+  const situacao = veiculo.ativo === false ? 'INATIVO' : normalizarSituacaoVeiculo(veiculo.situacao);
+
+  if (situacao === 'INATIVO') throw erroHttp(400, 'O veículo selecionado está inativo.');
+  if (situacao === 'MANUTENCAO') throw erroHttp(400, 'O veículo selecionado está em manutenção e não pode receber novas aulas.');
+  if (situacao === 'INDISPONIVEL') throw erroHttp(400, 'O veículo selecionado está indisponível e não pode receber novas aulas.');
+
+  const data = String(dados.data_aula || dados.data_inicio || '').slice(0,10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) throw erroHttp(400, 'Data inválida para verificar o veículo.');
+
+  const bloqueio = await client.query(`
+    SELECT id, data_inicio, data_fim, tipo, motivo
+    FROM autoagenda.veiculo_indisponibilidades
+    WHERE veiculo_id=$1
+      AND $2::date BETWEEN data_inicio AND data_fim
+    ORDER BY data_inicio, id
+    LIMIT 1
+  `, [Number(veiculoId), data]);
+
+  if (bloqueio.rowCount) {
+    const b = bloqueio.rows[0];
+    const tipo = String(b.tipo || '').toUpperCase() === 'MANUTENCAO' ? 'manutenção' : 'indisponibilidade';
+    const motivo = b.motivo ? ` Motivo: ${b.motivo}.` : '';
+    throw erroHttp(400, `Veículo indisponível em ${data}: existe um período de ${tipo} cadastrado.${motivo}`);
+  }
+  return veiculo;
+}
+
+async function validarOcorrenciasVeiculo(client, veiculoId, ocorrencias) {
+  const veiculo = await obterVeiculoDisponibilidade(client, veiculoId);
+  const situacao = veiculo.ativo === false ? 'INATIVO' : normalizarSituacaoVeiculo(veiculo.situacao);
+  if (situacao !== 'DISPONIVEL') {
+    const nomes = { INATIVO:'inativo', MANUTENCAO:'em manutenção', INDISPONIVEL:'indisponível' };
+    throw erroHttp(400, `O veículo selecionado está ${nomes[situacao] || 'indisponível'} e não pode ser usado no plano.`);
+  }
+  if (!ocorrencias.length) return veiculo;
+
+  const de = ocorrencias[0].data_aula;
+  const ate = ocorrencias[ocorrencias.length - 1].data_aula;
+  const bloqueiosQ = await client.query(`
+    SELECT data_inicio, data_fim, tipo, motivo
+    FROM autoagenda.veiculo_indisponibilidades
+    WHERE veiculo_id=$1
+      AND data_fim >= $2::date
+      AND data_inicio <= $3::date
+    ORDER BY data_inicio
+  `, [Number(veiculoId), de, ate]);
+
+  for (const o of ocorrencias) {
+    const bloqueio = bloqueiosQ.rows.find(b =>
+      o.data_aula >= String(b.data_inicio).slice(0,10) &&
+      o.data_aula <= String(b.data_fim).slice(0,10)
+    );
+    if (bloqueio) {
+      const tipo = String(bloqueio.tipo || '').toUpperCase() === 'MANUTENCAO' ? 'manutenção' : 'indisponibilidade';
+      const motivo = bloqueio.motivo ? ` Motivo: ${bloqueio.motivo}.` : '';
+      throw erroHttp(400, `Veículo indisponível em ${o.data_aula}: existe um período de ${tipo} cadastrado.${motivo}`);
+    }
+  }
+  return veiculo;
+}
+
 function gerarOcorrencias({ data_inicio, hora_inicio, duracao_base_minutos, aulas_por_encontro, total_aulas, dias_semana }) {
   const dias = normalizarDias(dias_semana, data_inicio);
   const base = Math.max(1, Number(duracao_base_minutos) || 50);
@@ -917,6 +1045,7 @@ async function sugerirHorario(client, dados, excluirIds = [], config = null) {
     if (!permitido.ok) continue;
     try {
       await validarDisponibilidadeInstrutor(client, teste.instrutor_id, teste, cfg);
+      await validarDisponibilidadeVeiculo(client, teste.veiculo_id, teste);
     } catch (error) {
       if (error.statusCode === 400 || error.statusCode === 404) continue;
       throw error;
@@ -1710,15 +1839,19 @@ app.get('/api/veiculos', async (req, res) => {
     const mostrarTodos = incluirInativos(req);
     const result = await query(`
       SELECT v.id, v.nome, v.placa, v.categoria, v.ativo,
+             UPPER(COALESCE(v.situacao,'DISPONIVEL')) AS situacao,
              COALESCE((SELECT COUNT(*) FROM autoagenda.planos_aula p WHERE p.veiculo_id=v.id AND p.ativo=TRUE),0)::int AS planos_ativos,
              COALESCE((SELECT COUNT(*) FROM autoagenda.aulas a WHERE a.veiculo_id=v.id AND a.data_aula >= $1::date AND a.status IN ('AGENDADA','CONFIRMADA')),0)::int AS aulas_futuras,
              COALESCE((SELECT COUNT(*) FROM autoagenda.planos_aula p WHERE p.veiculo_id=v.id),0)::int AS planos_total,
-             COALESCE((SELECT COUNT(*) FROM autoagenda.aulas a WHERE a.veiculo_id=v.id),0)::int AS aulas_total
+             COALESCE((SELECT COUNT(*) FROM autoagenda.aulas a WHERE a.veiculo_id=v.id),0)::int AS aulas_total,
+             COALESCE((SELECT COUNT(*) FROM autoagenda.veiculo_indisponibilidades d WHERE d.veiculo_id=v.id AND d.data_fim >= $1::date),0)::int AS indisponibilidades_futuras
       FROM autoagenda.veiculos v
-      WHERE ($2::boolean = TRUE OR v.ativo = TRUE)
-      ORDER BY v.ativo DESC, v.nome
+      WHERE ($2::boolean = TRUE OR (v.ativo=TRUE AND UPPER(COALESCE(v.situacao,'DISPONIVEL'))='DISPONIVEL'))
+      ORDER BY v.ativo DESC,
+               CASE UPPER(COALESCE(v.situacao,'DISPONIVEL')) WHEN 'DISPONIVEL' THEN 1 WHEN 'MANUTENCAO' THEN 2 WHEN 'INDISPONIVEL' THEN 3 ELSE 4 END,
+               v.nome
     `, [hojeApp(), mostrarTodos]);
-    res.json(result.rows);
+    res.json(result.rows.map(v => ({ ...v, situacao: v.ativo === false ? 'INATIVO' : normalizarSituacaoVeiculo(v.situacao) })));
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao consultar veículos.' });
@@ -1731,10 +1864,12 @@ app.post('/api/veiculos', async (req, res) => {
     const nome = textoObrigatorio(req.body?.nome, 'Nome do veículo', 100);
     const placa = textoOpcional(req.body?.placa, 15)?.toUpperCase() || null;
     const categoria = String(req.body?.categoria || 'B').trim().toUpperCase().slice(0, 10) || 'B';
+    const situacao = normalizarSituacaoVeiculo(req.body?.situacao);
+    const ativo = situacao !== 'INATIVO';
     await garantirVeiculoSemDuplicidade(client, { nome, placa, categoria });
     const r = await client.query(
-      `INSERT INTO autoagenda.veiculos (nome, placa, categoria) VALUES ($1,$2,$3) RETURNING *`,
-      [nome, placa, categoria]
+      `INSERT INTO autoagenda.veiculos (nome, placa, categoria, situacao, ativo) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+      [nome, placa, categoria, situacao, ativo]
     );
     res.status(201).json(r.rows[0]);
   } catch (error) {
@@ -1750,17 +1885,110 @@ app.put('/api/veiculos/:id', async (req, res) => {
     const nome = textoObrigatorio(req.body?.nome, 'Nome do veículo', 100);
     const placa = textoOpcional(req.body?.placa, 15)?.toUpperCase() || null;
     const categoria = String(req.body?.categoria || 'B').trim().toUpperCase().slice(0, 10) || 'B';
+    const situacao = normalizarSituacaoVeiculo(req.body?.situacao);
     await garantirVeiculoSemDuplicidade(client, { nome, placa, categoria }, id);
-    const r = await client.query(
-      `UPDATE autoagenda.veiculos SET nome=$1, placa=$2, categoria=$3, atualizado_em=NOW() WHERE id=$4 RETURNING *`,
-      [nome, placa, categoria, id]
-    );
-    if (!r.rowCount) return res.status(404).json({ error: 'Veículo não encontrado.' });
-    res.json(r.rows[0]);
+
+    const atualQ = await client.query('SELECT * FROM autoagenda.veiculos WHERE id=$1', [id]);
+    if (!atualQ.rowCount) return res.status(404).json({ error: 'Veículo não encontrado.' });
+
+    if (situacao === 'INATIVO' && atualQ.rows[0].ativo !== false) {
+      await desativarRecurso(client, 'veiculo', 'veiculos', id);
+    }
+
+    const ativo = situacao !== 'INATIVO';
+    const r = await client.query(`
+      UPDATE autoagenda.veiculos
+      SET nome=$1, placa=$2, categoria=$3, situacao=$4, ativo=$5, atualizado_em=NOW()
+      WHERE id=$6 RETURNING *
+    `, [nome, placa, categoria, situacao, ativo, id]);
+
+    const afetadas = situacao === 'DISPONIVEL' ? 0 : Number((await client.query(`
+      SELECT COUNT(*)::int AS total
+      FROM autoagenda.aulas
+      WHERE veiculo_id=$1 AND data_aula >= $2::date AND status IN ('AGENDADA','CONFIRMADA')
+    `, [id, hojeApp()])).rows[0]?.total || 0);
+
+    res.json({ ...r.rows[0], aulas_futuras_afetadas: afetadas });
   } catch (error) {
     console.error(error);
     res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao atualizar veículo.' });
   } finally { client.release(); }
+});
+
+app.get('/api/veiculos/:id/indisponibilidades', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const de = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.de || '')) ? String(req.query.de) : hojeApp();
+    const r = await query(`
+      SELECT id, veiculo_id, data_inicio, data_fim, tipo, motivo, criado_em
+      FROM autoagenda.veiculo_indisponibilidades
+      WHERE veiculo_id=$1 AND data_fim >= $2::date
+      ORDER BY data_inicio, data_fim, id
+    `, [id, de]);
+    res.json(r.rows);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao consultar indisponibilidades do veículo.' });
+  }
+});
+
+app.post('/api/veiculos/:id/indisponibilidades', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const veiculoId = Number(req.params.id);
+    const dataInicio = String(req.body?.data_inicio || '').slice(0,10);
+    const dataFim = String(req.body?.data_fim || dataInicio).slice(0,10);
+    const tipo = normalizarTipoIndisponibilidadeVeiculo(req.body?.tipo);
+    const motivo = textoOpcional(req.body?.motivo, 250);
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dataInicio) || !/^\d{4}-\d{2}-\d{2}$/.test(dataFim)) {
+      throw erroHttp(400, 'Informe uma data válida para a indisponibilidade do veículo.');
+    }
+    if (dataFim < dataInicio) throw erroHttp(400, 'A data final não pode ser anterior à data inicial.');
+
+    const veiculoQ = await client.query('SELECT id FROM autoagenda.veiculos WHERE id=$1', [veiculoId]);
+    if (!veiculoQ.rowCount) return res.status(404).json({ error: 'Veículo não encontrado.' });
+
+    const sobreposta = await client.query(`
+      SELECT id FROM autoagenda.veiculo_indisponibilidades
+      WHERE veiculo_id=$1 AND data_inicio <= $3::date AND data_fim >= $2::date
+      LIMIT 1
+    `, [veiculoId, dataInicio, dataFim]);
+    if (sobreposta.rowCount) throw erroHttp(409, 'Já existe manutenção/indisponibilidade cadastrada nesse período.');
+
+    const r = await client.query(`
+      INSERT INTO autoagenda.veiculo_indisponibilidades (veiculo_id, data_inicio, data_fim, tipo, motivo)
+      VALUES ($1,$2,$3,$4,$5) RETURNING *
+    `, [veiculoId, dataInicio, dataFim, tipo, motivo]);
+
+    const afetadas = await client.query(`
+      SELECT COUNT(*)::int AS total
+      FROM autoagenda.aulas
+      WHERE veiculo_id=$1
+        AND data_aula BETWEEN $2::date AND $3::date
+        AND data_aula >= $4::date
+        AND status IN ('AGENDADA','CONFIRMADA')
+    `, [veiculoId, dataInicio, dataFim, hojeApp()]);
+
+    res.status(201).json({ ...r.rows[0], aulas_futuras_no_periodo: Number(afetadas.rows[0]?.total || 0) });
+  } catch (error) {
+    console.error(error);
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao cadastrar indisponibilidade do veículo.' });
+  } finally { client.release(); }
+});
+
+app.delete('/api/veiculos/:id/indisponibilidades/:indispId', async (req, res) => {
+  try {
+    const r = await query(`
+      DELETE FROM autoagenda.veiculo_indisponibilidades
+      WHERE id=$1 AND veiculo_id=$2 RETURNING id
+    `, [Number(req.params.indispId), Number(req.params.id)]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Indisponibilidade não encontrada.' });
+    res.json({ ok:true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao excluir indisponibilidade do veículo.' });
+  }
 });
 
 app.patch('/api/veiculos/:id/ativo', async (req, res) => {
@@ -1774,12 +2002,19 @@ app.patch('/api/veiculos/:id/ativo', async (req, res) => {
 
     if (ativo) {
       await garantirVeiculoSemDuplicidade(client, atual, id, true);
-      const r = await client.query('UPDATE autoagenda.veiculos SET ativo=TRUE, atualizado_em=NOW() WHERE id=$1 RETURNING *', [id]);
+      const r = await client.query(`
+        UPDATE autoagenda.veiculos SET ativo=TRUE, situacao='DISPONIVEL', atualizado_em=NOW()
+        WHERE id=$1 RETURNING *
+      `, [id]);
       return res.json(r.rows[0]);
     }
 
     const atualizado = await desativarRecurso(client, 'veiculo', 'veiculos', id);
-    res.json(atualizado);
+    const r = await client.query(`
+      UPDATE autoagenda.veiculos SET situacao='INATIVO', atualizado_em=NOW()
+      WHERE id=$1 RETURNING *
+    `, [id]);
+    res.json(r.rows[0] || atualizado);
   } catch (error) {
     console.error(error);
     res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao alterar situação do veículo.' });
@@ -1789,7 +2024,9 @@ app.patch('/api/veiculos/:id/ativo', async (req, res) => {
 app.delete('/api/veiculos/:id', async (req, res) => {
   const client = await pool.connect();
   try {
-    await desativarRecurso(client, 'veiculo', 'veiculos', Number(req.params.id));
+    const id = Number(req.params.id);
+    await desativarRecurso(client, 'veiculo', 'veiculos', id);
+    await client.query(`UPDATE autoagenda.veiculos SET situacao='INATIVO', atualizado_em=NOW() WHERE id=$1`, [id]);
     res.json({ ok: true });
   } catch (error) {
     console.error(error);
@@ -1968,6 +2205,7 @@ app.post('/api/planos/preview', async (req, res) => {
     const ocorrencias = gerarOcorrencias({ ...base, total_aulas: totalSolicitado });
     await validarOcorrenciasFuncionamento(client, ocorrencias, configFuncionamento);
     await validarOcorrenciasInstrutor(client, base.instrutor_id, ocorrencias, configFuncionamento);
+    await validarOcorrenciasVeiculo(client, base.veiculo_id, ocorrencias);
     const conflitos = await listarConflitosPlano(client, base, ocorrencias, configFuncionamento);
     const conflitoMap = new Map(conflitos.map(c => [`${c.data_aula}|${c.hora_inicio}`, c]));
     const preview = ocorrencias.map(o => {
@@ -2024,6 +2262,7 @@ app.post('/api/planos', async (req, res) => {
     const ocorrencias = gerarOcorrencias({ ...base, total_aulas: totalSolicitado, dias_semana: dias });
     await validarOcorrenciasFuncionamento(client, ocorrencias, configFuncionamento);
     await validarOcorrenciasInstrutor(client, base.instrutor_id, ocorrencias, configFuncionamento);
+    await validarOcorrenciasVeiculo(client, base.veiculo_id, ocorrencias);
 
     await client.query('BEGIN');
 
@@ -2239,6 +2478,7 @@ app.post('/api/aulas', async (req, res) => {
     if (['AGENDADA','CONFIRMADA'].includes(statusFinal)) {
       await validarHorarioFuncionamento(client, dados, configFuncionamento);
       await validarDisponibilidadeInstrutor(client, instrutor_id, dados, configFuncionamento);
+      await validarDisponibilidadeVeiculo(client, veiculo_id, dados);
     }
     await validarSaldoAula(client, { aluno_id, status:statusFinal, data_aula, aulas_unidades:unidadesFinal });
 
@@ -2309,6 +2549,7 @@ app.put('/api/aulas/:id', async (req, res) => {
     if (['AGENDADA','CONFIRMADA'].includes(status)) {
       await validarHorarioFuncionamento(client, dados, configFuncionamento);
       await validarDisponibilidadeInstrutor(client, instrutor_id, dados, configFuncionamento);
+      await validarDisponibilidadeVeiculo(client, veiculo_id, dados);
     }
     await validarSaldoAula(client, { aluno_id, status, data_aula, aulas_unidades:unidadesFinal }, [id]);
 
@@ -2430,6 +2671,7 @@ app.put('/api/aulas/:id/serie', async (req, res) => {
       if (['AGENDADA','CONFIRMADA'].includes(statusNovo)) {
         await validarHorarioFuncionamento(client,dadosDisponibilidade,configFuncionamento);
         await validarDisponibilidadeInstrutor(client,n.instrutor_id_novo,dadosDisponibilidade,configFuncionamento);
+        await validarDisponibilidadeVeiculo(client,n.veiculo_id_novo,dadosDisponibilidade);
         const conflito=await verificarConflito(client,{ aluno_id:n.aluno_id,instrutor_id:n.instrutor_id_novo,veiculo_id:n.veiculo_id_novo,data_aula:n.data_aula_nova,hora_inicio:n.hora_inicio_nova,duracao_minutos:n.duracao_minutos_nova },ids,configFuncionamento.intervalo_minutos);
         if (conflito.rowCount) {
           await client.query('ROLLBACK');
@@ -2527,6 +2769,7 @@ app.patch('/api/aulas/:id/status', async (req, res) => {
       await validarRecursosAtivos(client,aula);
       await validarHorarioFuncionamento(client,aula,config);
       await validarDisponibilidadeInstrutor(client,aula.instrutor_id,aula,config);
+      await validarDisponibilidadeVeiculo(client,aula.veiculo_id,aula);
       const conflito=await verificarConflito(client,aula,[id],config.intervalo_minutos);
       if (conflito.rowCount) {
         await client.query('ROLLBACK');

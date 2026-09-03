@@ -275,7 +275,10 @@ function configItemHtml(tipo, x) {
     detalhes = `${esc(x.categorias || 'AB')} · ${esc(x.whatsapp || 'Sem WhatsApp')}<br>${esc(resumoDisponibilidadeInstrutor(x))}${folgas ? `<br>🏖️ ${folgas} indisponibilidade(s) futura(s)` : ''}`;
     editAttr = `data-edit-instrutor="${x.id}"`;
   } else if (tipo === 'veiculo') {
-    detalhes = `${esc(x.placa || 'Sem placa')} · Categoria ${esc(x.categoria || 'B')}`;
+    const situacaoVeiculo = x.ativo === false ? 'INATIVO' : String(x.situacao || 'DISPONIVEL').toUpperCase();
+    const nomesSituacao = { DISPONIVEL:'✅ Disponível', MANUTENCAO:'🔧 Manutenção', INDISPONIVEL:'⛔ Indisponível', INATIVO:'⏸️ Inativo' };
+    const bloqueios = Number(x.indisponibilidades_futuras || 0);
+    detalhes = `${esc(x.placa || 'Sem placa')} · Categoria ${esc(x.categoria || 'B')}<br>${esc(nomesSituacao[situacaoVeiculo] || situacaoVeiculo)}${bloqueios ? `<br>📅 ${bloqueios} período(s) futuro(s) bloqueado(s)` : ''}`;
     editAttr = `data-edit-veiculo="${x.id}"`;
   } else {
     detalhes = esc(x.endereco || 'Sem endereço informado');
@@ -989,24 +992,117 @@ $('#fInstrutor').onsubmit = async e => {
 };
 
 function novoVeiculo() {
-  $('#fVeiculo').reset(); $('#veiculoId').value = ''; $('#vCategoria').value = 'B';
-  $('#tituloVeiculo').textContent = 'Novo veículo'; $('#erroVeiculo').classList.add('hide'); open('mVeiculo');
+  $('#fVeiculo').reset();
+  $('#veiculoId').value = '';
+  $('#vCategoria').value = 'B';
+  $('#vSituacao').value = 'DISPONIVEL';
+  $('#tituloVeiculo').textContent = 'Novo veículo';
+  $('#erroVeiculo').classList.add('hide');
+  $('#vIndisponibilidadesArea').classList.add('hide');
+  $('#vListaIndisp').innerHTML = '';
+  open('mVeiculo');
 }
-function editarVeiculo(id) {
-  const x = configVeiculos.find(v => Number(v.id) === id); if (!x) return;
-  $('#veiculoId').value = x.id; $('#vNome').value = x.nome || ''; $('#vPlaca').value = x.placa || ''; $('#vCategoria').value = x.categoria || 'B';
-  $('#tituloVeiculo').textContent = x.ativo === false ? 'Editar veículo inativo' : 'Editar veículo';
-  $('#erroVeiculo').classList.add('hide'); open('mVeiculo');
-}
-$('#novoVeiculo').onclick = novoVeiculo;
-$('#fVeiculo').onsubmit = async e => {
-  e.preventDefault(); $('#erroVeiculo').classList.add('hide');
-  const id = Number($('#veiculoId').value || 0);
-  const payload = { nome: $('#vNome').value, placa: $('#vPlaca').value, categoria: $('#vCategoria').value };
+
+async function carregarIndisponibilidadesVeiculo(id) {
+  const box = $('#vListaIndisp');
+  if (!id) {
+    $('#vIndisponibilidadesArea').classList.add('hide');
+    box.innerHTML = '';
+    return;
+  }
+  $('#vIndisponibilidadesArea').classList.remove('hide');
+  box.innerHTML = '<div class="empty small-empty">Carregando...</div>';
   try {
-    await api(id ? `/api/veiculos/${id}` : '/api/veiculos', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) });
-    close('mVeiculo'); toast(id ? '✅ Veículo atualizado.' : '✅ Veículo cadastrado.');
-    await load(); abrirTab('configuracoes');
+    const lista = await api(`/api/veiculos/${id}/indisponibilidades`);
+    box.innerHTML = lista.length ? lista.map(f => {
+      const ini = dataISO(f.data_inicio);
+      const fim = dataISO(f.data_fim);
+      const periodo = ini === fim ? fmtData(ini) : `${fmtData(ini)} a ${fmtData(fim)}`;
+      const tipo = String(f.tipo || '').toUpperCase() === 'MANUTENCAO' ? '🔧 Manutenção' : '⛔ Indisponível';
+      return `<div class="availability-item">
+        <div><b>${periodo}</b><small>${tipo}${f.motivo ? ' · ' + esc(f.motivo) : ''}</small></div>
+        <button type="button" class="mini delete" data-del-vindisp="${f.id}" title="Excluir período">🗑️</button>
+      </div>`;
+    }).join('') : '<div class="empty small-empty">Nenhuma manutenção ou indisponibilidade futura cadastrada.</div>';
+
+    $$('[data-del-vindisp]').forEach(b => b.onclick = async () => {
+      try {
+        await api(`/api/veiculos/${id}/indisponibilidades/${Number(b.dataset.delVindisp)}`, { method:'DELETE' });
+        toast('✅ Período removido.');
+        await carregarIndisponibilidadesVeiculo(id);
+        await load();
+      } catch (e) { toast(e.message); }
+    });
+  } catch (e) {
+    box.innerHTML = `<div class="erro">${esc(e.message)}</div>`;
+  }
+}
+
+async function editarVeiculo(id) {
+  const x = configVeiculos.find(v => Number(v.id) === id); if (!x) return;
+  $('#veiculoId').value = x.id;
+  $('#vNome').value = x.nome || '';
+  $('#vPlaca').value = x.placa || '';
+  $('#vCategoria').value = x.categoria || 'B';
+  $('#vSituacao').value = x.ativo === false ? 'INATIVO' : (x.situacao || 'DISPONIVEL');
+  $('#tituloVeiculo').textContent = x.ativo === false ? 'Editar veículo inativo' : 'Editar veículo';
+  $('#erroVeiculo').classList.add('hide');
+  open('mVeiculo');
+  await carregarIndisponibilidadesVeiculo(id);
+}
+
+$('#novoVeiculo').onclick = novoVeiculo;
+
+$('#vAdicionarIndisp').onclick = async () => {
+  const id = Number($('#veiculoId').value || 0);
+  if (!id) return toast('Salve o veículo antes de cadastrar manutenção/indisponibilidade.');
+  const inicio = $('#vIndispInicio').value;
+  const fim = $('#vIndispFim').value || inicio;
+  if (!inicio) return toast('Informe a data inicial.');
+  try {
+    const r = await api(`/api/veiculos/${id}/indisponibilidades`, {
+      method:'POST',
+      body:JSON.stringify({
+        tipo: $('#vIndispTipo').value,
+        data_inicio: inicio,
+        data_fim: fim,
+        motivo: $('#vIndispMotivo').value
+      })
+    });
+    $('#vIndispInicio').value = '';
+    $('#vIndispFim').value = '';
+    $('#vIndispMotivo').value = '';
+    const afetadas = Number(r.aulas_futuras_no_periodo || 0);
+    toast(afetadas
+      ? `✅ Período cadastrado. ⚠️ ${afetadas} aula(s) futura(s) já existente(s) foram preservadas e precisam ser revisadas.`
+      : '✅ Período cadastrado.');
+    await carregarIndisponibilidadesVeiculo(id);
+    await load();
+  } catch (e) { toast(e.message); }
+};
+
+$('#fVeiculo').onsubmit = async e => {
+  e.preventDefault();
+  $('#erroVeiculo').classList.add('hide');
+  const id = Number($('#veiculoId').value || 0);
+  const payload = {
+    nome: $('#vNome').value,
+    placa: $('#vPlaca').value,
+    categoria: $('#vCategoria').value,
+    situacao: $('#vSituacao').value
+  };
+  try {
+    const r = await api(id ? `/api/veiculos/${id}` : '/api/veiculos', {
+      method: id ? 'PUT' : 'POST',
+      body: JSON.stringify(payload)
+    });
+    close('mVeiculo');
+    const afetadas = Number(r.aulas_futuras_afetadas || 0);
+    toast(afetadas
+      ? `✅ Veículo atualizado. ⚠️ ${afetadas} aula(s) futura(s) já existente(s) usam este veículo e foram preservadas.`
+      : (id ? '✅ Veículo atualizado.' : '✅ Veículo cadastrado.'));
+    await load();
+    abrirTab('configuracoes');
   } catch (x) {
     $('#erroVeiculo').textContent = x.message;
     $('#erroVeiculo').classList.remove('hide');
