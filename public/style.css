@@ -30,3 +30,5 @@ nav{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:26px}
   font-size: 14px;
 }
 .modal-text { color: #666; margin-top: -4px; margin-bottom: 14px; }
+.db.warn{background:#fff4cf;color:#6a5200;border:1px solid #eadb86}
+.field-help{display:block;color:#777;font-size:11px;font-weight:400;margin-top:4px}

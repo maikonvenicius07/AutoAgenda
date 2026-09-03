@@ -6,6 +6,19 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const APP_VERSION = '1.4.0';
+const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
+
+function hojeApp() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: APP_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(new Date());
+  const map = Object.fromEntries(parts.map(p => [p.type, p.value]));
+  return `${map.year}-${map.month}-${map.day}`;
+}
 
 if (!process.env.DATABASE_URL) {
   console.warn('ATENÇÃO: DATABASE_URL não configurada.');
@@ -16,8 +29,50 @@ const pool = new Pool({
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
 });
 
+app.disable('x-powered-by');
+
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'same-origin');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  next();
+});
+
+const ADMIN_USER = String(process.env.AUTOAGENDA_USER || '').trim();
+const ADMIN_PASSWORD = String(process.env.AUTOAGENDA_PASSWORD || '');
+
+app.use((req, res, next) => {
+  if (req.path === '/api/health') return next();
+  if (!ADMIN_USER || !ADMIN_PASSWORD) return next();
+
+  const auth = String(req.headers.authorization || '');
+  if (auth.startsWith('Basic ')) {
+    try {
+      const decoded = Buffer.from(auth.slice(6), 'base64').toString('utf8');
+      const sep = decoded.indexOf(':');
+      const user = sep >= 0 ? decoded.slice(0, sep) : decoded;
+      const pass = sep >= 0 ? decoded.slice(sep + 1) : '';
+      if (user === ADMIN_USER && pass === ADMIN_PASSWORD) return next();
+    } catch {}
+  }
+
+  res.setHeader('WWW-Authenticate', 'Basic realm="AutoAgenda", charset="UTF-8"');
+  return res.status(401).send('Acesso protegido ao AutoAgenda.');
+});
+
 app.use(express.json({ limit: '1mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  etag: true,
+  setHeaders(res, filePath) {
+    if (/\.(png|jpg|jpeg|webp|svg|ico)$/i.test(filePath)) {
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+    } else {
+      // Durante a evolução do projeto, evita o navegador carregar JS/HTML antigos após um deploy.
+      res.setHeader('Cache-Control', 'no-store');
+    }
+  }
+}));
 
 async function query(text, params = []) {
   return pool.query(text, params);
@@ -50,7 +105,10 @@ async function initDatabase() {
         email VARCHAR(180),
         categoria VARCHAR(10) DEFAULT 'B',
         aulas_contratadas INTEGER NOT NULL DEFAULT 20 CHECK (aulas_contratadas > 0),
+        -- Campo legado mantido por compatibilidade com versões anteriores.
         aulas_realizadas INTEGER NOT NULL DEFAULT 0 CHECK (aulas_realizadas >= 0),
+        -- Aulas realizadas antes de começar a usar o AutoAgenda.
+        aulas_realizadas_anteriores INTEGER NOT NULL DEFAULT 0 CHECK (aulas_realizadas_anteriores >= 0),
         observacoes TEXT,
         ativo BOOLEAN NOT NULL DEFAULT TRUE,
         criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
@@ -119,7 +177,17 @@ async function initDatabase() {
       )
     `);
 
-    // Migração segura da V1.2 para a V1.3.
+    // Migração segura das versões anteriores para a V1.4.
+    // Se a coluna nova ainda não existir, copiamos o valor legado como ponto de partida.
+    await client.query('ALTER TABLE autoagenda.alunos ADD COLUMN IF NOT EXISTS aulas_realizadas_anteriores INTEGER');
+    await client.query(`
+      UPDATE autoagenda.alunos
+      SET aulas_realizadas_anteriores = COALESCE(aulas_realizadas, 0)
+      WHERE aulas_realizadas_anteriores IS NULL
+    `);
+    await client.query('ALTER TABLE autoagenda.alunos ALTER COLUMN aulas_realizadas_anteriores SET DEFAULT 0');
+    await client.query('ALTER TABLE autoagenda.alunos ALTER COLUMN aulas_realizadas_anteriores SET NOT NULL');
+
     await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS plan_id INTEGER');
     await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS numero_plano INTEGER');
     await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS aulas_unidades INTEGER NOT NULL DEFAULT 1');
@@ -146,6 +214,7 @@ async function initDatabase() {
     await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_veiculo_data ON autoagenda.aulas(veiculo_id, data_aula)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_aluno_data ON autoagenda.aulas(aluno_id, data_aula)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_plan ON autoagenda.aulas(plan_id, data_aula, hora_inicio)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_planos_aluno_ativo ON autoagenda.planos_aula(aluno_id, ativo)');
 
     await client.query(`
       INSERT INTO autoagenda.instrutores (nome, whatsapp, email, categorias)
@@ -166,7 +235,7 @@ async function initDatabase() {
     `);
 
     await client.query('COMMIT');
-    console.log('Schema autoagenda V1.3 verificado/criado com sucesso.');
+    console.log(`Schema autoagenda V${APP_VERSION} verificado/criado com sucesso.`);
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Erro ao inicializar schema autoagenda:', error);
@@ -185,7 +254,7 @@ app.get('/api/health', async (req, res) => {
                WHERE schema_name = 'autoagenda'
              ) AS schema_autoagenda
     `);
-    res.json({ ok: true, database: true, schema_autoagenda: result.rows[0].schema_autoagenda, agora: result.rows[0].agora });
+    res.json({ ok: true, version: APP_VERSION, auth_required: Boolean(ADMIN_USER && ADMIN_PASSWORD), database: true, schema_autoagenda: result.rows[0].schema_autoagenda, agora: result.rows[0].agora });
   } catch (error) {
     console.error(error);
     res.status(500).json({ ok: false, database: false, error: 'Falha ao conectar ao banco.' });
@@ -216,6 +285,42 @@ function normalizarDias(dias, dataInicio) {
   const validos = Array.from(new Set((Array.isArray(dias) ? dias : []).map(Number).filter(n => Number.isInteger(n) && n >= 0 && n <= 6))).sort((a, b) => a - b);
   if (validos.length) return validos;
   return [dateOnlyUTC(dataInicio).getUTCDay()];
+}
+
+async function saldoAluno(client, alunoId) {
+  const r = await client.query(`
+    SELECT a.id, a.aulas_contratadas,
+           (
+             COALESCE(a.aulas_realizadas_anteriores, 0)
+             + COALESCE((
+               SELECT SUM(au.aulas_unidades)
+               FROM autoagenda.aulas au
+               WHERE au.aluno_id = a.id AND au.status = 'REALIZADA'
+             ), 0)
+           )::int AS realizadas,
+           COALESCE((
+             SELECT SUM(au.aulas_unidades)
+             FROM autoagenda.aulas au
+             WHERE au.aluno_id = a.id
+               AND au.data_aula >= $2::date
+               AND au.status IN ('AGENDADA','CONFIRMADA')
+           ), 0)::int AS agendadas
+    FROM autoagenda.alunos a
+    WHERE a.id = $1 AND a.ativo = TRUE
+  `, [Number(alunoId), hojeApp()]);
+
+  if (!r.rowCount) return null;
+  const x = r.rows[0];
+  return {
+    ...x,
+    disponiveis: Math.max(0, Number(x.aulas_contratadas) - Number(x.realizadas) - Number(x.agendadas))
+  };
+}
+
+function validarInteiroPositivo(valor, padrao, maximo = 10000) {
+  const n = Number(valor);
+  if (!Number.isInteger(n) || n < 1 || n > maximo) return padrao;
+  return n;
 }
 
 function gerarOcorrencias({ data_inicio, hora_inicio, duracao_base_minutos, aulas_por_encontro, total_aulas, dias_semana }) {
@@ -262,7 +367,7 @@ async function verificarConflito(client, dados, excluirIds = []) {
     JOIN autoagenda.instrutores i ON i.id = a.instrutor_id
     JOIN autoagenda.veiculos v ON v.id = a.veiculo_id
     WHERE a.data_aula = $1
-      AND a.status NOT IN ('CANCELADA', 'REMARCADA')
+      AND a.status IN ('AGENDADA', 'CONFIRMADA')
       AND (cardinality($7::int[]) = 0 OR NOT (a.id = ANY($7::int[])))
       AND (a.aluno_id = $2 OR a.instrutor_id = $3 OR a.veiculo_id = $4)
       AND ((a.data_aula + a.hora_inicio) < ($5::timestamp + ($6 || ' minutes')::interval))
@@ -319,7 +424,8 @@ app.get('/api/alunos', async (req, res) => {
   try {
     const result = await query(`
       SELECT a.id, a.nome, a.whatsapp, a.email, a.categoria,
-             a.aulas_contratadas, a.aulas_realizadas, a.observacoes,
+             a.aulas_contratadas, a.aulas_realizadas,
+             a.aulas_realizadas_anteriores, a.observacoes,
              a.ativo, a.criado_em,
              COALESCE((
                SELECT SUM(au.aulas_unidades)
@@ -330,12 +436,13 @@ app.get('/api/alunos', async (req, res) => {
                SELECT SUM(au.aulas_unidades)
                FROM autoagenda.aulas au
                WHERE au.aluno_id = a.id
+                 AND au.data_aula >= $1::date
                  AND au.status IN ('AGENDADA','CONFIRMADA')
              ), 0)::int AS aulas_agendadas
       FROM autoagenda.alunos a
       WHERE a.ativo = TRUE
       ORDER BY a.nome
-    `);
+    `, [hojeApp()]);
     res.json(result.rows);
   } catch (error) {
     console.error(error);
@@ -345,15 +452,24 @@ app.get('/api/alunos', async (req, res) => {
 
 app.post('/api/alunos', async (req, res) => {
   try {
-    const { nome, whatsapp, email, categoria = 'B', aulas_contratadas = 20, observacoes = '' } = req.body;
+    const {
+      nome, whatsapp, email, categoria = 'B', aulas_contratadas = 20,
+      aulas_realizadas_anteriores = 0, observacoes = ''
+    } = req.body;
     if (!nome || !whatsapp) return res.status(400).json({ error: 'Nome e WhatsApp são obrigatórios.' });
 
     const result = await query(`
       INSERT INTO autoagenda.alunos
-        (nome, whatsapp, email, categoria, aulas_contratadas, observacoes)
-      VALUES ($1, $2, $3, $4, $5, $6)
+        (nome, whatsapp, email, categoria, aulas_contratadas,
+         aulas_realizadas, aulas_realizadas_anteriores, observacoes)
+      VALUES ($1, $2, $3, $4, $5, $6, $6, $7)
       RETURNING *
-    `, [nome.trim(), whatsapp.trim(), email || null, categoria, Number(aulas_contratadas) || 20, observacoes || '']);
+    `, [
+      nome.trim(), whatsapp.trim(), email || null, categoria,
+      validarInteiroPositivo(aulas_contratadas, 20, 500),
+      Math.max(0, Number(aulas_realizadas_anteriores) || 0),
+      observacoes || ''
+    ]);
 
     res.status(201).json(result.rows[0]);
   } catch (error) {
@@ -365,19 +481,26 @@ app.post('/api/alunos', async (req, res) => {
 app.put('/api/alunos/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const { nome, whatsapp, email, categoria, aulas_contratadas, aulas_realizadas, observacoes } = req.body;
+    const {
+      nome, whatsapp, email, categoria, aulas_contratadas,
+      aulas_realizadas_anteriores = 0, observacoes
+    } = req.body;
     if (!nome || !whatsapp) return res.status(400).json({ error: 'Nome e WhatsApp são obrigatórios.' });
 
     const result = await query(`
       UPDATE autoagenda.alunos
       SET nome = $1, whatsapp = $2, email = $3, categoria = $4,
-          aulas_contratadas = $5, aulas_realizadas = $6, observacoes = $7,
+          aulas_contratadas = $5,
+          aulas_realizadas = $6,
+          aulas_realizadas_anteriores = $6,
+          observacoes = $7,
           atualizado_em = NOW()
       WHERE id = $8 AND ativo = TRUE
       RETURNING *
     `, [
       nome.trim(), whatsapp.trim(), email || null, categoria || 'B',
-      Number(aulas_contratadas) || 20, Number(aulas_realizadas) || 0,
+      validarInteiroPositivo(aulas_contratadas, 20, 500),
+      Math.max(0, Number(aulas_realizadas_anteriores) || 0),
       observacoes || '', id
     ]);
 
@@ -390,19 +513,52 @@ app.put('/api/alunos/:id', async (req, res) => {
 });
 
 app.delete('/api/alunos/:id', async (req, res) => {
+  const client = await pool.connect();
   try {
     const id = Number(req.params.id);
-    const result = await query(`
+    if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: 'Aluno inválido.' });
+
+    await client.query('BEGIN');
+    const result = await client.query(`
       UPDATE autoagenda.alunos
       SET ativo = FALSE, atualizado_em = NOW()
       WHERE id = $1 AND ativo = TRUE
       RETURNING id
     `, [id]);
-    if (!result.rowCount) return res.status(404).json({ error: 'Aluno não encontrado.' });
-    res.json({ ok: true });
+
+    if (!result.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Aluno não encontrado.' });
+    }
+
+    const planosEncerrados = await client.query(`
+      UPDATE autoagenda.planos_aula
+      SET ativo = FALSE, atualizado_em = NOW()
+      WHERE aluno_id = $1 AND ativo = TRUE
+      RETURNING id
+    `, [id]);
+
+    const futurasCanceladas = await client.query(`
+      UPDATE autoagenda.aulas
+      SET status = 'CANCELADA', atualizado_em = NOW()
+      WHERE aluno_id = $1
+        AND data_aula >= $2::date
+        AND status IN ('AGENDADA','CONFIRMADA')
+      RETURNING id
+    `, [id, hojeApp()]);
+
+    await client.query('COMMIT');
+    res.json({
+      ok: true,
+      planos_encerrados: planosEncerrados.rowCount,
+      aulas_futuras_canceladas: futurasCanceladas.rowCount
+    });
   } catch (error) {
+    try { await client.query('ROLLBACK'); } catch {}
     console.error(error);
     res.status(500).json({ error: 'Erro ao excluir aluno.' });
+  } finally {
+    client.release();
   }
 });
 
@@ -453,6 +609,7 @@ app.get('/api/planos', async (req, res) => {
       JOIN autoagenda.instrutores i ON i.id = p.instrutor_id
       JOIN autoagenda.veiculos v ON v.id = p.veiculo_id
       JOIN autoagenda.locais l ON l.id = p.local_id
+      WHERE al.ativo = TRUE OR p.ativo = TRUE
       ORDER BY p.ativo DESC, p.criado_em DESC
     `);
     res.json(result.rows);
@@ -469,8 +626,22 @@ app.post('/api/planos/preview', async (req, res) => {
     if (!base.aluno_id || !base.instrutor_id || !base.veiculo_id || !base.local_id || !base.data_inicio || !base.hora_inicio) {
       return res.status(400).json({ error: 'Preencha aluno, instrutor, veículo, local, data e horário.' });
     }
+    if (String(base.data_inicio).slice(0, 10) < hojeApp()) {
+      return res.status(400).json({ error: 'A data de início do plano não pode estar no passado.' });
+    }
 
-    const ocorrencias = gerarOcorrencias(base);
+    const saldo = await saldoAluno(client, base.aluno_id);
+    if (!saldo) return res.status(404).json({ error: 'Aluno não encontrado ou inativo.' });
+
+    const totalSolicitado = validarInteiroPositivo(base.total_aulas, 1, 500);
+    if (totalSolicitado > saldo.disponiveis) {
+      return res.status(400).json({
+        error: `O aluno possui somente ${saldo.disponiveis} aula(s) disponível(is) para programar.`,
+        saldo
+      });
+    }
+
+    const ocorrencias = gerarOcorrencias({ ...base, total_aulas: totalSolicitado });
     const conflitos = await listarConflitosPlano(client, base, ocorrencias);
     const conflitoMap = new Map(conflitos.map(c => [`${c.data_aula}|${c.hora_inicio}`, c]));
     const preview = ocorrencias.map(o => {
@@ -501,11 +672,45 @@ app.post('/api/planos', async (req, res) => {
     if (!base.aluno_id || !base.instrutor_id || !base.veiculo_id || !base.local_id || !base.data_inicio || !base.hora_inicio) {
       return res.status(400).json({ error: 'Preencha aluno, instrutor, veículo, local, data e horário.' });
     }
+    if (String(base.data_inicio).slice(0, 10) < hojeApp()) {
+      return res.status(400).json({ error: 'A data de início do plano não pode estar no passado.' });
+    }
+
+    const saldo = await saldoAluno(client, base.aluno_id);
+    if (!saldo) return res.status(404).json({ error: 'Aluno não encontrado ou inativo.' });
+
+    const totalSolicitado = validarInteiroPositivo(base.total_aulas, 1, 500);
+    if (totalSolicitado > saldo.disponiveis) {
+      return res.status(400).json({
+        error: `O aluno possui somente ${saldo.disponiveis} aula(s) disponível(is) para programar.`,
+        saldo
+      });
+    }
 
     const dias = normalizarDias(base.dias_semana, base.data_inicio);
-    const ocorrencias = gerarOcorrencias({ ...base, dias_semana: dias });
+    const ocorrencias = gerarOcorrencias({ ...base, total_aulas: totalSolicitado, dias_semana: dias });
 
     await client.query('BEGIN');
+
+    // Evita que dois salvamentos simultâneos ultrapassem o saldo do mesmo aluno.
+    const lockAluno = await client.query(
+      'SELECT id FROM autoagenda.alunos WHERE id = $1 AND ativo = TRUE FOR UPDATE',
+      [Number(base.aluno_id)]
+    );
+    if (!lockAluno.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Aluno não encontrado ou inativo.' });
+    }
+
+    const saldoAtual = await saldoAluno(client, base.aluno_id);
+    if (!saldoAtual || totalSolicitado > saldoAtual.disponiveis) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        error: 'O saldo de aulas do aluno mudou. Gere a prévia novamente antes de confirmar.',
+        saldo: saldoAtual
+      });
+    }
+
     const conflitos = await listarConflitosPlano(client, base, ocorrencias);
     if (conflitos.length) {
       await client.query('ROLLBACK');
@@ -523,7 +728,7 @@ app.post('/api/planos', async (req, res) => {
       base.data_inicio, String(base.hora_inicio).slice(0, 5),
       Math.max(1, Number(base.duracao_base_minutos) || 50),
       Math.min(4, Math.max(1, Number(base.aulas_por_encontro) || 1)),
-      Math.max(1, Number(base.total_aulas) || 1), dias, base.observacoes || ''
+      totalSolicitado, dias, base.observacoes || ''
     ]);
 
     const planId = plano.rows[0].id;
@@ -573,9 +778,9 @@ app.patch('/api/planos/:id/encerrar', async (req, res) => {
         UPDATE autoagenda.aulas
         SET status = 'CANCELADA', atualizado_em = NOW()
         WHERE plan_id = $1
-          AND data_aula >= CURRENT_DATE
+          AND data_aula >= $2::date
           AND status IN ('AGENDADA','CONFIRMADA')
-      `, [id]);
+      `, [id, hojeApp()]);
     }
     await client.query('COMMIT');
     res.json({ ok: true });
@@ -625,12 +830,12 @@ app.get('/api/aulas', async (req, res) => {
 app.post('/api/aulas', async (req, res) => {
   const client = await pool.connect();
   try {
-    const { aluno_id, instrutor_id, veiculo_id, local_id, data_aula, hora_inicio, duracao_minutos = 50, aulas_unidades = 1, observacoes = '' } = req.body;
+    const { aluno_id, instrutor_id, veiculo_id, local_id, data_aula, hora_inicio, duracao_minutos = 50, aulas_unidades = 1, status = 'AGENDADA', observacoes = '' } = req.body;
     if (!aluno_id || !instrutor_id || !veiculo_id || !local_id || !data_aula || !hora_inicio) {
       return res.status(400).json({ error: 'Preencha aluno, instrutor, veículo, local, data e horário.' });
     }
 
-    const dados = { aluno_id, instrutor_id, veiculo_id, data_aula, hora_inicio, duracao_minutos };
+    const dados = { aluno_id, instrutor_id, veiculo_id, data_aula, hora_inicio, duracao_minutos: validarInteiroPositivo(duracao_minutos, 50, 480) };
     await client.query('BEGIN');
     const conflito = await verificarConflito(client, dados);
     if (conflito.rowCount) {
@@ -642,12 +847,14 @@ app.post('/api/aulas', async (req, res) => {
       INSERT INTO autoagenda.aulas
         (aluno_id, instrutor_id, veiculo_id, local_id, data_aula, hora_inicio,
          duracao_minutos, status, observacoes, aulas_unidades)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,'AGENDADA',$8,$9)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
       RETURNING *
     `, [
       Number(aluno_id), Number(instrutor_id), Number(veiculo_id), Number(local_id), data_aula,
-      String(hora_inicio).slice(0, 5), Number(duracao_minutos), observacoes || '',
-      Math.min(4, Math.max(1, Number(aulas_unidades) || 1))
+      String(hora_inicio).slice(0, 5), validarInteiroPositivo(duracao_minutos, 50, 480),
+      ['AGENDADA','CONFIRMADA','REALIZADA','REMARCADA','CANCELADA','FALTOU'].includes(status) ? status : 'AGENDADA',
+      observacoes || '',
+      Math.min(4, validarInteiroPositivo(aulas_unidades, 1, 4))
     ]);
 
     await client.query('COMMIT');
@@ -672,6 +879,8 @@ app.put('/api/aulas/:id', async (req, res) => {
     if (!aluno_id || !instrutor_id || !veiculo_id || !local_id || !data_aula || !hora_inicio) {
       return res.status(400).json({ error: 'Preencha aluno, instrutor, veículo, local, data e horário.' });
     }
+    const statusPermitidos = ['AGENDADA','CONFIRMADA','REALIZADA','REMARCADA','CANCELADA','FALTOU'];
+    if (!statusPermitidos.includes(status)) return res.status(400).json({ error: 'Status inválido.' });
 
     const existente = await client.query('SELECT id, plan_id FROM autoagenda.aulas WHERE id = $1', [id]);
     if (!existente.rowCount) return res.status(404).json({ error: 'Aula não encontrada.' });
@@ -696,8 +905,8 @@ app.put('/api/aulas/:id', async (req, res) => {
       RETURNING *
     `, [
       Number(aluno_id), Number(instrutor_id), Number(veiculo_id), Number(local_id), data_aula,
-      String(hora_inicio).slice(0, 5), Number(duracao_minutos),
-      Math.min(4, Math.max(1, Number(aulas_unidades) || 1)), status, observacoes || '', id
+      String(hora_inicio).slice(0, 5), validarInteiroPositivo(duracao_minutos, 50, 480),
+      Math.min(4, validarInteiroPositivo(aulas_unidades, 1, 4)), status, observacoes || '', id
     ]);
 
     await client.query('COMMIT');
@@ -725,10 +934,24 @@ app.put('/api/aulas/:id/serie', async (req, res) => {
     if (!payload.data_aula || !payload.hora_inicio || !payload.instrutor_id || !payload.veiculo_id || !payload.local_id) {
       return res.status(400).json({ error: 'Preencha os dados da alteração.' });
     }
+    if (payload.status && !['AGENDADA','CONFIRMADA','REALIZADA','REMARCADA','CANCELADA','FALTOU'].includes(payload.status)) {
+      return res.status(400).json({ error: 'Status inválido.' });
+    }
+    if (String(payload.data_aula).slice(0, 10) < hojeApp()) {
+      return res.status(400).json({ error: 'Uma alteração em série não pode deslocar as próximas aulas para uma data passada.' });
+    }
 
     const antigoDT = dateTimeUTC(alvo.data_aula, alvo.hora_inicio);
     const novoDT = dateTimeUTC(payload.data_aula, payload.hora_inicio);
     const delta = novoDT.getTime() - antigoDT.getTime();
+    const deltaDias = Math.round(
+      (dateOnlyUTC(payload.data_aula).getTime() - dateOnlyUTC(alvo.data_aula).getTime()) / 86400000
+    );
+
+    const planoQ = await client.query('SELECT dias_semana FROM autoagenda.planos_aula WHERE id = $1', [alvo.plan_id]);
+    if (!planoQ.rowCount) return res.status(404).json({ error: 'Plano automático não encontrado.' });
+    const diasAtuais = Array.isArray(planoQ.rows[0].dias_semana) ? planoQ.rows[0].dias_semana.map(Number) : [];
+    const novosDias = Array.from(new Set(diasAtuais.map(d => ((d + deltaDias) % 7 + 7) % 7))).sort((a, b) => a - b);
 
     await client.query('BEGIN');
     const afetadasQ = await client.query(`
@@ -749,6 +972,7 @@ app.put('/api/aulas/:id/serie', async (req, res) => {
     const novas = afetadas.map(a => {
       const dt = dateTimeUTC(a.data_aula, a.hora_inicio);
       const novo = new Date(dt.getTime() + delta);
+      const isAlvo = Number(a.id) === id;
       return {
         ...a,
         data_aula_nova: isoDateUTC(novo),
@@ -756,8 +980,12 @@ app.put('/api/aulas/:id/serie', async (req, res) => {
         instrutor_id_novo: Number(payload.instrutor_id),
         veiculo_id_novo: Number(payload.veiculo_id),
         local_id_novo: Number(payload.local_id),
-        duracao_minutos_nova: Number(payload.duracao_minutos) || Number(a.duracao_minutos),
-        aulas_unidades_nova: Math.min(4, Math.max(1, Number(payload.aulas_unidades) || Number(a.aulas_unidades) || 1))
+        duracao_minutos_nova: isAlvo
+          ? validarInteiroPositivo(payload.duracao_minutos, Number(a.duracao_minutos), 480)
+          : Number(a.duracao_minutos),
+        aulas_unidades_nova: isAlvo
+          ? Math.min(4, validarInteiroPositivo(payload.aulas_unidades, Number(a.aulas_unidades) || 1, 4))
+          : Number(a.aulas_unidades || 1)
       };
     });
 
@@ -802,12 +1030,11 @@ app.put('/api/aulas/:id/serie', async (req, res) => {
     await client.query(`
       UPDATE autoagenda.planos_aula
       SET hora_inicio = $1, instrutor_id = $2, veiculo_id = $3, local_id = $4,
-          duracao_base_minutos = $5, atualizado_em = NOW()
+          dias_semana = $5::int[], atualizado_em = NOW()
       WHERE id = $6
     `, [
       String(payload.hora_inicio).slice(0,5), Number(payload.instrutor_id), Number(payload.veiculo_id),
-      Number(payload.local_id), Math.max(1, Math.floor((Number(payload.duracao_minutos) || 50) / (Number(payload.aulas_unidades) || 1))),
-      alvo.plan_id
+      Number(payload.local_id), novosDias, alvo.plan_id
     ]);
 
     await client.query('COMMIT');
@@ -859,7 +1086,12 @@ app.get('*', (req, res) => {
 async function start() {
   try {
     await initDatabase();
-    app.listen(PORT, () => console.log(`AutoAgenda V1.3 rodando na porta ${PORT}`));
+    app.listen(PORT, () => {
+      console.log(`AutoAgenda V${APP_VERSION} rodando na porta ${PORT}`);
+      if (!ADMIN_USER || !ADMIN_PASSWORD) {
+        console.warn('SEGURANÇA: AUTOAGENDA_USER/AUTOAGENDA_PASSWORD não configurados. O acesso está sem autenticação.');
+      }
+    });
   } catch (error) {
     console.error('AutoAgenda não iniciou porque o banco não pôde ser preparado.');
     process.exit(1);

@@ -15,7 +15,11 @@ const fmtData = d => dataISO(d).split('-').reverse().join('/');
 const esc = v => String(v ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 
 async function api(u, o = {}) {
-  const r = await fetch(u, { headers: { 'Content-Type': 'application/json', ...(o.headers || {}) }, ...o });
+  const { headers = {}, ...rest } = o;
+  const r = await fetch(u, {
+    ...rest,
+    headers: { 'Content-Type': 'application/json', ...headers }
+  });
   let d = {};
   try { d = await r.json(); } catch {}
   if (!r.ok) {
@@ -55,7 +59,11 @@ function statusLabel(s) {
 }
 
 function realizadasAluno(a) {
-  return Math.max(Number(a.aulas_realizadas || 0), Number(a.realizadas_sistema || 0));
+  const anteriores = Number(
+    a.aulas_realizadas_anteriores ?? a.aulas_realizadas ?? 0
+  );
+  const sistema = Number(a.realizadas_sistema || 0);
+  return Math.max(0, anteriores) + Math.max(0, sistema);
 }
 
 function studentHtml(a) {
@@ -136,7 +144,10 @@ function planoHtml(p) {
       <div><span>Por encontro</span><b>${p.aulas_por_encontro}</b></div>
       <div><span>Início</span><b class="small-value">${fmtData(p.data_inicio)}</b></div>
     </div>
-    ${p.ativo ? `<div class="actions-row"><button type="button" class="mini delete" data-encerrar-plano="${p.id}">⏹️ Encerrar plano</button></div>` : ''}
+    ${p.ativo ? `<div class="actions-row">
+      <button type="button" class="mini secondary" data-encerrar-plano="${p.id}">⏹️ Encerrar e manter aulas</button>
+      <button type="button" class="mini delete" data-encerrar-cancelar="${p.id}">🗑️ Encerrar e cancelar futuras</button>
+    </div>` : ''}
   </article>`;
 }
 
@@ -145,7 +156,9 @@ function render() {
   const h = iso();
   const ah = aulas.filter(a => dataISO(a.data_aula) === h && a.status !== 'CANCELADA');
   $('#sHoje').textContent = ah.length;
-  $('#sAgendadas').textContent = aulas.filter(a => ['AGENDADA','CONFIRMADA'].includes(a.status)).reduce((s, a) => s + Number(a.aulas_unidades || 1), 0);
+  $('#sAgendadas').textContent = aulas
+    .filter(a => dataISO(a.data_aula) >= h && ['AGENDADA','CONFIRMADA'].includes(a.status))
+    .reduce((s, a) => s + Number(a.aulas_unidades || 1), 0);
   $('#sPlanos').textContent = planos.filter(p => p.ativo).length;
 
   $('#listaAlunos').innerHTML = alunos.length ? alunos.map(studentHtml).join('') : '<div class="empty">Nenhum aluno cadastrado.</div>';
@@ -184,7 +197,8 @@ function bindDynamic() {
   $$('[data-edit-aula]').forEach(b => b.onclick = () => editarAula(Number(b.dataset.editAula)));
   $$('[data-del-aula]').forEach(b => b.onclick = () => pedirExcluirAula(Number(b.dataset.delAula)));
   $$('[data-repor-aula]').forEach(b => b.onclick = () => reporAula(Number(b.dataset.reporAula)));
-  $$('[data-encerrar-plano]').forEach(b => b.onclick = () => pedirEncerrarPlano(Number(b.dataset.encerrarPlano)));
+  $$('[data-encerrar-plano]').forEach(b => b.onclick = () => pedirEncerrarPlano(Number(b.dataset.encerrarPlano), false));
+  $$('[data-encerrar-cancelar]').forEach(b => b.onclick = () => pedirEncerrarPlano(Number(b.dataset.encerrarCancelar), true));
 }
 
 async function load() {
@@ -201,11 +215,12 @@ async function load() {
 
 async function health() {
   try {
-    await api('/api/health');
-    $('#db').textContent = '🟢 Banco conectado — alunos, aulas e planos automáticos serão salvos.';
-    $('#db').className = 'db ok';
+    const h = await api('/api/health');
+    const seguranca = h.auth_required ? ' · 🔒 acesso protegido' : ' · ⚠️ acesso sem senha';
+    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '1.4'}${seguranca}.`;
+    $('#db').className = h.auth_required ? 'db ok' : 'db warn';
   } catch {
-    $('#db').textContent = '🔴 Banco não conectado. Configure DATABASE_URL no Render.';
+    $('#db').textContent = '🔴 Banco não conectado. Verifique DATABASE_URL no Render.';
     $('#db').className = 'db fail';
   }
 }
@@ -231,7 +246,9 @@ function editarAluno(id) {
   $('#email').value = a.email || '';
   $('#cat').value = a.categoria || 'B';
   $('#contratadas').value = a.aulas_contratadas || 20;
-  $('#realizadas').value = realizadasAluno(a);
+  $('#realizadas').value = Number(
+    a.aulas_realizadas_anteriores ?? a.aulas_realizadas ?? 0
+  );
   $('#obs').value = a.observacoes || '';
   $('#tituloAluno').textContent = 'Editar aluno';
   $('#salvarAluno').textContent = 'Salvar alterações';
@@ -259,8 +276,11 @@ function pedirExcluirAluno(id) {
   if (!a) return;
   confirmar('Excluir aluno?', `O aluno ${a.nome} deixará de aparecer na lista. As aulas antigas vinculadas a ele serão preservadas.`, async () => {
     try {
-      await api('/api/alunos/' + id, { method: 'DELETE' });
-      toast('✅ Aluno excluído.');
+      const r = await api('/api/alunos/' + id, { method: 'DELETE' });
+      const extras = Number(r.aulas_futuras_canceladas || 0)
+        ? ` · ${r.aulas_futuras_canceladas} aula(s) futura(s) cancelada(s)`
+        : '';
+      toast(`✅ Aluno excluído${extras}.`);
       await load();
     } catch (e) { toast(e.message); }
   }, 'Excluir');
@@ -277,7 +297,7 @@ $('#fAluno').onsubmit = async e => {
     email: $('#email').value,
     categoria: $('#cat').value,
     aulas_contratadas: Number($('#contratadas').value),
-    aulas_realizadas: Number($('#realizadas').value),
+    aulas_realizadas_anteriores: Number($('#realizadas').value),
     observacoes: $('#obs').value
   };
   try {
@@ -418,7 +438,7 @@ function weekdayUTC(data) {
 
 function marcarDiaInicial() {
   const dia = weekdayUTC($('#pDataInicio').value);
-  if (dia === null || dia === 0) return;
+  if (dia === null) return;
   const check = $(`input[name="pDia"][value="${dia}"]`);
   if (check && !$$('input[name="pDia"]:checked').length) check.checked = true;
 }
@@ -460,7 +480,13 @@ function abrirPlano(id) {
   $('#pAlunoId').value = a.id;
   $('#pAlunoNome').textContent = a.nome;
   const ainda = aulasAindaProgramar(a);
+  if (ainda <= 0) {
+    toast('Este aluno não possui aulas disponíveis para um novo plano. Confira as aulas contratadas, realizadas e já agendadas.');
+    return;
+  }
   $('#pAlunoResumo').textContent = `${a.aulas_contratadas} contratadas · ${realizadasAluno(a)} realizadas · ${a.aulas_agendadas || 0} já agendadas · ${ainda} ainda a programar`;
+  $('#pTotal').max = String(ainda);
+  $('#pDataInicio').min = iso();
   $('#pDataInicio').value = iso();
   $('#pHora').value = '08:00';
   $('#pDuracao').value = '50';
@@ -519,6 +545,11 @@ $('#previewPlano').onclick = async () => {
   const payload = payloadPlano();
   if (!payload.dias_semana.length) return mostrarErroPlano('Selecione pelo menos um dia da semana.');
   if (!payload.total_aulas || payload.total_aulas < 1) return mostrarErroPlano('Informe quantas aulas deseja programar.');
+  const alunoPlano = alunos.find(a => Number(a.id) === Number(payload.aluno_id));
+  const disponiveis = alunoPlano ? aulasAindaProgramar(alunoPlano) : 0;
+  if (payload.total_aulas > disponiveis) {
+    return mostrarErroPlano(`Você pode programar no máximo ${disponiveis} aula(s) para este aluno.`);
+  }
 
   try {
     $('#previewPlano').disabled = true;
@@ -575,16 +606,30 @@ $$('#fPlano input, #fPlano select, #fPlano textarea').forEach(el => {
   });
 });
 
-function pedirEncerrarPlano(id) {
+function pedirEncerrarPlano(id, cancelarFuturas = false) {
   const p = planos.find(x => Number(x.id) === id);
   if (!p) return;
-  confirmar('Encerrar plano?', `O plano automático de ${p.aluno_nome} será encerrado. As aulas que já foram geradas continuarão na agenda.`, async () => {
-    try {
-      await api(`/api/planos/${id}/encerrar`, { method: 'PATCH', body: JSON.stringify({ cancelar_futuras: false }) });
-      toast('✅ Plano encerrado. As aulas já criadas foram mantidas.');
-      await load();
-    } catch (e) { toast(e.message); }
-  }, 'Encerrar');
+  const texto = cancelarFuturas
+    ? `O plano automático de ${p.aluno_nome} será encerrado e as aulas futuras ainda agendadas/confirmadas serão canceladas. O histórico passado será preservado.`
+    : `O plano automático de ${p.aluno_nome} será encerrado, mas as aulas já geradas continuarão na agenda.`;
+
+  confirmar(
+    cancelarFuturas ? 'Encerrar e cancelar futuras?' : 'Encerrar plano?',
+    texto,
+    async () => {
+      try {
+        await api(`/api/planos/${id}/encerrar`, {
+          method: 'PATCH',
+          body: JSON.stringify({ cancelar_futuras: cancelarFuturas })
+        });
+        toast(cancelarFuturas
+          ? '✅ Plano encerrado e aulas futuras canceladas.'
+          : '✅ Plano encerrado. As aulas já criadas foram mantidas.');
+        await load();
+      } catch (e) { toast(e.message); }
+    },
+    cancelarFuturas ? 'Encerrar e cancelar' : 'Encerrar'
+  );
 }
 
 // ========================= NAVEGAÇÃO / INICIALIZAÇÃO =========================
