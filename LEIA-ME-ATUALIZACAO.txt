@@ -1,54 +1,40 @@
-AUTOAGENDA V1.2 — EDITAR E EXCLUIR
+AUTOAGENDA V1.5.1 — CONFIGURAÇÕES COMPLETAS
+================================================
 
-Esta versão corrige exatamente os pontos solicitados:
+OBJETIVO DESTA VERSÃO
+Concluir somente a ETAPA 1 do Roteiro de Prompts do AutoAgenda.
+A Agenda Semanal foi preservada sem novas funcionalidades nesta versão.
 
-ALUNOS
-- botão Editar
-- alterar nome, WhatsApp, e-mail, categoria, aulas contratadas, aulas realizadas e observações
-- botão Excluir
-- exclusão lógica do aluno para preservar aulas antigas
+NOVIDADES
+1. Instrutores, veículos e locais agora podem ser DESATIVADOS.
+2. Existe o botão MOSTRAR INATIVOS.
+3. Cadastros inativos podem ser REATIVADOS.
+4. A exclusão definitiva somente é permitida quando o cadastro nunca foi usado.
+5. Cadastros com histórico permanecem salvos e podem ficar inativos.
+6. Plano ativo ou aula futura bloqueiam a desativação do recurso.
+7. Recursos inativos não aparecem em novas aulas nem em novos planos.
+8. O backend valida recursos ativos mesmo se alguém tentar chamar a API diretamente.
+9. Há prevenção de duplicidades evidentes.
 
-AGENDA
-- botão Alterar em cada aula
-- alterar data
-- alterar horário
-- alterar duração
-- alterar aluno, instrutor, veículo, local, status e observações
-- mantém verificação de conflito de horário
-- botão Excluir aula definitivamente
+COMO ATUALIZAR
+1. Faça backup da versão atual.
+2. Copie o conteúdo desta pasta para a raiz do repositório AutoAgenda.
+3. Substitua os arquivos existentes.
+4. NÃO altere DATABASE_URL.
+5. Faça Commit changes no GitHub.
+6. Aguarde o Render concluir o deploy.
+7. Pressione Ctrl + F5 no navegador.
+8. Confirme no topo: Banco conectado — AutoAgenda V1.5.1.
 
-COMO ATUALIZAR NO GITHUB
-1. Extraia este ZIP.
-2. No repositório AutoAgenda, substitua estes arquivos:
-   - server.js
-   - public/index.html
-   - public/app.js
-   - public/style.css
-3. Faça Commit changes.
-4. O Render fará novo deploy automaticamente.
-5. Se não fizer, abra Render > AutoAgenda > Manual Deploy > Deploy latest commit.
+BANCO
+Não é necessário executar schema.sql manualmente.
+Não é necessário criar outro PostgreSQL.
 
-NÃO ALTERE:
-- DATABASE_URL
-- NODE_ENV
-- banco mau-mau-ranking
+IMPORTANTE
+A exclusão definitiva é diferente da desativação:
+- DESATIVAR: preserva o cadastro e todo o histórico.
+- EXCLUIR DEFINITIVAMENTE: só aparece para cadastro inativo sem nenhuma aula ou plano no histórico.
 
-TESTE
-1. Abra AutoAgenda > Alunos.
-2. Clique Editar em um aluno e salve.
-3. Atualize F5 e confira se a alteração permaneceu.
-4. Clique Excluir em um aluno e confirme.
-5. Abra Agenda, escolha uma data.
-6. Clique Alterar em uma aula, mude o horário e salve.
-7. Atualize F5.
-8. Clique Excluir em uma aula e confirme.
-
-OBSERVAÇÃO
-O aluno excluído deixa de aparecer na lista, mas suas aulas históricas permanecem no banco.
-A exclusão de aula é definitiva.
-
-ATUALIZAÇÃO VISUAL — CARRO DE AUTOESCOLA
-- Adicionado public/assets/carro-autoescola.png
-- O carro substitui o emoji no cabeçalho.
-- O mesmo veículo aparece em destaque no painel principal.
-- Mantida a identidade visual preta e amarela do AutoAgenda.
+PRÓXIMA ETAPA
+Somente depois de testar esta versão:
+ETAPA 2 — Agenda Semanal completa.

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#111111">
   <title>AutoAgenda</title>
-  <link rel="stylesheet" href="style.css?v=1.5.0">
+  <link rel="stylesheet" href="style.css?v=1.5.1">
 </head>
 <body>
 <header>
@@ -121,8 +121,9 @@
     <div class="head">
       <div>
         <h2>Configurações</h2>
-        <p>Cadastre os recursos usados nas aulas. Os dados ficam disponíveis imediatamente na agenda e nos planos automáticos.</p>
+        <p>Cadastre, edite, desative e reative os recursos usados nas aulas. Somente os ativos aparecem em novas marcações.</p>
       </div>
+      <button type="button" class="mini secondary" id="toggleInativosConfig">Mostrar inativos</button>
     </div>
 
     <div class="config-summary">
@@ -130,6 +131,7 @@
       <div><span>Veículos ativos</span><b id="cfgQtdVeiculos">0</b></div>
       <div><span>Locais ativos</span><b id="cfgQtdLocais">0</b></div>
     </div>
+    <div id="cfgInativosInfo" class="config-inactive-info">Nenhum recurso inativo.</div>
 
     <div class="config-grid">
       <article class="card config-card">
@@ -158,7 +160,7 @@
     </div>
 
     <div class="config-note">
-      <b>Proteção do histórico:</b> um instrutor, veículo ou local que ainda esteja vinculado a plano ativo ou aula futura não poderá ser excluído até que esses agendamentos sejam realocados ou encerrados.
+      <b>Proteção do histórico:</b> um recurso com plano ativo ou aula futura não pode ser desativado. Depois de desativado, ele pode ser reativado a qualquer momento. A exclusão definitiva só é permitida quando o cadastro nunca foi usado em nenhuma aula ou plano.
     </div>
   </section>
 </main>
@@ -337,6 +339,6 @@
 </div>
 
 <div id="toast" class="toast hide"></div>
-<script src="app.js?v=1.5.0"></script>
+<script src="app.js?v=1.5.1"></script>
 </body>
 </html>

@@ -2,6 +2,8 @@ const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 
 let alunos = [], instrutores = [], veiculos = [], locais = [], aulas = [], planos = [];
+let configInstrutores = [], configVeiculos = [], configLocais = [];
+let mostrarInativosConfig = false;
 let confirmAction = null;
 let ultimoPreviewPlano = null;
 
@@ -166,24 +168,87 @@ function planoHtml(p) {
   </article>`;
 }
 
+function totalHistoricoRecurso(x) {
+  return Number(x.planos_total || 0) + Number(x.aulas_total || 0);
+}
+
 function configItemHtml(tipo, x) {
-  const uso = `${Number(x.planos_ativos || 0)} plano(s) · ${Number(x.aulas_futuras || 0)} aula(s) futura(s)`;
+  const ativo = x.ativo !== false;
+  const usoAtual = `${Number(x.planos_ativos || 0)} plano(s) ativo(s) · ${Number(x.aulas_futuras || 0)} aula(s) futura(s)`;
+  const historico = `${Number(x.planos_total || 0)} plano(s) no histórico · ${Number(x.aulas_total || 0)} aula(s) no histórico`;
+  const status = `<span class="resource-status ${ativo ? 'active' : 'inactive'}">${ativo ? 'Ativo' : 'Inativo'}</span>`;
+  const acaoSituacao = ativo
+    ? `<button type="button" class="mini secondary" title="Desativar" data-toggle-recurso="${tipo}" data-toggle-id="${x.id}" data-toggle-ativo="0">⏸️</button>`
+    : `<button type="button" class="mini plan" title="Reativar" data-toggle-recurso="${tipo}" data-toggle-id="${x.id}" data-toggle-ativo="1">▶️</button>`;
+  const exclusao = !ativo
+    ? (totalHistoricoRecurso(x) === 0
+        ? `<button type="button" class="mini delete" title="Excluir definitivamente" data-delete-recurso="${tipo}" data-delete-id="${x.id}">🗑️</button>`
+        : `<button type="button" class="mini history-lock" disabled title="Possui histórico e não pode ser excluído definitivamente">🔒</button>`)
+    : '';
+
+  let detalhes = '';
+  let editAttr = '';
   if (tipo === 'instrutor') {
-    return `<div class="config-item"><div><b>${esc(x.nome)}</b><small>${esc(x.categorias || 'AB')} · ${esc(x.whatsapp || 'Sem WhatsApp')}</small><small>${uso}</small></div><div class="config-actions"><button type="button" class="mini edit" data-edit-instrutor="${x.id}">✏️</button><button type="button" class="mini delete" data-del-instrutor="${x.id}">🗑️</button></div></div>`;
+    detalhes = `${esc(x.categorias || 'AB')} · ${esc(x.whatsapp || 'Sem WhatsApp')}`;
+    editAttr = `data-edit-instrutor="${x.id}"`;
+  } else if (tipo === 'veiculo') {
+    detalhes = `${esc(x.placa || 'Sem placa')} · Categoria ${esc(x.categoria || 'B')}`;
+    editAttr = `data-edit-veiculo="${x.id}"`;
+  } else {
+    detalhes = esc(x.endereco || 'Sem endereço informado');
+    editAttr = `data-edit-local="${x.id}"`;
   }
-  if (tipo === 'veiculo') {
-    return `<div class="config-item"><div><b>${esc(x.nome)}</b><small>${esc(x.placa || 'Sem placa')} · Categoria ${esc(x.categoria || 'B')}</small><small>${uso}</small></div><div class="config-actions"><button type="button" class="mini edit" data-edit-veiculo="${x.id}">✏️</button><button type="button" class="mini delete" data-del-veiculo="${x.id}">🗑️</button></div></div>`;
-  }
-  return `<div class="config-item"><div><b>${esc(x.nome)}</b><small>${esc(x.endereco || 'Sem endereço informado')}</small><small>${uso}</small></div><div class="config-actions"><button type="button" class="mini edit" data-edit-local="${x.id}">✏️</button><button type="button" class="mini delete" data-del-local="${x.id}">🗑️</button></div></div>`;
+
+  return `<div class="config-item ${ativo ? '' : 'inactive'}">
+    <div>
+      <div class="resource-title"><b>${esc(x.nome)}</b>${status}</div>
+      <small>${detalhes}</small>
+      <small>${usoAtual}</small>
+      <small class="resource-history">${historico}</small>
+    </div>
+    <div class="config-actions">
+      <button type="button" class="mini edit" title="Editar" ${editAttr}>✏️</button>
+      ${acaoSituacao}
+      ${exclusao}
+    </div>
+  </div>`;
 }
 
 function renderConfiguracoes() {
+  const inativosInstrutores = configInstrutores.filter(x => x.ativo === false).length;
+  const inativosVeiculos = configVeiculos.filter(x => x.ativo === false).length;
+  const inativosLocais = configLocais.filter(x => x.ativo === false).length;
+  const totalInativos = inativosInstrutores + inativosVeiculos + inativosLocais;
+
   $('#cfgQtdInstrutores').textContent = instrutores.length;
   $('#cfgQtdVeiculos').textContent = veiculos.length;
   $('#cfgQtdLocais').textContent = locais.length;
-  $('#listaInstrutoresConfig').innerHTML = instrutores.length ? instrutores.map(x => configItemHtml('instrutor', x)).join('') : '<div class="empty small-empty">Nenhum instrutor ativo.</div>';
-  $('#listaVeiculosConfig').innerHTML = veiculos.length ? veiculos.map(x => configItemHtml('veiculo', x)).join('') : '<div class="empty small-empty">Nenhum veículo ativo.</div>';
-  $('#listaLocaisConfig').innerHTML = locais.length ? locais.map(x => configItemHtml('local', x)).join('') : '<div class="empty small-empty">Nenhum local ativo.</div>';
+
+  const filtrar = lista => lista.filter(x => mostrarInativosConfig || x.ativo !== false);
+  const listaI = filtrar(configInstrutores);
+  const listaV = filtrar(configVeiculos);
+  const listaL = filtrar(configLocais);
+
+  $('#listaInstrutoresConfig').innerHTML = listaI.length
+    ? listaI.map(x => configItemHtml('instrutor', x)).join('')
+    : '<div class="empty small-empty">Nenhum instrutor para mostrar.</div>';
+  $('#listaVeiculosConfig').innerHTML = listaV.length
+    ? listaV.map(x => configItemHtml('veiculo', x)).join('')
+    : '<div class="empty small-empty">Nenhum veículo para mostrar.</div>';
+  $('#listaLocaisConfig').innerHTML = listaL.length
+    ? listaL.map(x => configItemHtml('local', x)).join('')
+    : '<div class="empty small-empty">Nenhum local para mostrar.</div>';
+
+  const botao = $('#toggleInativosConfig');
+  if (botao) {
+    botao.textContent = mostrarInativosConfig ? 'Ocultar inativos' : `Mostrar inativos (${totalInativos})`;
+    botao.disabled = !mostrarInativosConfig && totalInativos === 0;
+  }
+
+  const info = $('#cfgInativosInfo');
+  if (info) {
+    info.textContent = `${inativosInstrutores} instrutor(es), ${inativosVeiculos} veículo(s) e ${inativosLocais} local(is) inativo(s).`;
+  }
 }
 
 function aulaSemanaHtml(a) {
@@ -267,17 +332,31 @@ function bindDynamic() {
   $$('[data-encerrar-plano]').forEach(b => b.onclick = () => pedirEncerrarPlano(Number(b.dataset.encerrarPlano), false));
   $$('[data-encerrar-cancelar]').forEach(b => b.onclick = () => pedirEncerrarPlano(Number(b.dataset.encerrarCancelar), true));
   $$('[data-edit-instrutor]').forEach(b => b.onclick = () => editarInstrutor(Number(b.dataset.editInstrutor)));
-  $$('[data-del-instrutor]').forEach(b => b.onclick = () => pedirExcluirRecurso('instrutor', Number(b.dataset.delInstrutor)));
   $$('[data-edit-veiculo]').forEach(b => b.onclick = () => editarVeiculo(Number(b.dataset.editVeiculo)));
-  $$('[data-del-veiculo]').forEach(b => b.onclick = () => pedirExcluirRecurso('veiculo', Number(b.dataset.delVeiculo)));
   $$('[data-edit-local]').forEach(b => b.onclick = () => editarLocal(Number(b.dataset.editLocal)));
-  $$('[data-del-local]').forEach(b => b.onclick = () => pedirExcluirRecurso('local', Number(b.dataset.delLocal)));
+  $$('[data-toggle-recurso]').forEach(b => b.onclick = () => pedirAlterarAtivoRecurso(
+    b.dataset.toggleRecurso,
+    Number(b.dataset.toggleId),
+    b.dataset.toggleAtivo === '1'
+  ));
+  $$('[data-delete-recurso]').forEach(b => b.onclick = () => pedirExcluirRecursoPermanente(
+    b.dataset.deleteRecurso,
+    Number(b.dataset.deleteId)
+  ));
 }
 
 async function load() {
   try {
-    [alunos, instrutores, veiculos, locais, aulas, planos] = await Promise.all([
-      api('/api/alunos'), api('/api/instrutores'), api('/api/veiculos'), api('/api/locais'), api('/api/aulas'), api('/api/planos')
+    [alunos, instrutores, veiculos, locais, aulas, planos, configInstrutores, configVeiculos, configLocais] = await Promise.all([
+      api('/api/alunos'),
+      api('/api/instrutores'),
+      api('/api/veiculos'),
+      api('/api/locais'),
+      api('/api/aulas'),
+      api('/api/planos'),
+      api('/api/instrutores?incluir_inativos=1'),
+      api('/api/veiculos?incluir_inativos=1'),
+      api('/api/locais?incluir_inativos=1')
     ]);
     render();
   } catch (e) {
@@ -290,7 +369,7 @@ async function health() {
   try {
     const h = await api('/api/health');
     const seguranca = h.auth_required ? ' · 🔒 acesso protegido' : ' · ⚠️ acesso sem senha';
-    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '1.5'}${seguranca}.`;
+    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '1.5.1'}${seguranca}.`;
     $('#db').className = h.auth_required ? 'db ok' : 'db warn';
   } catch {
     $('#db').textContent = '🔴 Banco não conectado. Verifique DATABASE_URL no Render.';
@@ -513,60 +592,149 @@ function novoInstrutor() {
   $('#tituloInstrutor').textContent = 'Novo instrutor'; $('#erroInstrutor').classList.add('hide'); open('mInstrutor');
 }
 function editarInstrutor(id) {
-  const x = instrutores.find(v => Number(v.id) === id); if (!x) return;
+  const x = configInstrutores.find(v => Number(v.id) === id); if (!x) return;
   $('#instrutorId').value = x.id; $('#iNome').value = x.nome || ''; $('#iWhats').value = x.whatsapp || ''; $('#iEmail').value = x.email || ''; $('#iCategorias').value = x.categorias || 'AB';
-  $('#tituloInstrutor').textContent = 'Editar instrutor'; $('#erroInstrutor').classList.add('hide'); open('mInstrutor');
+  $('#tituloInstrutor').textContent = x.ativo === false ? 'Editar instrutor inativo' : 'Editar instrutor';
+  $('#erroInstrutor').classList.add('hide'); open('mInstrutor');
 }
 $('#novoInstrutor').onclick = novoInstrutor;
 $('#fInstrutor').onsubmit = async e => {
   e.preventDefault(); $('#erroInstrutor').classList.add('hide');
   const id = Number($('#instrutorId').value || 0);
   const payload = { nome: $('#iNome').value, whatsapp: $('#iWhats').value, email: $('#iEmail').value, categorias: $('#iCategorias').value };
-  try { await api(id ? `/api/instrutores/${id}` : '/api/instrutores', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) }); close('mInstrutor'); toast(id ? '✅ Instrutor atualizado.' : '✅ Instrutor cadastrado.'); await load(); abrirTab('configuracoes'); }
-  catch (x) { $('#erroInstrutor').textContent = x.message; $('#erroInstrutor').classList.remove('hide'); }
+  try {
+    await api(id ? `/api/instrutores/${id}` : '/api/instrutores', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) });
+    close('mInstrutor'); toast(id ? '✅ Instrutor atualizado.' : '✅ Instrutor cadastrado.');
+    await load(); abrirTab('configuracoes');
+  } catch (x) {
+    $('#erroInstrutor').textContent = x.message;
+    $('#erroInstrutor').classList.remove('hide');
+  }
 };
 
 function novoVeiculo() {
-  $('#fVeiculo').reset(); $('#veiculoId').value = ''; $('#vCategoria').value = 'B'; $('#tituloVeiculo').textContent = 'Novo veículo'; $('#erroVeiculo').classList.add('hide'); open('mVeiculo');
+  $('#fVeiculo').reset(); $('#veiculoId').value = ''; $('#vCategoria').value = 'B';
+  $('#tituloVeiculo').textContent = 'Novo veículo'; $('#erroVeiculo').classList.add('hide'); open('mVeiculo');
 }
 function editarVeiculo(id) {
-  const x = veiculos.find(v => Number(v.id) === id); if (!x) return;
+  const x = configVeiculos.find(v => Number(v.id) === id); if (!x) return;
   $('#veiculoId').value = x.id; $('#vNome').value = x.nome || ''; $('#vPlaca').value = x.placa || ''; $('#vCategoria').value = x.categoria || 'B';
-  $('#tituloVeiculo').textContent = 'Editar veículo'; $('#erroVeiculo').classList.add('hide'); open('mVeiculo');
+  $('#tituloVeiculo').textContent = x.ativo === false ? 'Editar veículo inativo' : 'Editar veículo';
+  $('#erroVeiculo').classList.add('hide'); open('mVeiculo');
 }
 $('#novoVeiculo').onclick = novoVeiculo;
 $('#fVeiculo').onsubmit = async e => {
   e.preventDefault(); $('#erroVeiculo').classList.add('hide');
   const id = Number($('#veiculoId').value || 0);
   const payload = { nome: $('#vNome').value, placa: $('#vPlaca').value, categoria: $('#vCategoria').value };
-  try { await api(id ? `/api/veiculos/${id}` : '/api/veiculos', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) }); close('mVeiculo'); toast(id ? '✅ Veículo atualizado.' : '✅ Veículo cadastrado.'); await load(); abrirTab('configuracoes'); }
-  catch (x) { $('#erroVeiculo').textContent = x.message; $('#erroVeiculo').classList.remove('hide'); }
+  try {
+    await api(id ? `/api/veiculos/${id}` : '/api/veiculos', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) });
+    close('mVeiculo'); toast(id ? '✅ Veículo atualizado.' : '✅ Veículo cadastrado.');
+    await load(); abrirTab('configuracoes');
+  } catch (x) {
+    $('#erroVeiculo').textContent = x.message;
+    $('#erroVeiculo').classList.remove('hide');
+  }
 };
 
 function novoLocal() {
-  $('#fLocal').reset(); $('#localId').value = ''; $('#tituloLocal').textContent = 'Novo local'; $('#erroLocal').classList.add('hide'); open('mLocal');
+  $('#fLocal').reset(); $('#localId').value = '';
+  $('#tituloLocal').textContent = 'Novo local'; $('#erroLocal').classList.add('hide'); open('mLocal');
 }
 function editarLocal(id) {
-  const x = locais.find(v => Number(v.id) === id); if (!x) return;
-  $('#localId').value = x.id; $('#lNome').value = x.nome || ''; $('#lEndereco').value = x.endereco || ''; $('#tituloLocal').textContent = 'Editar local'; $('#erroLocal').classList.add('hide'); open('mLocal');
+  const x = configLocais.find(v => Number(v.id) === id); if (!x) return;
+  $('#localId').value = x.id; $('#lNome').value = x.nome || ''; $('#lEndereco').value = x.endereco || '';
+  $('#tituloLocal').textContent = x.ativo === false ? 'Editar local inativo' : 'Editar local';
+  $('#erroLocal').classList.add('hide'); open('mLocal');
 }
 $('#novoLocal').onclick = novoLocal;
 $('#fLocal').onsubmit = async e => {
   e.preventDefault(); $('#erroLocal').classList.add('hide');
   const id = Number($('#localId').value || 0);
   const payload = { nome: $('#lNome').value, endereco: $('#lEndereco').value };
-  try { await api(id ? `/api/locais/${id}` : '/api/locais', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) }); close('mLocal'); toast(id ? '✅ Local atualizado.' : '✅ Local cadastrado.'); await load(); abrirTab('configuracoes'); }
-  catch (x) { $('#erroLocal').textContent = x.message; $('#erroLocal').classList.remove('hide'); }
+  try {
+    await api(id ? `/api/locais/${id}` : '/api/locais', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) });
+    close('mLocal'); toast(id ? '✅ Local atualizado.' : '✅ Local cadastrado.');
+    await load(); abrirTab('configuracoes');
+  } catch (x) {
+    $('#erroLocal').textContent = x.message;
+    $('#erroLocal').classList.remove('hide');
+  }
 };
 
-function pedirExcluirRecurso(tipo, id) {
-  const mapa = { instrutor: { lista: instrutores, nome: 'instrutor', rota: 'instrutores' }, veiculo: { lista: veiculos, nome: 'veículo', rota: 'veiculos' }, local: { lista: locais, nome: 'local', rota: 'locais' } };
-  const cfg = mapa[tipo]; const x = cfg?.lista.find(v => Number(v.id) === id); if (!cfg || !x) return;
-  confirmar(`Excluir ${cfg.nome}?`, `${x.nome} deixará de aparecer nas novas marcações. O histórico antigo será preservado.`, async () => {
-    try { await api(`/api/${cfg.rota}/${id}`, { method: 'DELETE' }); toast(`✅ ${cfg.nome.charAt(0).toUpperCase() + cfg.nome.slice(1)} excluído.`); await load(); abrirTab('configuracoes'); }
-    catch (e) { toast(e.message); }
-  }, 'Excluir');
+function dadosRecursoConfig(tipo, id) {
+  const mapa = {
+    instrutor: { lista: configInstrutores, nome: 'instrutor', rota: 'instrutores' },
+    veiculo: { lista: configVeiculos, nome: 'veículo', rota: 'veiculos' },
+    local: { lista: configLocais, nome: 'local', rota: 'locais' }
+  };
+  const cfg = mapa[tipo];
+  if (!cfg) return null;
+  return { cfg, item: cfg.lista.find(v => Number(v.id) === id) };
 }
+
+function pedirAlterarAtivoRecurso(tipo, id, novoAtivo) {
+  const dados = dadosRecursoConfig(tipo, id);
+  if (!dados?.item) return;
+  const { cfg, item } = dados;
+
+  if (novoAtivo) {
+    confirmar(
+      `Reativar ${cfg.nome}?`,
+      `${item.nome} voltará a aparecer nas novas aulas e nos planos automáticos.`,
+      async () => {
+        try {
+          await api(`/api/${cfg.rota}/${id}/ativo`, { method: 'PATCH', body: JSON.stringify({ ativo: true }) });
+          toast(`✅ ${cfg.nome.charAt(0).toUpperCase() + cfg.nome.slice(1)} reativado.`);
+          await load(); abrirTab('configuracoes');
+        } catch (e) { toast(e.message); }
+      },
+      'Reativar'
+    );
+    return;
+  }
+
+  confirmar(
+    `Desativar ${cfg.nome}?`,
+    `${item.nome} deixará de aparecer em novas aulas e novos planos. O histórico será preservado. Se houver plano ativo ou aula futura vinculada, o AutoAgenda bloqueará a desativação.`,
+    async () => {
+      try {
+        await api(`/api/${cfg.rota}/${id}/ativo`, { method: 'PATCH', body: JSON.stringify({ ativo: false }) });
+        toast(`✅ ${cfg.nome.charAt(0).toUpperCase() + cfg.nome.slice(1)} desativado.`);
+        await load(); abrirTab('configuracoes');
+      } catch (e) { toast(e.message); }
+    },
+    'Desativar'
+  );
+}
+
+function pedirExcluirRecursoPermanente(tipo, id) {
+  const dados = dadosRecursoConfig(tipo, id);
+  if (!dados?.item) return;
+  const { cfg, item } = dados;
+
+  if (item.ativo !== false) return toast('Desative o cadastro antes de excluir definitivamente.');
+  if (totalHistoricoRecurso(item) > 0) return toast('Este cadastro possui histórico e deve permanecer inativo.');
+
+  confirmar(
+    `Excluir definitivamente ${cfg.nome}?`,
+    `${item.nome} nunca foi usado em aulas ou planos. Esta exclusão é permanente e não poderá ser desfeita.`,
+    async () => {
+      try {
+        await api(`/api/${cfg.rota}/${id}/permanente`, { method: 'DELETE' });
+        toast(`✅ ${cfg.nome.charAt(0).toUpperCase() + cfg.nome.slice(1)} excluído definitivamente.`);
+        await load(); abrirTab('configuracoes');
+      } catch (e) { toast(e.message); }
+    },
+    'Excluir definitivamente'
+  );
+}
+
+$('#toggleInativosConfig').onclick = () => {
+  mostrarInativosConfig = !mostrarInativosConfig;
+  renderConfiguracoes();
+  bindDynamic();
+};
 
 // ========================= PLANO AUTOMÁTICO =========================
 function weekdayUTC(data) {

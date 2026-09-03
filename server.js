@@ -6,7 +6,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.5.1';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -578,6 +578,40 @@ function textoOpcional(v, max = 300) {
   return x ? x.slice(0, max) : null;
 }
 
+function erroHttp(statusCode, message) {
+  const err = new Error(message);
+  err.statusCode = statusCode;
+  return err;
+}
+
+function incluirInativos(req) {
+  return ['1', 'true', 'sim', 'todos'].includes(String(req.query?.incluir_inativos || '').toLowerCase());
+}
+
+async function validarRecursosAtivos(client, dados, permitir = {}) {
+  const instrutorId = Number(dados.instrutor_id);
+  const veiculoId = Number(dados.veiculo_id);
+  const localId = Number(dados.local_id);
+
+  const r = await client.query(`
+    SELECT
+      EXISTS(SELECT 1 FROM autoagenda.instrutores WHERE id=$1 AND ativo=TRUE) AS instrutor_ativo,
+      EXISTS(SELECT 1 FROM autoagenda.veiculos WHERE id=$2 AND ativo=TRUE) AS veiculo_ativo,
+      EXISTS(SELECT 1 FROM autoagenda.locais WHERE id=$3 AND ativo=TRUE) AS local_ativo
+  `, [instrutorId, veiculoId, localId]);
+
+  const x = r.rows[0] || {};
+  if (!x.instrutor_ativo && Number(permitir.instrutor_id || 0) !== instrutorId) {
+    throw erroHttp(400, 'O instrutor selecionado está inativo ou não existe. Escolha um instrutor ativo.');
+  }
+  if (!x.veiculo_ativo && Number(permitir.veiculo_id || 0) !== veiculoId) {
+    throw erroHttp(400, 'O veículo selecionado está inativo ou não existe. Escolha um veículo ativo.');
+  }
+  if (!x.local_ativo && Number(permitir.local_id || 0) !== localId) {
+    throw erroHttp(400, 'O local selecionado está inativo ou não existe. Escolha um local ativo.');
+  }
+}
+
 async function recursoEmUso(client, tipo, id) {
   const mapa = {
     instrutor: { coluna: 'instrutor_id', nome: 'instrutor' },
@@ -606,17 +640,163 @@ async function recursoEmUso(client, tipo, id) {
   return p || a ? { planos: p, aulas_futuras: a, nome: cfg.nome } : null;
 }
 
+async function recursoHistorico(client, tipo, id) {
+  const mapa = {
+    instrutor: { coluna: 'instrutor_id', nome: 'instrutor' },
+    veiculo: { coluna: 'veiculo_id', nome: 'veículo' },
+    local: { coluna: 'local_id', nome: 'local' }
+  };
+  const cfg = mapa[tipo];
+  if (!cfg) return { planos_total: 0, aulas_total: 0 };
+
+  const [planos, aulas] = await Promise.all([
+    client.query(`SELECT COUNT(*)::int AS total FROM autoagenda.planos_aula WHERE ${cfg.coluna} = $1`, [id]),
+    client.query(`SELECT COUNT(*)::int AS total FROM autoagenda.aulas WHERE ${cfg.coluna} = $1`, [id])
+  ]);
+  return {
+    planos_total: Number(planos.rows[0]?.total || 0),
+    aulas_total: Number(aulas.rows[0]?.total || 0)
+  };
+}
+
+async function garantirInstrutorSemDuplicidade(client, dados, ignorarId = 0, somenteAtivos = false) {
+  const nome = String(dados.nome || '').trim();
+  const whatsapp = textoOpcional(dados.whatsapp, 30);
+  const email = textoOpcional(dados.email, 180);
+  const filtroAtivo = somenteAtivos ? 'AND ativo = TRUE' : '';
+  const r = await client.query(`
+    SELECT id, nome, ativo
+    FROM autoagenda.instrutores
+    WHERE id <> $4
+      ${filtroAtivo}
+      AND (
+        ($3::text IS NOT NULL AND email IS NOT NULL AND LOWER(BTRIM(email)) = LOWER(BTRIM($3)))
+        OR (
+          $2::text IS NOT NULL
+          AND LENGTH(REGEXP_REPLACE($2, '[^0-9]', '', 'g')) >= 8
+          AND REGEXP_REPLACE(COALESCE(whatsapp,''), '[^0-9]', '', 'g') = REGEXP_REPLACE($2, '[^0-9]', '', 'g')
+        )
+        OR (
+          $2::text IS NULL
+          AND $3::text IS NULL
+          AND LOWER(BTRIM(nome)) = LOWER(BTRIM($1))
+        )
+      )
+    LIMIT 1
+  `, [nome, whatsapp, email, Number(ignorarId || 0)]);
+  if (r.rowCount) {
+    const outro = r.rows[0];
+    const detalhe = outro.ativo ? '' : ' Esse cadastro está inativo; use "Mostrar inativos" para reativá-lo.';
+    throw erroHttp(409, `Já existe um instrutor com os mesmos dados.${detalhe}`);
+  }
+}
+
+async function garantirVeiculoSemDuplicidade(client, dados, ignorarId = 0, somenteAtivos = false) {
+  const nome = String(dados.nome || '').trim();
+  const placa = textoOpcional(dados.placa, 15)?.toUpperCase() || null;
+  const categoria = String(dados.categoria || 'B').trim().toUpperCase().slice(0, 10) || 'B';
+  const filtroAtivo = somenteAtivos ? 'AND ativo = TRUE' : '';
+  const r = await client.query(`
+    SELECT id, nome, ativo
+    FROM autoagenda.veiculos
+    WHERE id <> $4
+      ${filtroAtivo}
+      AND (
+        (
+          $2::text IS NOT NULL
+          AND REGEXP_REPLACE(UPPER(COALESCE(placa,'')), '[^A-Z0-9]', '', 'g')
+              = REGEXP_REPLACE(UPPER($2), '[^A-Z0-9]', '', 'g')
+        )
+        OR (
+          $2::text IS NULL
+          AND placa IS NULL
+          AND LOWER(BTRIM(nome)) = LOWER(BTRIM($1))
+          AND UPPER(BTRIM(COALESCE(categoria,''))) = UPPER(BTRIM($3))
+        )
+      )
+    LIMIT 1
+  `, [nome, placa, categoria, Number(ignorarId || 0)]);
+  if (r.rowCount) {
+    const outro = r.rows[0];
+    const detalhe = outro.ativo ? '' : ' Esse cadastro está inativo; use "Mostrar inativos" para reativá-lo.';
+    throw erroHttp(409, `Já existe um veículo com os mesmos dados.${detalhe}`);
+  }
+}
+
+async function garantirLocalSemDuplicidade(client, dados, ignorarId = 0, somenteAtivos = false) {
+  const nome = String(dados.nome || '').trim();
+  const endereco = textoOpcional(dados.endereco, 300);
+  const filtroAtivo = somenteAtivos ? 'AND ativo = TRUE' : '';
+  const r = await client.query(`
+    SELECT id, nome, ativo
+    FROM autoagenda.locais
+    WHERE id <> $3
+      ${filtroAtivo}
+      AND LOWER(BTRIM(nome)) = LOWER(BTRIM($1))
+      AND (
+        ($2::text IS NULL AND (endereco IS NULL OR BTRIM(endereco) = ''))
+        OR ($2::text IS NOT NULL AND LOWER(BTRIM(COALESCE(endereco,''))) = LOWER(BTRIM($2)))
+      )
+    LIMIT 1
+  `, [nome, endereco, Number(ignorarId || 0)]);
+  if (r.rowCount) {
+    const outro = r.rows[0];
+    const detalhe = outro.ativo ? '' : ' Esse cadastro está inativo; use "Mostrar inativos" para reativá-lo.';
+    throw erroHttp(409, `Já existe um local com os mesmos dados.${detalhe}`);
+  }
+}
+
+async function desativarRecurso(client, tipo, tabela, id) {
+  const atual = await client.query(`SELECT * FROM autoagenda.${tabela} WHERE id = $1`, [id]);
+  if (!atual.rowCount) throw erroHttp(404, 'Cadastro não encontrado.');
+  if (!atual.rows[0].ativo) return atual.rows[0];
+
+  const uso = await recursoEmUso(client, tipo, id);
+  if (uso) {
+    throw erroHttp(
+      409,
+      `Não é possível desativar este ${uso.nome}: existem ${uso.planos} plano(s) ativo(s) e ${uso.aulas_futuras} aula(s) futura(s) vinculada(s). Realoque ou encerre esses agendamentos primeiro.`
+    );
+  }
+
+  const r = await client.query(
+    `UPDATE autoagenda.${tabela} SET ativo = FALSE, atualizado_em = NOW() WHERE id = $1 RETURNING *`,
+    [id]
+  );
+  return r.rows[0];
+}
+
+async function excluirRecursoPermanente(client, tipo, tabela, id) {
+  const atual = await client.query(`SELECT * FROM autoagenda.${tabela} WHERE id = $1`, [id]);
+  if (!atual.rowCount) throw erroHttp(404, 'Cadastro não encontrado.');
+  if (atual.rows[0].ativo) {
+    throw erroHttp(409, 'Desative o cadastro antes de excluí-lo definitivamente.');
+  }
+  const historico = await recursoHistorico(client, tipo, id);
+  if (historico.planos_total || historico.aulas_total) {
+    throw erroHttp(
+      409,
+      `Este cadastro possui histórico (${historico.planos_total} plano(s) e ${historico.aulas_total} aula(s)) e não pode ser excluído definitivamente. Mantenha-o inativo para preservar os dados.`
+    );
+  }
+  await client.query(`DELETE FROM autoagenda.${tabela} WHERE id = $1`, [id]);
+  return historico;
+}
+
 // ---------- Instrutores ----------
 app.get('/api/instrutores', async (req, res) => {
   try {
+    const mostrarTodos = incluirInativos(req);
     const result = await query(`
       SELECT i.id, i.nome, i.whatsapp, i.email, i.categorias, i.ativo,
              COALESCE((SELECT COUNT(*) FROM autoagenda.planos_aula p WHERE p.instrutor_id=i.id AND p.ativo=TRUE),0)::int AS planos_ativos,
-             COALESCE((SELECT COUNT(*) FROM autoagenda.aulas a WHERE a.instrutor_id=i.id AND a.data_aula >= $1::date AND a.status IN ('AGENDADA','CONFIRMADA')),0)::int AS aulas_futuras
+             COALESCE((SELECT COUNT(*) FROM autoagenda.aulas a WHERE a.instrutor_id=i.id AND a.data_aula >= $1::date AND a.status IN ('AGENDADA','CONFIRMADA')),0)::int AS aulas_futuras,
+             COALESCE((SELECT COUNT(*) FROM autoagenda.planos_aula p WHERE p.instrutor_id=i.id),0)::int AS planos_total,
+             COALESCE((SELECT COUNT(*) FROM autoagenda.aulas a WHERE a.instrutor_id=i.id),0)::int AS aulas_total
       FROM autoagenda.instrutores i
-      WHERE i.ativo = TRUE
-      ORDER BY i.nome
-    `, [hojeApp()]);
+      WHERE ($2::boolean = TRUE OR i.ativo = TRUE)
+      ORDER BY i.ativo DESC, i.nome
+    `, [hojeApp(), mostrarTodos]);
     res.json(result.rows);
   } catch (error) {
     console.error(error);
@@ -625,12 +805,14 @@ app.get('/api/instrutores', async (req, res) => {
 });
 
 app.post('/api/instrutores', async (req, res) => {
+  const client = await pool.connect();
   try {
     const nome = textoObrigatorio(req.body?.nome, 'Nome');
     const whatsapp = textoOpcional(req.body?.whatsapp, 30);
     const email = textoOpcional(req.body?.email, 180);
     const categorias = String(req.body?.categorias || 'AB').trim().toUpperCase().slice(0, 20) || 'AB';
-    const r = await query(`
+    await garantirInstrutorSemDuplicidade(client, { nome, whatsapp, email });
+    const r = await client.query(`
       INSERT INTO autoagenda.instrutores (nome, whatsapp, email, categorias)
       VALUES ($1,$2,$3,$4) RETURNING *
     `, [nome, whatsapp, email, categorias]);
@@ -638,55 +820,92 @@ app.post('/api/instrutores', async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao cadastrar instrutor.' });
-  }
+  } finally { client.release(); }
 });
 
 app.put('/api/instrutores/:id', async (req, res) => {
+  const client = await pool.connect();
   try {
     const id = Number(req.params.id);
     const nome = textoObrigatorio(req.body?.nome, 'Nome');
     const whatsapp = textoOpcional(req.body?.whatsapp, 30);
     const email = textoOpcional(req.body?.email, 180);
     const categorias = String(req.body?.categorias || 'AB').trim().toUpperCase().slice(0, 20) || 'AB';
-    const r = await query(`
+    await garantirInstrutorSemDuplicidade(client, { nome, whatsapp, email }, id);
+    const r = await client.query(`
       UPDATE autoagenda.instrutores
       SET nome=$1, whatsapp=$2, email=$3, categorias=$4, atualizado_em=NOW()
-      WHERE id=$5 AND ativo=TRUE RETURNING *
+      WHERE id=$5 RETURNING *
     `, [nome, whatsapp, email, categorias, id]);
     if (!r.rowCount) return res.status(404).json({ error: 'Instrutor não encontrado.' });
     res.json(r.rows[0]);
   } catch (error) {
     console.error(error);
     res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao atualizar instrutor.' });
-  }
+  } finally { client.release(); }
 });
 
+app.patch('/api/instrutores/:id/ativo', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const id = Number(req.params.id);
+    const ativo = req.body?.ativo === true;
+    const atualQ = await client.query('SELECT * FROM autoagenda.instrutores WHERE id=$1', [id]);
+    if (!atualQ.rowCount) return res.status(404).json({ error: 'Instrutor não encontrado.' });
+    const atual = atualQ.rows[0];
+
+    if (ativo) {
+      await garantirInstrutorSemDuplicidade(client, atual, id, true);
+      const r = await client.query('UPDATE autoagenda.instrutores SET ativo=TRUE, atualizado_em=NOW() WHERE id=$1 RETURNING *', [id]);
+      return res.json(r.rows[0]);
+    }
+
+    const atualizado = await desativarRecurso(client, 'instrutor', 'instrutores', id);
+    res.json(atualizado);
+  } catch (error) {
+    console.error(error);
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao alterar situação do instrutor.' });
+  } finally { client.release(); }
+});
+
+// Compatibilidade com a V1.5: DELETE continua significando desativar.
 app.delete('/api/instrutores/:id', async (req, res) => {
   const client = await pool.connect();
   try {
     const id = Number(req.params.id);
-    const uso = await recursoEmUso(client, 'instrutor', id);
-    if (uso) return res.status(409).json({ error: `Não é possível excluir este instrutor: existem ${uso.planos} plano(s) ativo(s) e ${uso.aulas_futuras} aula(s) futura(s) vinculada(s). Realoque ou encerre esses agendamentos primeiro.`, uso });
-    const r = await client.query(`UPDATE autoagenda.instrutores SET ativo=FALSE, atualizado_em=NOW() WHERE id=$1 AND ativo=TRUE RETURNING id`, [id]);
-    if (!r.rowCount) return res.status(404).json({ error: 'Instrutor não encontrado.' });
+    await desativarRecurso(client, 'instrutor', 'instrutores', id);
     res.json({ ok: true });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao excluir instrutor.' });
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao desativar instrutor.' });
+  } finally { client.release(); }
+});
+
+app.delete('/api/instrutores/:id/permanente', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await excluirRecursoPermanente(client, 'instrutor', 'instrutores', Number(req.params.id));
+    res.json({ ok: true });
+  } catch (error) {
+    console.error(error);
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao excluir instrutor.' });
   } finally { client.release(); }
 });
 
 // ---------- Veículos ----------
 app.get('/api/veiculos', async (req, res) => {
   try {
+    const mostrarTodos = incluirInativos(req);
     const result = await query(`
       SELECT v.id, v.nome, v.placa, v.categoria, v.ativo,
              COALESCE((SELECT COUNT(*) FROM autoagenda.planos_aula p WHERE p.veiculo_id=v.id AND p.ativo=TRUE),0)::int AS planos_ativos,
-             COALESCE((SELECT COUNT(*) FROM autoagenda.aulas a WHERE a.veiculo_id=v.id AND a.data_aula >= $1::date AND a.status IN ('AGENDADA','CONFIRMADA')),0)::int AS aulas_futuras
+             COALESCE((SELECT COUNT(*) FROM autoagenda.aulas a WHERE a.veiculo_id=v.id AND a.data_aula >= $1::date AND a.status IN ('AGENDADA','CONFIRMADA')),0)::int AS aulas_futuras,
+             COALESCE((SELECT COUNT(*) FROM autoagenda.planos_aula p WHERE p.veiculo_id=v.id),0)::int AS planos_total,
+             COALESCE((SELECT COUNT(*) FROM autoagenda.aulas a WHERE a.veiculo_id=v.id),0)::int AS aulas_total
       FROM autoagenda.veiculos v
-      WHERE v.ativo = TRUE
-      ORDER BY v.nome
-    `, [hojeApp()]);
+      WHERE ($2::boolean = TRUE OR v.ativo = TRUE)
+      ORDER BY v.ativo DESC, v.nome
+    `, [hojeApp(), mostrarTodos]);
     res.json(result.rows);
   } catch (error) {
     console.error(error);
@@ -695,59 +914,102 @@ app.get('/api/veiculos', async (req, res) => {
 });
 
 app.post('/api/veiculos', async (req, res) => {
+  const client = await pool.connect();
   try {
     const nome = textoObrigatorio(req.body?.nome, 'Nome do veículo', 100);
     const placa = textoOpcional(req.body?.placa, 15)?.toUpperCase() || null;
     const categoria = String(req.body?.categoria || 'B').trim().toUpperCase().slice(0, 10) || 'B';
-    const r = await query(`INSERT INTO autoagenda.veiculos (nome, placa, categoria) VALUES ($1,$2,$3) RETURNING *`, [nome, placa, categoria]);
+    await garantirVeiculoSemDuplicidade(client, { nome, placa, categoria });
+    const r = await client.query(
+      `INSERT INTO autoagenda.veiculos (nome, placa, categoria) VALUES ($1,$2,$3) RETURNING *`,
+      [nome, placa, categoria]
+    );
     res.status(201).json(r.rows[0]);
   } catch (error) {
     console.error(error);
     res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao cadastrar veículo.' });
-  }
+  } finally { client.release(); }
 });
 
 app.put('/api/veiculos/:id', async (req, res) => {
+  const client = await pool.connect();
   try {
     const id = Number(req.params.id);
     const nome = textoObrigatorio(req.body?.nome, 'Nome do veículo', 100);
     const placa = textoOpcional(req.body?.placa, 15)?.toUpperCase() || null;
     const categoria = String(req.body?.categoria || 'B').trim().toUpperCase().slice(0, 10) || 'B';
-    const r = await query(`UPDATE autoagenda.veiculos SET nome=$1, placa=$2, categoria=$3, atualizado_em=NOW() WHERE id=$4 AND ativo=TRUE RETURNING *`, [nome, placa, categoria, id]);
+    await garantirVeiculoSemDuplicidade(client, { nome, placa, categoria }, id);
+    const r = await client.query(
+      `UPDATE autoagenda.veiculos SET nome=$1, placa=$2, categoria=$3, atualizado_em=NOW() WHERE id=$4 RETURNING *`,
+      [nome, placa, categoria, id]
+    );
     if (!r.rowCount) return res.status(404).json({ error: 'Veículo não encontrado.' });
     res.json(r.rows[0]);
   } catch (error) {
     console.error(error);
     res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao atualizar veículo.' });
-  }
+  } finally { client.release(); }
+});
+
+app.patch('/api/veiculos/:id/ativo', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const id = Number(req.params.id);
+    const ativo = req.body?.ativo === true;
+    const atualQ = await client.query('SELECT * FROM autoagenda.veiculos WHERE id=$1', [id]);
+    if (!atualQ.rowCount) return res.status(404).json({ error: 'Veículo não encontrado.' });
+    const atual = atualQ.rows[0];
+
+    if (ativo) {
+      await garantirVeiculoSemDuplicidade(client, atual, id, true);
+      const r = await client.query('UPDATE autoagenda.veiculos SET ativo=TRUE, atualizado_em=NOW() WHERE id=$1 RETURNING *', [id]);
+      return res.json(r.rows[0]);
+    }
+
+    const atualizado = await desativarRecurso(client, 'veiculo', 'veiculos', id);
+    res.json(atualizado);
+  } catch (error) {
+    console.error(error);
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao alterar situação do veículo.' });
+  } finally { client.release(); }
 });
 
 app.delete('/api/veiculos/:id', async (req, res) => {
   const client = await pool.connect();
   try {
-    const id = Number(req.params.id);
-    const uso = await recursoEmUso(client, 'veiculo', id);
-    if (uso) return res.status(409).json({ error: `Não é possível excluir este veículo: existem ${uso.planos} plano(s) ativo(s) e ${uso.aulas_futuras} aula(s) futura(s) vinculada(s). Realoque ou encerre esses agendamentos primeiro.`, uso });
-    const r = await client.query(`UPDATE autoagenda.veiculos SET ativo=FALSE, atualizado_em=NOW() WHERE id=$1 AND ativo=TRUE RETURNING id`, [id]);
-    if (!r.rowCount) return res.status(404).json({ error: 'Veículo não encontrado.' });
+    await desativarRecurso(client, 'veiculo', 'veiculos', Number(req.params.id));
     res.json({ ok: true });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao excluir veículo.' });
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao desativar veículo.' });
+  } finally { client.release(); }
+});
+
+app.delete('/api/veiculos/:id/permanente', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await excluirRecursoPermanente(client, 'veiculo', 'veiculos', Number(req.params.id));
+    res.json({ ok: true });
+  } catch (error) {
+    console.error(error);
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao excluir veículo.' });
   } finally { client.release(); }
 });
 
 // ---------- Locais ----------
 app.get('/api/locais', async (req, res) => {
   try {
+    const mostrarTodos = incluirInativos(req);
     const result = await query(`
       SELECT l.id, l.nome, l.endereco, l.ativo,
              COALESCE((SELECT COUNT(*) FROM autoagenda.planos_aula p WHERE p.local_id=l.id AND p.ativo=TRUE),0)::int AS planos_ativos,
-             COALESCE((SELECT COUNT(*) FROM autoagenda.aulas a WHERE a.local_id=l.id AND a.data_aula >= $1::date AND a.status IN ('AGENDADA','CONFIRMADA')),0)::int AS aulas_futuras
+             COALESCE((SELECT COUNT(*) FROM autoagenda.aulas a WHERE a.local_id=l.id AND a.data_aula >= $1::date AND a.status IN ('AGENDADA','CONFIRMADA')),0)::int AS aulas_futuras,
+             COALESCE((SELECT COUNT(*) FROM autoagenda.planos_aula p WHERE p.local_id=l.id),0)::int AS planos_total,
+             COALESCE((SELECT COUNT(*) FROM autoagenda.aulas a WHERE a.local_id=l.id),0)::int AS aulas_total
       FROM autoagenda.locais l
-      WHERE l.ativo = TRUE
-      ORDER BY l.nome
-    `, [hojeApp()]);
+      WHERE ($2::boolean = TRUE OR l.ativo = TRUE)
+      ORDER BY l.ativo DESC, l.nome
+    `, [hojeApp(), mostrarTodos]);
     res.json(result.rows);
   } catch (error) {
     console.error(error);
@@ -756,43 +1018,83 @@ app.get('/api/locais', async (req, res) => {
 });
 
 app.post('/api/locais', async (req, res) => {
+  const client = await pool.connect();
   try {
     const nome = textoObrigatorio(req.body?.nome, 'Nome do local');
     const endereco = textoOpcional(req.body?.endereco, 300);
-    const r = await query(`INSERT INTO autoagenda.locais (nome, endereco) VALUES ($1,$2) RETURNING *`, [nome, endereco]);
+    await garantirLocalSemDuplicidade(client, { nome, endereco });
+    const r = await client.query(
+      `INSERT INTO autoagenda.locais (nome, endereco) VALUES ($1,$2) RETURNING *`,
+      [nome, endereco]
+    );
     res.status(201).json(r.rows[0]);
   } catch (error) {
     console.error(error);
     res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao cadastrar local.' });
-  }
+  } finally { client.release(); }
 });
 
 app.put('/api/locais/:id', async (req, res) => {
+  const client = await pool.connect();
   try {
     const id = Number(req.params.id);
     const nome = textoObrigatorio(req.body?.nome, 'Nome do local');
     const endereco = textoOpcional(req.body?.endereco, 300);
-    const r = await query(`UPDATE autoagenda.locais SET nome=$1, endereco=$2, atualizado_em=NOW() WHERE id=$3 AND ativo=TRUE RETURNING *`, [nome, endereco, id]);
+    await garantirLocalSemDuplicidade(client, { nome, endereco }, id);
+    const r = await client.query(
+      `UPDATE autoagenda.locais SET nome=$1, endereco=$2, atualizado_em=NOW() WHERE id=$3 RETURNING *`,
+      [nome, endereco, id]
+    );
     if (!r.rowCount) return res.status(404).json({ error: 'Local não encontrado.' });
     res.json(r.rows[0]);
   } catch (error) {
     console.error(error);
     res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao atualizar local.' });
-  }
+  } finally { client.release(); }
+});
+
+app.patch('/api/locais/:id/ativo', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const id = Number(req.params.id);
+    const ativo = req.body?.ativo === true;
+    const atualQ = await client.query('SELECT * FROM autoagenda.locais WHERE id=$1', [id]);
+    if (!atualQ.rowCount) return res.status(404).json({ error: 'Local não encontrado.' });
+    const atual = atualQ.rows[0];
+
+    if (ativo) {
+      await garantirLocalSemDuplicidade(client, atual, id, true);
+      const r = await client.query('UPDATE autoagenda.locais SET ativo=TRUE, atualizado_em=NOW() WHERE id=$1 RETURNING *', [id]);
+      return res.json(r.rows[0]);
+    }
+
+    const atualizado = await desativarRecurso(client, 'local', 'locais', id);
+    res.json(atualizado);
+  } catch (error) {
+    console.error(error);
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao alterar situação do local.' });
+  } finally { client.release(); }
 });
 
 app.delete('/api/locais/:id', async (req, res) => {
   const client = await pool.connect();
   try {
-    const id = Number(req.params.id);
-    const uso = await recursoEmUso(client, 'local', id);
-    if (uso) return res.status(409).json({ error: `Não é possível excluir este local: existem ${uso.planos} plano(s) ativo(s) e ${uso.aulas_futuras} aula(s) futura(s) vinculada(s). Realoque ou encerre esses agendamentos primeiro.`, uso });
-    const r = await client.query(`UPDATE autoagenda.locais SET ativo=FALSE, atualizado_em=NOW() WHERE id=$1 AND ativo=TRUE RETURNING id`, [id]);
-    if (!r.rowCount) return res.status(404).json({ error: 'Local não encontrado.' });
+    await desativarRecurso(client, 'local', 'locais', Number(req.params.id));
     res.json({ ok: true });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao excluir local.' });
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao desativar local.' });
+  } finally { client.release(); }
+});
+
+app.delete('/api/locais/:id/permanente', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await excluirRecursoPermanente(client, 'local', 'locais', Number(req.params.id));
+    res.json({ ok: true });
+  } catch (error) {
+    console.error(error);
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao excluir local.' });
   } finally { client.release(); }
 });
 
@@ -833,6 +1135,7 @@ app.post('/api/planos/preview', async (req, res) => {
       return res.status(400).json({ error: 'A data de início do plano não pode estar no passado.' });
     }
 
+    await validarRecursosAtivos(client, base);
     const saldo = await saldoAluno(client, base.aluno_id);
     if (!saldo) return res.status(404).json({ error: 'Aluno não encontrado ou inativo.' });
 
@@ -862,7 +1165,7 @@ app.post('/api/planos/preview', async (req, res) => {
     });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: error.message || 'Erro ao gerar prévia.' });
+    res.status(error.statusCode || 500).json({ error: error.message || 'Erro ao gerar prévia.' });
   } finally {
     client.release();
   }
@@ -879,6 +1182,7 @@ app.post('/api/planos', async (req, res) => {
       return res.status(400).json({ error: 'A data de início do plano não pode estar no passado.' });
     }
 
+    await validarRecursosAtivos(client, base);
     const saldo = await saldoAluno(client, base.aluno_id);
     if (!saldo) return res.status(404).json({ error: 'Aluno não encontrado ou inativo.' });
 
@@ -956,7 +1260,7 @@ app.post('/api/planos', async (req, res) => {
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
     console.error(error);
-    res.status(500).json({ error: error.message || 'Erro ao criar agenda automática.' });
+    res.status(error.statusCode || 500).json({ error: error.message || 'Erro ao criar agenda automática.' });
   } finally {
     client.release();
   }
@@ -1038,6 +1342,7 @@ app.post('/api/aulas', async (req, res) => {
       return res.status(400).json({ error: 'Preencha aluno, instrutor, veículo, local, data e horário.' });
     }
 
+    await validarRecursosAtivos(client, { instrutor_id, veiculo_id, local_id });
     const dados = { aluno_id, instrutor_id, veiculo_id, data_aula, hora_inicio, duracao_minutos: validarInteiroPositivo(duracao_minutos, 50, 480) };
     await client.query('BEGIN');
     const conflito = await verificarConflito(client, dados);
@@ -1065,7 +1370,7 @@ app.post('/api/aulas', async (req, res) => {
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
     console.error(error);
-    res.status(500).json({ error: 'Erro ao agendar aula.' });
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao agendar aula.' });
   } finally {
     client.release();
   }
@@ -1085,8 +1390,21 @@ app.put('/api/aulas/:id', async (req, res) => {
     const statusPermitidos = ['AGENDADA','CONFIRMADA','REALIZADA','REMARCADA','CANCELADA','FALTOU'];
     if (!statusPermitidos.includes(status)) return res.status(400).json({ error: 'Status inválido.' });
 
-    const existente = await client.query('SELECT id, plan_id FROM autoagenda.aulas WHERE id = $1', [id]);
+    const existente = await client.query(
+      'SELECT id, plan_id, instrutor_id, veiculo_id, local_id FROM autoagenda.aulas WHERE id = $1',
+      [id]
+    );
     if (!existente.rowCount) return res.status(404).json({ error: 'Aula não encontrada.' });
+
+    await validarRecursosAtivos(
+      client,
+      { instrutor_id, veiculo_id, local_id },
+      {
+        instrutor_id: existente.rows[0].instrutor_id,
+        veiculo_id: existente.rows[0].veiculo_id,
+        local_id: existente.rows[0].local_id
+      }
+    );
 
     await client.query('BEGIN');
     if (!['CANCELADA','REMARCADA'].includes(status)) {
@@ -1117,7 +1435,7 @@ app.put('/api/aulas/:id', async (req, res) => {
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
     console.error(error);
-    res.status(500).json({ error: 'Erro ao atualizar aula.' });
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao atualizar aula.' });
   } finally {
     client.release();
   }
@@ -1144,6 +1462,7 @@ app.put('/api/aulas/:id/serie', async (req, res) => {
       return res.status(400).json({ error: 'Uma alteração em série não pode deslocar as próximas aulas para uma data passada.' });
     }
 
+    await validarRecursosAtivos(client, payload);
     const antigoDT = dateTimeUTC(alvo.data_aula, alvo.hora_inicio);
     const novoDT = dateTimeUTC(payload.data_aula, payload.hora_inicio);
     const delta = novoDT.getTime() - antigoDT.getTime();

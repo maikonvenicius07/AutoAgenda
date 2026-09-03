@@ -1,16 +1,19 @@
-# Próximas melhorias sugeridas
+# Próximas melhorias do AutoAgenda
 
-## Prioridade 1 — Horário de funcionamento e disponibilidade
-Cadastrar jornada de cada instrutor (ex.: 07:00–12:00 e 14:00–18:00), folgas e intervalos. O sistema passaria a impedir marcações fora da disponibilidade.
+A **V1.5.1** conclui a ETAPA 1 — Configurações.
 
-## Prioridade 2 — Encontrar horário livre
-Botão que procura automaticamente os próximos horários livres considerando aluno, instrutor e veículo.
+## Próxima etapa: Agenda Semanal completa
 
-## Prioridade 3 — WhatsApp
-Gerar mensagem pronta de confirmação da aula e, posteriormente, lembretes automáticos e confirmação/remarcação.
+Implementar somente depois de testar a V1.5.1:
 
-## Prioridade 4 — Dashboard gerencial
-Resumo por instrutor e veículo: aulas realizadas, canceladas, faltas, ocupação semanal e alunos próximos de concluir as aulas.
+1. dias da semana em colunas;
+2. horários em linhas;
+3. cada aula mostrando aluno, instrutor, veículo, local e status;
+4. semana anterior / atual / próxima;
+5. filtro por instrutor;
+6. filtro por veículo;
+7. clique na aula para editar;
+8. criação de aula clicando diretamente em uma célula de horário vazio;
+9. preservar as regras atuais de conflito.
 
-## Prioridade 5 — Backup/exportação
-Exportar alunos, aulas, planos e configurações para Excel/CSV para segurança administrativa.
+Depois dessa etapa, seguir para Horário de Funcionamento.

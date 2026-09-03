@@ -1,4 +1,4 @@
--- AutoAgenda V1.5
+-- AutoAgenda V1.5.1
 -- Schema compatível com o server.js atual.
 -- O servidor cria/migra automaticamente; este arquivo serve para referência e execução manual controlada.
 

@@ -49,3 +49,13 @@ nav{grid-template-columns:repeat(6,1fr)}
 
 @media(max-width:1000px){nav{grid-template-columns:repeat(3,1fr)}.config-grid{grid-template-columns:1fr}.week-filters{grid-template-columns:1fr 1fr}.week-range{grid-column:1/-1}.config-summary{grid-template-columns:repeat(3,1fr)}}
 @media(max-width:700px){nav{grid-template-columns:1fr 1fr}.config-summary{grid-template-columns:1fr}.week-toolbar{width:100%;justify-content:flex-start}.week-filters{grid-template-columns:1fr}.week-range{grid-column:auto}.weekly-grid{min-width:1040px}}
+
+/* ========================= V1.5.1 CONFIGURAÇÕES COMPLETAS ========================= */
+.config-inactive-info{margin:-5px 0 14px;color:#777;font-size:12px}
+.config-item.inactive{background:#f1f1ef;border-style:dashed;opacity:.78}
+.resource-title{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.resource-status{display:inline-block;border-radius:999px;padding:3px 7px;font-size:10px;font-weight:900;line-height:1}
+.resource-status.active{background:#def3e5;color:#145c31;border:1px solid #b7dfc5}
+.resource-status.inactive{background:#ececec;color:#666;border:1px solid #d3d3d3}
+.resource-history{color:#8a8a8a!important}
+.history-lock{background:#e5e5e5!important;color:#777!important}
