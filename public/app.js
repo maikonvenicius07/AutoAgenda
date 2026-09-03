@@ -12,6 +12,20 @@ const iso = () => {
 const hora = h => h ? String(h).slice(0, 5) : '';
 const dataISO = d => String(d || '').slice(0, 10);
 const fmtData = d => dataISO(d).split('-').reverse().join('/');
+const addDaysISO = (data, dias) => {
+  const [y,m,d] = dataISO(data).split('-').map(Number);
+  const x = new Date(Date.UTC(y, m - 1, d));
+  x.setUTCDate(x.getUTCDate() + dias);
+  return x.toISOString().slice(0, 10);
+};
+const inicioSemanaISO = data => {
+  const [y,m,d] = dataISO(data).split('-').map(Number);
+  const x = new Date(Date.UTC(y, m - 1, d));
+  const day = x.getUTCDay();
+  const desloc = day === 0 ? -6 : 1 - day;
+  x.setUTCDate(x.getUTCDate() + desloc);
+  return x.toISOString().slice(0, 10);
+};
 const esc = v => String(v ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 
 async function api(u, o = {}) {
@@ -43,6 +57,7 @@ function close(id) { $('#' + id).classList.add('hide'); }
 function abrirTab(id) {
   $$('.tab').forEach(x => x.classList.toggle('active', x.dataset.tab === id));
   $$('.panel').forEach(p => p.classList.toggle('active', p.id === id));
+  if (id === 'semana') renderSemana();
 }
 $$('.tab').forEach(b => b.onclick = () => abrirTab(b.dataset.tab));
 $$('[data-close]').forEach(b => b.onclick = () => close(b.dataset.close));
@@ -151,6 +166,49 @@ function planoHtml(p) {
   </article>`;
 }
 
+function configItemHtml(tipo, x) {
+  const uso = `${Number(x.planos_ativos || 0)} plano(s) · ${Number(x.aulas_futuras || 0)} aula(s) futura(s)`;
+  if (tipo === 'instrutor') {
+    return `<div class="config-item"><div><b>${esc(x.nome)}</b><small>${esc(x.categorias || 'AB')} · ${esc(x.whatsapp || 'Sem WhatsApp')}</small><small>${uso}</small></div><div class="config-actions"><button type="button" class="mini edit" data-edit-instrutor="${x.id}">✏️</button><button type="button" class="mini delete" data-del-instrutor="${x.id}">🗑️</button></div></div>`;
+  }
+  if (tipo === 'veiculo') {
+    return `<div class="config-item"><div><b>${esc(x.nome)}</b><small>${esc(x.placa || 'Sem placa')} · Categoria ${esc(x.categoria || 'B')}</small><small>${uso}</small></div><div class="config-actions"><button type="button" class="mini edit" data-edit-veiculo="${x.id}">✏️</button><button type="button" class="mini delete" data-del-veiculo="${x.id}">🗑️</button></div></div>`;
+  }
+  return `<div class="config-item"><div><b>${esc(x.nome)}</b><small>${esc(x.endereco || 'Sem endereço informado')}</small><small>${uso}</small></div><div class="config-actions"><button type="button" class="mini edit" data-edit-local="${x.id}">✏️</button><button type="button" class="mini delete" data-del-local="${x.id}">🗑️</button></div></div>`;
+}
+
+function renderConfiguracoes() {
+  $('#cfgQtdInstrutores').textContent = instrutores.length;
+  $('#cfgQtdVeiculos').textContent = veiculos.length;
+  $('#cfgQtdLocais').textContent = locais.length;
+  $('#listaInstrutoresConfig').innerHTML = instrutores.length ? instrutores.map(x => configItemHtml('instrutor', x)).join('') : '<div class="empty small-empty">Nenhum instrutor ativo.</div>';
+  $('#listaVeiculosConfig').innerHTML = veiculos.length ? veiculos.map(x => configItemHtml('veiculo', x)).join('') : '<div class="empty small-empty">Nenhum veículo ativo.</div>';
+  $('#listaLocaisConfig').innerHTML = locais.length ? locais.map(x => configItemHtml('local', x)).join('') : '<div class="empty small-empty">Nenhum local ativo.</div>';
+}
+
+function aulaSemanaHtml(a) {
+  const cls = String(a.status || '').toLowerCase();
+  return `<div class="week-lesson ${cls}" data-week-edit="${a.id}"><div class="week-lesson-time">${hora(a.hora_inicio)}</div><b>${esc(a.aluno_nome)}</b><small>👨‍🏫 ${esc(a.instrutor_nome)}</small><small>🚗 ${esc(a.veiculo_nome)}${a.veiculo_placa ? ' · ' + esc(a.veiculo_placa) : ''}</small><small>${statusLabel(a.status)}</small></div>`;
+}
+
+function renderSemana() {
+  const ref = $('#filtroSemana')?.value || iso();
+  const inicio = inicioSemanaISO(ref);
+  const fim = addDaysISO(inicio, 6);
+  if ($('#periodoSemana')) $('#periodoSemana').textContent = `${fmtData(inicio)} a ${fmtData(fim)}`;
+  const filtroInstrutor = Number($('#filtroInstrutorSemana')?.value || 0);
+  const diasLongos = ['Segunda','Terça','Quarta','Quinta','Sexta','Sábado','Domingo'];
+  const hoje = iso();
+  const colunas = Array.from({length: 7}, (_, i) => {
+    const data = addDaysISO(inicio, i);
+    const doDia = aulas.filter(a => dataISO(a.data_aula) === data && (!filtroInstrutor || Number(a.instrutor_id) === filtroInstrutor));
+    return `<section class="week-day ${data === hoje ? 'today' : ''}"><header class="week-day-head"><div><b>${diasLongos[i]}</b><span>${fmtData(data)}</span></div><button type="button" class="mini secondary" data-new-week-day="${data}" title="Nova aula neste dia">＋</button></header><div class="week-day-body">${doDia.length ? doDia.map(aulaSemanaHtml).join('') : '<div class="week-empty">Livre</div>'}</div></section>`;
+  }).join('');
+  $('#agendaSemanal').innerHTML = colunas;
+  $$('[data-new-week-day]').forEach(b => b.onclick = () => novaAula({ data: b.dataset.newWeekDay, hora: '08:00', instrutor_id: filtroInstrutor || undefined }));
+  $$('[data-week-edit]').forEach(b => b.onclick = () => editarAula(Number(b.dataset.weekEdit)));
+}
+
 function render() {
   $('#sAlunos').textContent = alunos.length;
   const h = iso();
@@ -169,7 +227,9 @@ function render() {
   $('#listaAgenda').innerHTML = fa.length ? fa.map(a => aulaHtml(a, true)).join('') : '<div class="empty">Nenhuma aula nesta data.</div>';
   $('#listaPlanos').innerHTML = planos.length ? planos.map(planoHtml).join('') : '<div class="empty"><b>Nenhum plano automático criado ainda.</b><br><br>Clique em <b>+ Criar plano automático</b> acima ou em <b>📅 Montar agenda</b> no cartão do aluno.</div>';
 
+  renderConfiguracoes();
   preencherSelects();
+  renderSemana();
   bindDynamic();
 }
 
@@ -188,6 +248,13 @@ function preencherSelects() {
   $('#pLocal').innerHTML = optsLocal;
   const escolher = $('#escolherAlunoPlano');
   if (escolher) escolher.innerHTML = optsAluno;
+
+  const filtroSemana = $('#filtroInstrutorSemana');
+  if (filtroSemana) {
+    const atual = filtroSemana.value;
+    filtroSemana.innerHTML = '<option value="">Todos os instrutores</option>' + optsInstrutor;
+    if ([...filtroSemana.options].some(o => o.value === atual)) filtroSemana.value = atual;
+  }
 }
 
 function bindDynamic() {
@@ -199,6 +266,12 @@ function bindDynamic() {
   $$('[data-repor-aula]').forEach(b => b.onclick = () => reporAula(Number(b.dataset.reporAula)));
   $$('[data-encerrar-plano]').forEach(b => b.onclick = () => pedirEncerrarPlano(Number(b.dataset.encerrarPlano), false));
   $$('[data-encerrar-cancelar]').forEach(b => b.onclick = () => pedirEncerrarPlano(Number(b.dataset.encerrarCancelar), true));
+  $$('[data-edit-instrutor]').forEach(b => b.onclick = () => editarInstrutor(Number(b.dataset.editInstrutor)));
+  $$('[data-del-instrutor]').forEach(b => b.onclick = () => pedirExcluirRecurso('instrutor', Number(b.dataset.delInstrutor)));
+  $$('[data-edit-veiculo]').forEach(b => b.onclick = () => editarVeiculo(Number(b.dataset.editVeiculo)));
+  $$('[data-del-veiculo]').forEach(b => b.onclick = () => pedirExcluirRecurso('veiculo', Number(b.dataset.delVeiculo)));
+  $$('[data-edit-local]').forEach(b => b.onclick = () => editarLocal(Number(b.dataset.editLocal)));
+  $$('[data-del-local]').forEach(b => b.onclick = () => pedirExcluirRecurso('local', Number(b.dataset.delLocal)));
 }
 
 async function load() {
@@ -217,7 +290,7 @@ async function health() {
   try {
     const h = await api('/api/health');
     const seguranca = h.auth_required ? ' · 🔒 acesso protegido' : ' · ⚠️ acesso sem senha';
-    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '1.4'}${seguranca}.`;
+    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '1.5'}${seguranca}.`;
     $('#db').className = h.auth_required ? 'db ok' : 'db warn';
   } catch {
     $('#db').textContent = '🔴 Banco não conectado. Verifique DATABASE_URL no Render.';
@@ -314,6 +387,11 @@ $('#fAluno').onsubmit = async e => {
 // ========================= AULA MANUAL / EDIÇÃO =========================
 function novaAula(prefill = null) {
   if (!alunos.length) return toast('Cadastre um aluno primeiro.');
+  if (!instrutores.length || !veiculos.length || !locais.length) {
+    toast('Cadastre pelo menos um instrutor, um veículo e um local em Configurações.');
+    abrirTab('configuracoes');
+    return;
+  }
   $('#fAula').reset();
   $('#aulaId').value = '';
   $('#aulaPlanId').value = '';
@@ -429,6 +507,67 @@ $('#fAula').onsubmit = async e => {
   }
 };
 
+// ========================= CONFIGURAÇÕES =========================
+function novoInstrutor() {
+  $('#fInstrutor').reset(); $('#instrutorId').value = ''; $('#iCategorias').value = 'AB';
+  $('#tituloInstrutor').textContent = 'Novo instrutor'; $('#erroInstrutor').classList.add('hide'); open('mInstrutor');
+}
+function editarInstrutor(id) {
+  const x = instrutores.find(v => Number(v.id) === id); if (!x) return;
+  $('#instrutorId').value = x.id; $('#iNome').value = x.nome || ''; $('#iWhats').value = x.whatsapp || ''; $('#iEmail').value = x.email || ''; $('#iCategorias').value = x.categorias || 'AB';
+  $('#tituloInstrutor').textContent = 'Editar instrutor'; $('#erroInstrutor').classList.add('hide'); open('mInstrutor');
+}
+$('#novoInstrutor').onclick = novoInstrutor;
+$('#fInstrutor').onsubmit = async e => {
+  e.preventDefault(); $('#erroInstrutor').classList.add('hide');
+  const id = Number($('#instrutorId').value || 0);
+  const payload = { nome: $('#iNome').value, whatsapp: $('#iWhats').value, email: $('#iEmail').value, categorias: $('#iCategorias').value };
+  try { await api(id ? `/api/instrutores/${id}` : '/api/instrutores', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) }); close('mInstrutor'); toast(id ? '✅ Instrutor atualizado.' : '✅ Instrutor cadastrado.'); await load(); abrirTab('configuracoes'); }
+  catch (x) { $('#erroInstrutor').textContent = x.message; $('#erroInstrutor').classList.remove('hide'); }
+};
+
+function novoVeiculo() {
+  $('#fVeiculo').reset(); $('#veiculoId').value = ''; $('#vCategoria').value = 'B'; $('#tituloVeiculo').textContent = 'Novo veículo'; $('#erroVeiculo').classList.add('hide'); open('mVeiculo');
+}
+function editarVeiculo(id) {
+  const x = veiculos.find(v => Number(v.id) === id); if (!x) return;
+  $('#veiculoId').value = x.id; $('#vNome').value = x.nome || ''; $('#vPlaca').value = x.placa || ''; $('#vCategoria').value = x.categoria || 'B';
+  $('#tituloVeiculo').textContent = 'Editar veículo'; $('#erroVeiculo').classList.add('hide'); open('mVeiculo');
+}
+$('#novoVeiculo').onclick = novoVeiculo;
+$('#fVeiculo').onsubmit = async e => {
+  e.preventDefault(); $('#erroVeiculo').classList.add('hide');
+  const id = Number($('#veiculoId').value || 0);
+  const payload = { nome: $('#vNome').value, placa: $('#vPlaca').value, categoria: $('#vCategoria').value };
+  try { await api(id ? `/api/veiculos/${id}` : '/api/veiculos', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) }); close('mVeiculo'); toast(id ? '✅ Veículo atualizado.' : '✅ Veículo cadastrado.'); await load(); abrirTab('configuracoes'); }
+  catch (x) { $('#erroVeiculo').textContent = x.message; $('#erroVeiculo').classList.remove('hide'); }
+};
+
+function novoLocal() {
+  $('#fLocal').reset(); $('#localId').value = ''; $('#tituloLocal').textContent = 'Novo local'; $('#erroLocal').classList.add('hide'); open('mLocal');
+}
+function editarLocal(id) {
+  const x = locais.find(v => Number(v.id) === id); if (!x) return;
+  $('#localId').value = x.id; $('#lNome').value = x.nome || ''; $('#lEndereco').value = x.endereco || ''; $('#tituloLocal').textContent = 'Editar local'; $('#erroLocal').classList.add('hide'); open('mLocal');
+}
+$('#novoLocal').onclick = novoLocal;
+$('#fLocal').onsubmit = async e => {
+  e.preventDefault(); $('#erroLocal').classList.add('hide');
+  const id = Number($('#localId').value || 0);
+  const payload = { nome: $('#lNome').value, endereco: $('#lEndereco').value };
+  try { await api(id ? `/api/locais/${id}` : '/api/locais', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) }); close('mLocal'); toast(id ? '✅ Local atualizado.' : '✅ Local cadastrado.'); await load(); abrirTab('configuracoes'); }
+  catch (x) { $('#erroLocal').textContent = x.message; $('#erroLocal').classList.remove('hide'); }
+};
+
+function pedirExcluirRecurso(tipo, id) {
+  const mapa = { instrutor: { lista: instrutores, nome: 'instrutor', rota: 'instrutores' }, veiculo: { lista: veiculos, nome: 'veículo', rota: 'veiculos' }, local: { lista: locais, nome: 'local', rota: 'locais' } };
+  const cfg = mapa[tipo]; const x = cfg?.lista.find(v => Number(v.id) === id); if (!cfg || !x) return;
+  confirmar(`Excluir ${cfg.nome}?`, `${x.nome} deixará de aparecer nas novas marcações. O histórico antigo será preservado.`, async () => {
+    try { await api(`/api/${cfg.rota}/${id}`, { method: 'DELETE' }); toast(`✅ ${cfg.nome.charAt(0).toUpperCase() + cfg.nome.slice(1)} excluído.`); await load(); abrirTab('configuracoes'); }
+    catch (e) { toast(e.message); }
+  }, 'Excluir');
+}
+
 // ========================= PLANO AUTOMÁTICO =========================
 function weekdayUTC(data) {
   if (!data) return null;
@@ -476,6 +615,11 @@ $('#continuarNovoPlano').onclick = () => {
 function abrirPlano(id) {
   const a = alunos.find(x => Number(x.id) === id);
   if (!a) return;
+  if (!instrutores.length || !veiculos.length || !locais.length) {
+    toast('Cadastre pelo menos um instrutor, um veículo e um local antes de criar um plano.');
+    abrirTab('configuracoes');
+    return;
+  }
   $('#fPlano').reset();
   $('#pAlunoId').value = a.id;
   $('#pAlunoNome').textContent = a.nome;
@@ -636,6 +780,13 @@ function pedirEncerrarPlano(id, cancelarFuturas = false) {
 $('#filtroData').value = iso();
 $('#filtroData').onchange = render;
 $('#irAgenda').onclick = () => abrirTab('agenda');
+
+$('#filtroSemana').value = iso();
+$('#filtroSemana').onchange = renderSemana;
+$('#filtroInstrutorSemana').onchange = renderSemana;
+$('#semanaHoje').onclick = () => { $('#filtroSemana').value = iso(); renderSemana(); };
+$('#semanaAnterior').onclick = () => { $('#filtroSemana').value = addDaysISO(inicioSemanaISO($('#filtroSemana').value || iso()), -7); renderSemana(); };
+$('#semanaProxima').onclick = () => { $('#filtroSemana').value = addDaysISO(inicioSemanaISO($('#filtroSemana').value || iso()), 7); renderSemana(); };
 
 health();
 load();

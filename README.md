@@ -1,59 +1,52 @@
-# AutoAgenda V1.4 — Revisão e Correções
+# AutoAgenda V1.5 — Configurações e Agenda Semanal
 
-Sistema web para gestão de aulas práticas de direção, com alunos, agenda manual, planos automáticos, conflitos de horário e PostgreSQL.
+Sistema web para organização de aulas práticas, com alunos, planos automáticos, agenda diária, agenda semanal e cadastros de apoio.
 
-## O que foi corrigido nesta revisão
+## Novidades da V1.5
 
-- Plano automático agora respeita o **saldo de aulas** do aluno e não deixa gerar mais aulas do que o disponível.
-- A contagem de **aulas agendadas** considera somente aulas de hoje em diante.
-- As aulas realizadas **antes do AutoAgenda** agora são somadas corretamente às aulas marcadas como realizadas dentro do sistema.
-- Ao excluir um aluno, o sistema **encerra seus planos ativos e cancela aulas futuras**, preservando o histórico.
-- Alterar **esta aula e as próximas** agora atualiza também os dias da semana do plano.
-- A alteração em série preserva a duração/quantidade das demais ocorrências, evitando transformar a última aula simples de um plano com aulas duplas.
-- Conflitos consideram apenas aulas que realmente ocupam agenda (`AGENDADA` e `CONFIRMADA`).
-- A criação manual de aula passa a respeitar o status enviado pela tela.
-- Domingo passou a ser aceito no plano automático.
-- `sql/schema.sql` foi refeito para usar corretamente o schema `autoagenda` e refletir a estrutura atual.
-- HTML/JS/CSS não ficam presos em cache antigo após um deploy, reduzindo o risco de aparecer uma versão antiga no navegador.
-- Cabeçalhos básicos de segurança foram adicionados.
-- Proteção opcional por usuário/senha foi adicionada via variáveis de ambiente.
-- Arquivos antigos de atualização foram consolidados para deixar o repositório mais limpo.
+- Nova aba **Configurações**.
+- Cadastro, edição e exclusão segura de **instrutores**.
+- Cadastro, edição e exclusão segura de **veículos**.
+- Cadastro, edição e exclusão segura de **locais/pontos de encontro**.
+- Recursos cadastrados passam a aparecer imediatamente nas aulas e nos planos automáticos.
+- Exclusão protege o histórico: recursos usados por planos ativos ou aulas futuras não podem ser removidos até a realocação dos agendamentos.
+- Nova **Agenda semanal**, de segunda a domingo.
+- Navegação por semana anterior, hoje e próxima semana.
+- Filtro da agenda semanal por instrutor.
+- Clique em uma aula da agenda semanal para abrir a edição.
+- Botão **+** em cada dia da semana para criar uma aula já com a data preenchida.
+- Ao filtrar por instrutor, uma nova aula criada pela agenda semanal já seleciona esse instrutor.
 
-## Banco
+## Atualização
 
-O `server.js` continua fazendo a criação/migração do schema automaticamente. Não é necessário executar `sql/schema.sql` a cada atualização.
+Substitua os arquivos do repositório pelos arquivos desta versão e faça commit no GitHub. O Render deve realizar o deploy automaticamente.
 
-Variáveis obrigatórias:
+Não é necessário criar outro banco de dados e não é necessário executar `schema.sql` manualmente. O `server.js` mantém a criação/migração automática do schema `autoagenda`.
+
+## Variáveis de ambiente
+
+Obrigatória:
 
 - `DATABASE_URL`
+
+Recomendadas:
+
 - `NODE_ENV=production`
-- `APP_TIMEZONE=America/Porto_Velho` (pode ser ajustado se o sistema for usado em outra região)
-
-Proteção recomendada para o sistema publicado:
-
+- `APP_TIMEZONE=America/Porto_Velho`
 - `AUTOAGENDA_USER`
 - `AUTOAGENDA_PASSWORD`
 
-Quando as duas são configuradas no Render, o navegador solicitará usuário e senha para abrir o AutoAgenda.
+As duas últimas ativam a proteção básica por usuário e senha.
 
-## Teste rápido depois do deploy
+## Estrutura
 
-1. Abra **Alunos** e confira os cadastros existentes.
-2. Em um aluno com saldo, clique **Montar agenda**.
-3. Gere a prévia e confirme o plano.
-4. Abra **Planos** e confirme que o plano aparece.
-5. Abra uma aula do plano, mude dia/horário e marque **aplicar às próximas**.
-6. Volte a **Planos** e confira se os dias/horário foram atualizados.
-7. Atualize a página com `Ctrl + F5` e confirme que os dados continuam salvos.
+- `server.js` — API, PostgreSQL e regras de negócio.
+- `public/index.html` — interface.
+- `public/app.js` — comportamento da interface.
+- `public/style.css` — visual responsivo.
+- `public/assets/` — imagens do projeto.
+- `sql/schema.sql` — referência do banco.
 
-## Verificação local de sintaxe
+## Versão
 
-```bash
-npm run check
-```
-
-## Publicação
-
-Fluxo atual: GitHub → Render → PostgreSQL.
-
-Nunca publique `DATABASE_URL`, usuário/senha do banco ou a senha do AutoAgenda no GitHub.
+**1.5.0**

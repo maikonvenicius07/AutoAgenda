@@ -6,7 +6,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.5.0';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -177,7 +177,7 @@ async function initDatabase() {
       )
     `);
 
-    // Migração segura das versões anteriores para a V1.4.
+    // Migração segura das versões anteriores para a V1.5.
     // Se a coluna nova ainda não existir, copiamos o valor legado como ponto de partida.
     await client.query('ALTER TABLE autoagenda.alunos ADD COLUMN IF NOT EXISTS aulas_realizadas_anteriores INTEGER');
     await client.query(`
@@ -562,10 +562,61 @@ app.delete('/api/alunos/:id', async (req, res) => {
   }
 });
 
-// ========================= APOIO =========================
+// ========================= CONFIGURAÇÕES / APOIO =========================
+function textoObrigatorio(v, nomeCampo, max = 150) {
+  const x = String(v || '').trim();
+  if (!x) {
+    const err = new Error(`${nomeCampo} é obrigatório.`);
+    err.statusCode = 400;
+    throw err;
+  }
+  return x.slice(0, max);
+}
+
+function textoOpcional(v, max = 300) {
+  const x = String(v || '').trim();
+  return x ? x.slice(0, max) : null;
+}
+
+async function recursoEmUso(client, tipo, id) {
+  const mapa = {
+    instrutor: { coluna: 'instrutor_id', nome: 'instrutor' },
+    veiculo: { coluna: 'veiculo_id', nome: 'veículo' },
+    local: { coluna: 'local_id', nome: 'local' }
+  };
+  const cfg = mapa[tipo];
+  if (!cfg) return null;
+
+  const planos = await client.query(`
+    SELECT COUNT(*)::int AS total
+    FROM autoagenda.planos_aula
+    WHERE ${cfg.coluna} = $1 AND ativo = TRUE
+  `, [id]);
+
+  const futuras = await client.query(`
+    SELECT COUNT(*)::int AS total
+    FROM autoagenda.aulas
+    WHERE ${cfg.coluna} = $1
+      AND data_aula >= $2::date
+      AND status IN ('AGENDADA','CONFIRMADA')
+  `, [id, hojeApp()]);
+
+  const p = Number(planos.rows[0]?.total || 0);
+  const a = Number(futuras.rows[0]?.total || 0);
+  return p || a ? { planos: p, aulas_futuras: a, nome: cfg.nome } : null;
+}
+
+// ---------- Instrutores ----------
 app.get('/api/instrutores', async (req, res) => {
   try {
-    const result = await query('SELECT id, nome, whatsapp, email, categorias, ativo FROM autoagenda.instrutores WHERE ativo = TRUE ORDER BY nome');
+    const result = await query(`
+      SELECT i.id, i.nome, i.whatsapp, i.email, i.categorias, i.ativo,
+             COALESCE((SELECT COUNT(*) FROM autoagenda.planos_aula p WHERE p.instrutor_id=i.id AND p.ativo=TRUE),0)::int AS planos_ativos,
+             COALESCE((SELECT COUNT(*) FROM autoagenda.aulas a WHERE a.instrutor_id=i.id AND a.data_aula >= $1::date AND a.status IN ('AGENDADA','CONFIRMADA')),0)::int AS aulas_futuras
+      FROM autoagenda.instrutores i
+      WHERE i.ativo = TRUE
+      ORDER BY i.nome
+    `, [hojeApp()]);
     res.json(result.rows);
   } catch (error) {
     console.error(error);
@@ -573,9 +624,69 @@ app.get('/api/instrutores', async (req, res) => {
   }
 });
 
+app.post('/api/instrutores', async (req, res) => {
+  try {
+    const nome = textoObrigatorio(req.body?.nome, 'Nome');
+    const whatsapp = textoOpcional(req.body?.whatsapp, 30);
+    const email = textoOpcional(req.body?.email, 180);
+    const categorias = String(req.body?.categorias || 'AB').trim().toUpperCase().slice(0, 20) || 'AB';
+    const r = await query(`
+      INSERT INTO autoagenda.instrutores (nome, whatsapp, email, categorias)
+      VALUES ($1,$2,$3,$4) RETURNING *
+    `, [nome, whatsapp, email, categorias]);
+    res.status(201).json(r.rows[0]);
+  } catch (error) {
+    console.error(error);
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao cadastrar instrutor.' });
+  }
+});
+
+app.put('/api/instrutores/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const nome = textoObrigatorio(req.body?.nome, 'Nome');
+    const whatsapp = textoOpcional(req.body?.whatsapp, 30);
+    const email = textoOpcional(req.body?.email, 180);
+    const categorias = String(req.body?.categorias || 'AB').trim().toUpperCase().slice(0, 20) || 'AB';
+    const r = await query(`
+      UPDATE autoagenda.instrutores
+      SET nome=$1, whatsapp=$2, email=$3, categorias=$4, atualizado_em=NOW()
+      WHERE id=$5 AND ativo=TRUE RETURNING *
+    `, [nome, whatsapp, email, categorias, id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Instrutor não encontrado.' });
+    res.json(r.rows[0]);
+  } catch (error) {
+    console.error(error);
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao atualizar instrutor.' });
+  }
+});
+
+app.delete('/api/instrutores/:id', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const id = Number(req.params.id);
+    const uso = await recursoEmUso(client, 'instrutor', id);
+    if (uso) return res.status(409).json({ error: `Não é possível excluir este instrutor: existem ${uso.planos} plano(s) ativo(s) e ${uso.aulas_futuras} aula(s) futura(s) vinculada(s). Realoque ou encerre esses agendamentos primeiro.`, uso });
+    const r = await client.query(`UPDATE autoagenda.instrutores SET ativo=FALSE, atualizado_em=NOW() WHERE id=$1 AND ativo=TRUE RETURNING id`, [id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Instrutor não encontrado.' });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao excluir instrutor.' });
+  } finally { client.release(); }
+});
+
+// ---------- Veículos ----------
 app.get('/api/veiculos', async (req, res) => {
   try {
-    const result = await query('SELECT id, nome, placa, categoria, ativo FROM autoagenda.veiculos WHERE ativo = TRUE ORDER BY nome');
+    const result = await query(`
+      SELECT v.id, v.nome, v.placa, v.categoria, v.ativo,
+             COALESCE((SELECT COUNT(*) FROM autoagenda.planos_aula p WHERE p.veiculo_id=v.id AND p.ativo=TRUE),0)::int AS planos_ativos,
+             COALESCE((SELECT COUNT(*) FROM autoagenda.aulas a WHERE a.veiculo_id=v.id AND a.data_aula >= $1::date AND a.status IN ('AGENDADA','CONFIRMADA')),0)::int AS aulas_futuras
+      FROM autoagenda.veiculos v
+      WHERE v.ativo = TRUE
+      ORDER BY v.nome
+    `, [hojeApp()]);
     res.json(result.rows);
   } catch (error) {
     console.error(error);
@@ -583,14 +694,106 @@ app.get('/api/veiculos', async (req, res) => {
   }
 });
 
+app.post('/api/veiculos', async (req, res) => {
+  try {
+    const nome = textoObrigatorio(req.body?.nome, 'Nome do veículo', 100);
+    const placa = textoOpcional(req.body?.placa, 15)?.toUpperCase() || null;
+    const categoria = String(req.body?.categoria || 'B').trim().toUpperCase().slice(0, 10) || 'B';
+    const r = await query(`INSERT INTO autoagenda.veiculos (nome, placa, categoria) VALUES ($1,$2,$3) RETURNING *`, [nome, placa, categoria]);
+    res.status(201).json(r.rows[0]);
+  } catch (error) {
+    console.error(error);
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao cadastrar veículo.' });
+  }
+});
+
+app.put('/api/veiculos/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const nome = textoObrigatorio(req.body?.nome, 'Nome do veículo', 100);
+    const placa = textoOpcional(req.body?.placa, 15)?.toUpperCase() || null;
+    const categoria = String(req.body?.categoria || 'B').trim().toUpperCase().slice(0, 10) || 'B';
+    const r = await query(`UPDATE autoagenda.veiculos SET nome=$1, placa=$2, categoria=$3, atualizado_em=NOW() WHERE id=$4 AND ativo=TRUE RETURNING *`, [nome, placa, categoria, id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Veículo não encontrado.' });
+    res.json(r.rows[0]);
+  } catch (error) {
+    console.error(error);
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao atualizar veículo.' });
+  }
+});
+
+app.delete('/api/veiculos/:id', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const id = Number(req.params.id);
+    const uso = await recursoEmUso(client, 'veiculo', id);
+    if (uso) return res.status(409).json({ error: `Não é possível excluir este veículo: existem ${uso.planos} plano(s) ativo(s) e ${uso.aulas_futuras} aula(s) futura(s) vinculada(s). Realoque ou encerre esses agendamentos primeiro.`, uso });
+    const r = await client.query(`UPDATE autoagenda.veiculos SET ativo=FALSE, atualizado_em=NOW() WHERE id=$1 AND ativo=TRUE RETURNING id`, [id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Veículo não encontrado.' });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao excluir veículo.' });
+  } finally { client.release(); }
+});
+
+// ---------- Locais ----------
 app.get('/api/locais', async (req, res) => {
   try {
-    const result = await query('SELECT id, nome, endereco, ativo FROM autoagenda.locais WHERE ativo = TRUE ORDER BY nome');
+    const result = await query(`
+      SELECT l.id, l.nome, l.endereco, l.ativo,
+             COALESCE((SELECT COUNT(*) FROM autoagenda.planos_aula p WHERE p.local_id=l.id AND p.ativo=TRUE),0)::int AS planos_ativos,
+             COALESCE((SELECT COUNT(*) FROM autoagenda.aulas a WHERE a.local_id=l.id AND a.data_aula >= $1::date AND a.status IN ('AGENDADA','CONFIRMADA')),0)::int AS aulas_futuras
+      FROM autoagenda.locais l
+      WHERE l.ativo = TRUE
+      ORDER BY l.nome
+    `, [hojeApp()]);
     res.json(result.rows);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao consultar locais.' });
   }
+});
+
+app.post('/api/locais', async (req, res) => {
+  try {
+    const nome = textoObrigatorio(req.body?.nome, 'Nome do local');
+    const endereco = textoOpcional(req.body?.endereco, 300);
+    const r = await query(`INSERT INTO autoagenda.locais (nome, endereco) VALUES ($1,$2) RETURNING *`, [nome, endereco]);
+    res.status(201).json(r.rows[0]);
+  } catch (error) {
+    console.error(error);
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao cadastrar local.' });
+  }
+});
+
+app.put('/api/locais/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const nome = textoObrigatorio(req.body?.nome, 'Nome do local');
+    const endereco = textoOpcional(req.body?.endereco, 300);
+    const r = await query(`UPDATE autoagenda.locais SET nome=$1, endereco=$2, atualizado_em=NOW() WHERE id=$3 AND ativo=TRUE RETURNING *`, [nome, endereco, id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Local não encontrado.' });
+    res.json(r.rows[0]);
+  } catch (error) {
+    console.error(error);
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao atualizar local.' });
+  }
+});
+
+app.delete('/api/locais/:id', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const id = Number(req.params.id);
+    const uso = await recursoEmUso(client, 'local', id);
+    if (uso) return res.status(409).json({ error: `Não é possível excluir este local: existem ${uso.planos} plano(s) ativo(s) e ${uso.aulas_futuras} aula(s) futura(s) vinculada(s). Realoque ou encerre esses agendamentos primeiro.`, uso });
+    const r = await client.query(`UPDATE autoagenda.locais SET ativo=FALSE, atualizado_em=NOW() WHERE id=$1 AND ativo=TRUE RETURNING id`, [id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Local não encontrado.' });
+    res.json({ ok: true });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao excluir local.' });
+  } finally { client.release(); }
 });
 
 // ========================= PLANOS AUTOMÁTICOS =========================

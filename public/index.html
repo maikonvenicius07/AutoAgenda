@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#111111">
   <title>AutoAgenda</title>
-  <link rel="stylesheet" href="style.css?v=1.4.0">
+  <link rel="stylesheet" href="style.css?v=1.5.0">
 </head>
 <body>
 <header>
@@ -25,8 +25,10 @@
   <nav>
     <button class="tab active" data-tab="painel">🏠 Painel</button>
     <button class="tab" data-tab="alunos">👨‍🎓 Alunos</button>
-    <button class="tab" data-tab="agenda">📅 Agenda</button>
+    <button class="tab" data-tab="agenda">📅 Agenda diária</button>
+    <button class="tab" data-tab="semana">🗓️ Agenda semanal</button>
     <button class="tab" data-tab="planos">🔁 Planos</button>
+    <button class="tab" data-tab="configuracoes">⚙️ Configurações</button>
   </nav>
 
   <section id="painel" class="panel active">
@@ -80,6 +82,28 @@
     <div id="listaAgenda"></div>
   </section>
 
+  <section id="semana" class="panel">
+    <div class="head">
+      <div>
+        <h2>Agenda semanal</h2>
+        <p>Veja a semana inteira, filtre por instrutor e abra uma aula diretamente no dia desejado.</p>
+      </div>
+      <div class="week-toolbar">
+        <button type="button" class="secondary mini" id="semanaAnterior">← Semana anterior</button>
+        <button type="button" class="secondary mini" id="semanaHoje">Hoje</button>
+        <button type="button" class="secondary mini" id="semanaProxima">Próxima semana →</button>
+      </div>
+    </div>
+    <div class="week-filters card compact-card">
+      <label>Semana de referência<input id="filtroSemana" type="date"></label>
+      <label>Instrutor<select id="filtroInstrutorSemana"><option value="">Todos os instrutores</option></select></label>
+      <div class="week-range"><span>Período</span><b id="periodoSemana">—</b></div>
+    </div>
+    <div class="weekly-scroll">
+      <div id="agendaSemanal" class="weekly-grid"></div>
+    </div>
+  </section>
+
   <section id="planos" class="panel">
     <div class="head">
       <div>
@@ -92,6 +116,50 @@
       <b>Como funciona:</b> escolha um aluno, informe a data de início, os dias da semana e o horário. O AutoAgenda gera as próximas aulas automaticamente.
     </div>
     <div id="listaPlanos" class="grid"></div>
+  </section>
+  <section id="configuracoes" class="panel">
+    <div class="head">
+      <div>
+        <h2>Configurações</h2>
+        <p>Cadastre os recursos usados nas aulas. Os dados ficam disponíveis imediatamente na agenda e nos planos automáticos.</p>
+      </div>
+    </div>
+
+    <div class="config-summary">
+      <div><span>Instrutores ativos</span><b id="cfgQtdInstrutores">0</b></div>
+      <div><span>Veículos ativos</span><b id="cfgQtdVeiculos">0</b></div>
+      <div><span>Locais ativos</span><b id="cfgQtdLocais">0</b></div>
+    </div>
+
+    <div class="config-grid">
+      <article class="card config-card">
+        <div class="head compact">
+          <div><h3>👨‍🏫 Instrutores</h3><p>Nome, contato e categorias.</p></div>
+          <button type="button" class="mini" id="novoInstrutor">+ Adicionar</button>
+        </div>
+        <div id="listaInstrutoresConfig" class="config-list"></div>
+      </article>
+
+      <article class="card config-card">
+        <div class="head compact">
+          <div><h3>🚗 Veículos</h3><p>Veículos disponíveis para as aulas.</p></div>
+          <button type="button" class="mini" id="novoVeiculo">+ Adicionar</button>
+        </div>
+        <div id="listaVeiculosConfig" class="config-list"></div>
+      </article>
+
+      <article class="card config-card">
+        <div class="head compact">
+          <div><h3>📍 Locais</h3><p>Pontos de encontro e endereços.</p></div>
+          <button type="button" class="mini" id="novoLocal">+ Adicionar</button>
+        </div>
+        <div id="listaLocaisConfig" class="config-list"></div>
+      </article>
+    </div>
+
+    <div class="config-note">
+      <b>Proteção do histórico:</b> um instrutor, veículo ou local que ainda esteja vinculado a plano ativo ou aula futura não poderá ser excluído até que esses agendamentos sejam realocados ou encerrados.
+    </div>
   </section>
 </main>
 
@@ -214,6 +282,48 @@
   </form>
 </div>
 
+<!-- MODAL INSTRUTOR -->
+<div id="mInstrutor" class="modal hide">
+  <form id="fInstrutor" class="box">
+    <button type="button" class="x" data-close="mInstrutor">✕</button>
+    <h2 id="tituloInstrutor">Novo instrutor</h2>
+    <input id="instrutorId" type="hidden">
+    <label>Nome<input id="iNome" maxlength="150" required placeholder="Nome do instrutor"></label>
+    <label>WhatsApp<input id="iWhats" maxlength="30" placeholder="(69) 99999-9999"></label>
+    <label>E-mail<input id="iEmail" type="email" maxlength="180" placeholder="email@exemplo.com"></label>
+    <label>Categorias habilitadas<input id="iCategorias" maxlength="20" value="AB" placeholder="Ex.: AB"></label>
+    <div id="erroInstrutor" class="erro hide"></div>
+    <button>Salvar instrutor</button>
+  </form>
+</div>
+
+<!-- MODAL VEÍCULO -->
+<div id="mVeiculo" class="modal hide">
+  <form id="fVeiculo" class="box">
+    <button type="button" class="x" data-close="mVeiculo">✕</button>
+    <h2 id="tituloVeiculo">Novo veículo</h2>
+    <input id="veiculoId" type="hidden">
+    <label>Nome do veículo<input id="vNome" maxlength="100" required placeholder="Ex.: Volkswagen Up"></label>
+    <label>Placa<input id="vPlaca" maxlength="15" placeholder="ABC1D23"></label>
+    <label>Categoria<select id="vCategoria"><option>A</option><option selected>B</option><option>AB</option><option>C</option><option>D</option><option>E</option></select></label>
+    <div id="erroVeiculo" class="erro hide"></div>
+    <button>Salvar veículo</button>
+  </form>
+</div>
+
+<!-- MODAL LOCAL -->
+<div id="mLocal" class="modal hide">
+  <form id="fLocal" class="box">
+    <button type="button" class="x" data-close="mLocal">✕</button>
+    <h2 id="tituloLocal">Novo local</h2>
+    <input id="localId" type="hidden">
+    <label>Nome do local<input id="lNome" maxlength="150" required placeholder="Ex.: Ponto de encontro Centro"></label>
+    <label>Endereço<textarea id="lEndereco" maxlength="300" placeholder="Rua, número, bairro ou referência"></textarea></label>
+    <div id="erroLocal" class="erro hide"></div>
+    <button>Salvar local</button>
+  </form>
+</div>
+
 <!-- CONFIRMAÇÃO -->
 <div id="confirm" class="modal hide">
   <div class="box confirm-box">
@@ -227,6 +337,6 @@
 </div>
 
 <div id="toast" class="toast hide"></div>
-<script src="app.js?v=1.4.0"></script>
+<script src="app.js?v=1.5.0"></script>
 </body>
 </html>
