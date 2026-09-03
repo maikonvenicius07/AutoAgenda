@@ -106,3 +106,7 @@ nav{grid-template-columns:repeat(6,1fr)}
 .availability-motivo{grid-column:span 2}.availability-list{display:grid;gap:7px}.availability-item{display:flex;align-items:center;justify-content:space-between;gap:10px;border:1px solid #e0e0dc;border-radius:9px;background:#fff;padding:9px 10px}.availability-item>div{display:grid;gap:3px}.availability-item small{color:#777}
 @media(max-width:900px){.availability-grid{grid-template-columns:1fr 1fr}.availability-motivo{grid-column:span 2}}
 @media(max-width:650px){.availability-title{flex-direction:column}.availability-grid{grid-template-columns:1fr}.availability-motivo{grid-column:auto}}
+
+/* ========================= V1.8.1 AUDITORIA, SEGURANÇA E INTEGRIDADE ========================= */
+.privacy-note{margin:0 0 12px;padding:10px 12px;border:1px solid #d7dfeb;border-left:4px solid var(--blue);border-radius:9px;background:#f4f7fb;color:#475569;font-size:12px}
+.student.inactive{opacity:.72;border-top-color:#aaa;border-style:dashed}.student.inactive .progress>div{background:#aaa}

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#111111">
   <title>AutoAgenda</title>
-  <link rel="stylesheet" href="style.css?v=1.8.0">
+  <link rel="stylesheet" href="style.css?v=1.8.1">
 </head>
 <body>
 <header>
@@ -63,8 +63,12 @@
         <h2>Alunos</h2>
         <p>Cadastre, edite e monte a agenda automática de cada aluno.</p>
       </div>
-      <button id="novoAluno">+ Novo aluno</button>
+      <div class="agenda-tools">
+        <button type="button" class="secondary mini" id="toggleInativosAlunos">Mostrar inativos</button>
+        <button id="novoAluno">+ Novo aluno</button>
+      </div>
     </div>
+    <div class="privacy-note">🔒 Na listagem, o CPF aparece mascarado. O número completo só é carregado quando você abre o cadastro para editar.</div>
     <div id="listaAlunos" class="grid"></div>
   </section>
 
@@ -441,6 +445,6 @@
 </div>
 
 <div id="toast" class="toast hide"></div>
-<script src="app.js?v=1.8.0"></script>
+<script src="app.js?v=1.8.1"></script>
 </body>
 </html>

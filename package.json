@@ -1,6 +1,6 @@
 {
   "name": "autoagenda",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "private": true,
   "main": "server.js",
   "scripts": {
@@ -11,8 +11,8 @@
     "node": ">=20"
   },
   "dependencies": {
-    "dotenv": "^16.4.7",
-    "express": "^4.21.2",
-    "pg": "^8.13.1"
+    "dotenv": "16.4.7",
+    "express": "4.21.2",
+    "pg": "8.13.1"
   }
 }

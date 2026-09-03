@@ -12,3 +12,7 @@ services:
         value: America/Porto_Velho
       - key: DATABASE_URL
         sync: false
+      - key: AUTOAGENDA_USER
+        sync: false
+      - key: AUTOAGENDA_PASSWORD
+        sync: false

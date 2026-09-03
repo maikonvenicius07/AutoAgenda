@@ -1,7 +1,8 @@
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 
-let alunos = [], instrutores = [], veiculos = [], locais = [], aulas = [], aulasSemana = [], planos = [];
+let alunos = [], alunosTodos = [], instrutores = [], veiculos = [], locais = [], aulas = [], aulasHoje = [], aulasSemana = [], planos = [];
+let resumoDashboard = {};
 let configInstrutores = [], configVeiculos = [], configLocais = [];
 let configFuncionamento = {
   dias_funcionamento: [0,1,2,3,4,5,6],
@@ -11,6 +12,7 @@ let configFuncionamento = {
   intervalo_minutos: 0
 };
 let mostrarInativosConfig = false;
+let mostrarInativosAlunos = false;
 let confirmAction = null;
 let ultimoPreviewPlano = null;
 
@@ -153,17 +155,19 @@ function studentHtml(a) {
   const aindaProgramar = Math.max(0, contratadas - realizadas - agendadas);
   const restantes = Math.max(0, contratadas - realizadas);
   const pct = contratadas ? Math.min(100, Math.round(realizadas / contratadas * 100)) : 0;
+  const ativo = a.ativo !== false;
+  const cpfExibicao = a.cpf_mascarado || cpfMascarado(a.cpf);
 
-  return `<article class="student">
+  return `<article class="student ${ativo ? '' : 'inactive'}">
     <div class="student-top">
       <div>
         <h3>${esc(a.nome)}</h3>
-        <p>🪪 CPF ${esc(cpfMascarado(a.cpf))}</p>
+        <p>🪪 CPF ${esc(cpfExibicao || 'Não informado')}</p>
         <p>📲 ${esc(a.whatsapp)}</p>
         <p>📧 ${esc(a.email || 'Sem e-mail')}</p>
         <p>🚘 Categoria ${esc(a.categoria)}</p>
       </div>
-      <span class="remaining-badge">${restantes} restantes</span>
+      <span class="remaining-badge">${ativo ? `${restantes} restantes` : 'Inativo'}</span>
     </div>
 
     <div class="student-numbers">
@@ -176,9 +180,11 @@ function studentHtml(a) {
     <small class="progress-text">${realizadas} de ${contratadas} aulas realizadas</small>
 
     <div class="actions-row">
-      <button type="button" class="mini plan" data-plan-aluno="${a.id}">📅 Montar agenda</button>
-      <button type="button" class="mini edit" data-edit-aluno="${a.id}">✏️ Editar</button>
-      <button type="button" class="mini delete" data-del-aluno="${a.id}">🗑️ Excluir</button>
+      ${ativo ? `
+        <button type="button" class="mini plan" data-plan-aluno="${a.id}">📅 Montar agenda</button>
+        <button type="button" class="mini edit" data-edit-aluno="${a.id}">✏️ Editar</button>
+        <button type="button" class="mini delete" data-del-aluno="${a.id}">⏸️ Desativar</button>
+      ` : `<button type="button" class="mini plan" data-reactivate-aluno="${a.id}">▶️ Reativar aluno</button>`}
     </div>
   </article>`;
 }
@@ -189,6 +195,7 @@ function aulaHtml(x, comAcoes = false) {
   const unidadeTxt = unidades > 1 ? ` · ${unidades} aulas consecutivas` : '';
   const reposicao = comAcoes && ['CANCELADA','FALTOU'].includes(x.status)
     ? `<button type="button" class="mini plan" data-repor-aula="${x.id}">↪️ Repor</button>` : '';
+  const podeArquivar = comAcoes && !['REALIZADA','FALTOU'].includes(x.status);
 
   return `<div class="lesson ${String(x.status || '').toLowerCase()}">
     <div class="lesson-time">${hora(x.hora_inicio)}</div>
@@ -201,7 +208,7 @@ function aulaHtml(x, comAcoes = false) {
     ${comAcoes ? `<div class="actions-row lesson-actions">
       ${reposicao}
       <button type="button" class="mini edit" data-edit-aula="${x.id}">✏️ Alterar</button>
-      <button type="button" class="mini delete" data-del-aula="${x.id}">🗑️ Excluir</button>
+      ${podeArquivar ? `<button type="button" class="mini delete" data-del-aula="${x.id}">🗃️ Arquivar</button>` : ''}
     </div>` : ''}
   </div>`;
 }
@@ -471,16 +478,18 @@ function renderSemana() {
 }
 
 function render() {
-  $('#sAlunos').textContent = alunos.length;
-  const h = iso();
-  const ah = aulas.filter(a => dataISO(a.data_aula) === h && a.status !== 'CANCELADA');
-  $('#sHoje').textContent = ah.length;
-  $('#sAgendadas').textContent = aulas
-    .filter(a => dataISO(a.data_aula) >= h && ['AGENDADA','CONFIRMADA'].includes(a.status))
-    .reduce((s, a) => s + Number(a.aulas_unidades || 1), 0);
-  $('#sPlanos').textContent = planos.filter(p => p.ativo).length;
+  $('#sAlunos').textContent = Number(resumoDashboard.alunos_ativos ?? alunos.length);
+  $('#sHoje').textContent = Number(resumoDashboard.aulas_hoje ?? aulasHoje.length);
+  $('#sAgendadas').textContent = Number(resumoDashboard.aulas_agendadas ?? 0);
+  $('#sPlanos').textContent = Number(resumoDashboard.planos_ativos ?? planos.filter(p => p.ativo).length);
 
-  $('#listaAlunos').innerHTML = alunos.length ? alunos.map(studentHtml).join('') : '<div class="empty">Nenhum aluno cadastrado.</div>';
+  const h = iso();
+  const ah = aulasHoje.filter(a => dataISO(a.data_aula) === h && a.status !== 'CANCELADA');
+  const alunosExibidos = mostrarInativosAlunos ? alunosTodos : alunos;
+  $('#listaAlunos').innerHTML = alunosExibidos.length ? alunosExibidos.map(studentHtml).join('') : '<div class="empty">Nenhum aluno cadastrado.</div>';
+  const toggleAlunos = $('#toggleInativosAlunos');
+  if (toggleAlunos) toggleAlunos.textContent = mostrarInativosAlunos ? 'Ocultar inativos' : 'Mostrar inativos';
+
   $('#hoje').innerHTML = ah.length ? ah.map(a => aulaHtml(a, false)).join('') : '<div class="empty">Nenhuma aula hoje.</div>';
 
   const f = $('#filtroData').value;
@@ -528,6 +537,7 @@ function preencherSelects() {
 function bindDynamic() {
   $$('[data-edit-aluno]').forEach(b => b.onclick = () => editarAluno(Number(b.dataset.editAluno)));
   $$('[data-del-aluno]').forEach(b => b.onclick = () => pedirExcluirAluno(Number(b.dataset.delAluno)));
+  $$('[data-reactivate-aluno]').forEach(b => b.onclick = () => reativarAluno(Number(b.dataset.reactivateAluno)));
   $$('[data-plan-aluno]').forEach(b => b.onclick = () => abrirPlano(Number(b.dataset.planAluno)));
   $$('[data-edit-aula]').forEach(b => b.onclick = () => editarAula(Number(b.dataset.editAula)));
   $$('[data-del-aula]').forEach(b => b.onclick = () => pedirExcluirAula(Number(b.dataset.delAula)));
@@ -550,32 +560,37 @@ function bindDynamic() {
 
 async function load() {
   try {
-    [alunos, instrutores, veiculos, locais, aulas, planos, configInstrutores, configVeiculos, configLocais, configFuncionamento] = await Promise.all([
+    const dataSelecionada = $('#filtroData').value || iso();
+    const hoje = iso();
+    [alunos, instrutores, veiculos, locais, aulas, aulasHoje, planos, configInstrutores, configVeiculos, configLocais, configFuncionamento, resumoDashboard] = await Promise.all([
       api('/api/alunos'),
       api('/api/instrutores'),
       api('/api/veiculos'),
       api('/api/locais'),
-      api('/api/aulas'),
+      api(`/api/aulas?data_inicio=${encodeURIComponent(dataSelecionada)}&data_fim=${encodeURIComponent(dataSelecionada)}`),
+      api(`/api/aulas?data_inicio=${encodeURIComponent(hoje)}&data_fim=${encodeURIComponent(hoje)}`),
       api('/api/planos'),
       api('/api/instrutores?incluir_inativos=1'),
       api('/api/veiculos?incluir_inativos=1'),
       api('/api/locais?incluir_inativos=1'),
-      api('/api/configuracoes/funcionamento')
+      api('/api/configuracoes/funcionamento'),
+      api('/api/dashboard/resumo')
     ]);
+    if (mostrarInativosAlunos) alunosTodos = await api('/api/alunos?incluir_inativos=1');
     render();
     await carregarAulasSemana(true);
   } catch (e) {
     console.error(e);
-    toast('Erro ao carregar dados');
+    toast(e.status === 503 ? 'Configure a proteção de acesso no Render.' : 'Erro ao carregar dados');
   }
 }
 
 async function health() {
   try {
     const h = await api('/api/health');
-    const seguranca = h.auth_required ? ' · 🔒 acesso protegido' : ' · ⚠️ acesso sem senha';
-    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '1.8.0'}${seguranca}.`;
-    $('#db').className = h.auth_required ? 'db ok' : 'db warn';
+    const seguranca = h.security_ready ? ' · 🔒 acesso protegido' : ' · ⛔ proteção precisa ser configurada';
+    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '1.8.1'}${seguranca}.`;
+    $('#db').className = h.security_ready ? 'db ok' : 'db fail';
   } catch {
     $('#db').textContent = '🔴 Banco não conectado. Verifique DATABASE_URL no Render.';
     $('#db').className = 'db fail';
@@ -594,24 +609,23 @@ function novoAluno() {
   open('mAluno');
 }
 
-function editarAluno(id) {
-  const a = alunos.find(x => Number(x.id) === id);
-  if (!a) return;
-  $('#alunoId').value = a.id;
-  $('#nome').value = a.nome || '';
-  $('#cpf').value = formatCpf(a.cpf || '');
-  $('#whats').value = a.whatsapp || '';
-  $('#email').value = a.email || '';
-  $('#cat').value = a.categoria || 'B';
-  $('#contratadas').value = a.aulas_contratadas || 20;
-  $('#realizadas').value = Number(
-    a.aulas_realizadas_anteriores ?? a.aulas_realizadas ?? 0
-  );
-  $('#obs').value = a.observacoes || '';
-  $('#tituloAluno').textContent = 'Editar aluno';
-  $('#salvarAluno').textContent = 'Salvar alterações';
-  $('#erroAluno').classList.add('hide');
-  open('mAluno');
+async function editarAluno(id) {
+  try {
+    const a = await api('/api/alunos/' + id);
+    $('#alunoId').value = a.id;
+    $('#nome').value = a.nome || '';
+    $('#cpf').value = formatCpf(a.cpf || '');
+    $('#whats').value = a.whatsapp || '';
+    $('#email').value = a.email || '';
+    $('#cat').value = a.categoria || 'B';
+    $('#contratadas').value = a.aulas_contratadas || 20;
+    $('#realizadas').value = Number(a.aulas_realizadas_anteriores ?? a.aulas_realizadas ?? 0);
+    $('#obs').value = a.observacoes || '';
+    $('#tituloAluno').textContent = 'Editar aluno';
+    $('#salvarAluno').textContent = 'Salvar alterações';
+    $('#erroAluno').classList.add('hide');
+    open('mAluno');
+  } catch (e) { toast(e.message); }
 }
 
 function confirmar(titulo, texto, acao, botao = 'Confirmar') {
@@ -632,19 +646,37 @@ $('#confirmSim').onclick = async () => {
 function pedirExcluirAluno(id) {
   const a = alunos.find(x => Number(x.id) === id);
   if (!a) return;
-  confirmar('Excluir aluno?', `O aluno ${a.nome} deixará de aparecer na lista. As aulas antigas vinculadas a ele serão preservadas.`, async () => {
+  confirmar('Desativar aluno?', `O aluno ${a.nome} ficará inativo. Planos ativos serão encerrados e aulas futuras ainda agendadas serão canceladas. O histórico será preservado.`, async () => {
     try {
-      const r = await api('/api/alunos/' + id, { method: 'DELETE' });
-      const extras = Number(r.aulas_futuras_canceladas || 0)
-        ? ` · ${r.aulas_futuras_canceladas} aula(s) futura(s) cancelada(s)`
-        : '';
-      toast(`✅ Aluno excluído${extras}.`);
+      const r = await api('/api/alunos/' + id + '/ativo', { method: 'PATCH', body: JSON.stringify({ ativo:false }) });
+      const extras = Number(r.aulas_futuras_canceladas || 0) ? ` · ${r.aulas_futuras_canceladas} aula(s) futura(s) cancelada(s)` : '';
+      toast(`✅ Aluno desativado${extras}.`);
       await load();
     } catch (e) { toast(e.message); }
-  }, 'Excluir');
+  }, 'Desativar');
+}
+
+async function reativarAluno(id) {
+  try {
+    await api('/api/alunos/' + id + '/ativo', { method:'PATCH', body:JSON.stringify({ ativo:true }) });
+    toast('✅ Aluno reativado.');
+    await load();
+  } catch (e) { toast(e.message); }
+}
+
+async function alternarInativosAlunos() {
+  mostrarInativosAlunos = !mostrarInativosAlunos;
+  try {
+    if (mostrarInativosAlunos) alunosTodos = await api('/api/alunos?incluir_inativos=1');
+    render();
+  } catch (e) {
+    mostrarInativosAlunos = false;
+    toast(e.message);
+  }
 }
 
 $('#novoAluno').onclick = novoAluno;
+$('#toggleInativosAlunos').onclick = alternarInativosAlunos;
 $('#cpf').addEventListener('input', e => {
   e.target.value = formatCpf(e.target.value);
 });
@@ -704,40 +736,42 @@ function novaAula(prefill = null) {
   open('mAula');
 }
 
-function editarAula(id) {
-  const a = aulas.find(x => Number(x.id) === id);
-  if (!a) return;
-  preencherSelects();
-  $('#aulaId').value = a.id;
-  $('#aulaPlanId').value = a.plan_id || '';
-  $('#aAluno').value = a.aluno_id;
-  $('#aInstrutor').value = a.instrutor_id;
-  $('#aVeiculo').value = a.veiculo_id;
-  $('#aLocal').value = a.local_id;
-  $('#aData').value = dataISO(a.data_aula);
-  $('#aHora').value = hora(a.hora_inicio);
-  $('#aDur').value = String(a.duracao_minutos || 50);
-  $('#aUnidades').value = String(a.aulas_unidades || 1);
-  $('#aStatus').value = a.status || 'AGENDADA';
-  $('#aObs').value = a.observacoes || '';
-  $('#tituloAula').textContent = 'Alterar aula';
-  $('#salvarAula').textContent = 'Salvar alterações';
-  $('#erroAula').classList.add('hide');
-  $('#aplicarProximas').checked = false;
-  $('#serieBox').classList.toggle('hide', !a.plan_id);
-  open('mAula');
+async function editarAula(id) {
+  try {
+    const a = await api('/api/aulas/' + id);
+    if (a.arquivada) return toast('Esta aula está arquivada.');
+    preencherSelects();
+    $('#aulaId').value = a.id;
+    $('#aulaPlanId').value = a.plan_id || '';
+    $('#aAluno').value = a.aluno_id;
+    $('#aInstrutor').value = a.instrutor_id;
+    $('#aVeiculo').value = a.veiculo_id;
+    $('#aLocal').value = a.local_id;
+    $('#aData').value = dataISO(a.data_aula);
+    $('#aHora').value = hora(a.hora_inicio);
+    $('#aDur').value = String(a.duracao_minutos || 50);
+    $('#aUnidades').value = String(a.aulas_unidades || 1);
+    $('#aStatus').value = a.status || 'AGENDADA';
+    $('#aObs').value = a.observacoes || '';
+    $('#tituloAula').textContent = 'Alterar aula';
+    $('#salvarAula').textContent = 'Salvar alterações';
+    $('#erroAula').classList.add('hide');
+    $('#aplicarProximas').checked = false;
+    $('#serieBox').classList.toggle('hide', !a.plan_id);
+    open('mAula');
+  } catch (e) { toast(e.message); }
 }
 
 function pedirExcluirAula(id) {
   const a = aulas.find(x => Number(x.id) === id);
   if (!a) return;
-  confirmar('Excluir aula?', `Excluir definitivamente a aula de ${a.aluno_nome} em ${fmtData(a.data_aula)} às ${hora(a.hora_inicio)}?`, async () => {
+  confirmar('Arquivar aula?', `A aula de ${a.aluno_nome} em ${fmtData(a.data_aula)} às ${hora(a.hora_inicio)} será cancelada e retirada da agenda, mas continuará preservada no PostgreSQL para o histórico.`, async () => {
     try {
-      await api('/api/aulas/' + id, { method: 'DELETE' });
-      toast('✅ Aula excluída.');
+      await api('/api/aulas/' + id, { method:'DELETE' });
+      toast('✅ Aula arquivada. O histórico foi preservado.');
       await load();
     } catch (e) { toast(e.message); }
-  }, 'Excluir');
+  }, 'Arquivar');
 }
 
 function reporAula(id) {
@@ -1323,7 +1357,13 @@ function pedirEncerrarPlano(id, cancelarFuturas = false) {
 
 // ========================= NAVEGAÇÃO / INICIALIZAÇÃO =========================
 $('#filtroData').value = iso();
-$('#filtroData').onchange = render;
+$('#filtroData').onchange = async () => {
+  try {
+    const d = $('#filtroData').value || iso();
+    aulas = await api(`/api/aulas?data_inicio=${encodeURIComponent(d)}&data_fim=${encodeURIComponent(d)}`);
+    render();
+  } catch (e) { toast(e.message); }
+};
 $('#irAgenda').onclick = () => abrirTab('agenda');
 
 $('#filtroSemana').value = iso();

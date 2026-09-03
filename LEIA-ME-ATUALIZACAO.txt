@@ -1,24 +1,48 @@
-AUTOAGENDA V1.8.0 — DISPONIBILIDADE DOS INSTRUTORES
+AUTOAGENDA V1.8.1 — AUDITORIA, SEGURANÇA E INTEGRIDADE
+======================================================
 
-O QUE MUDOU
-- Disponibilidade individual por instrutor.
-- Dias de trabalho próprios.
-- Horário inicial e final próprios.
-- Intervalo opcional.
-- Cadastro de folgas/férias/dias indisponíveis.
-- Nova aula, plano automático e reagendamento respeitam essas regras.
-- Aulas antigas são preservadas.
+OBJETIVO
+-------
+Consolidar a V1.8 antes de avançar para Disponibilidade dos Veículos.
 
-COMO ATUALIZAR
-1. Faça uma cópia da versão atual.
-2. Extraia o ZIP V1.8.
-3. Copie o conteúdo da pasta para a raiz do repositório AutoAgenda.
-4. Não altere DATABASE_URL.
-5. Faça Commit changes no GitHub.
-6. Aguarde o Render concluir o deploy.
-7. Pressione Ctrl+F5.
-8. Confirme no topo: AutoAgenda V1.8.0.
-9. Execute CHECKLIST_V1.8.md.
+ALTERAÇÕES PRINCIPAIS
+--------------------
+1. Proteção por usuário/senha obrigatória em produção.
+2. CPF mascarado na listagem; CPF completo somente na edição individual.
+3. Observações do aluno não são mais enviadas na listagem geral.
+4. Aula manual respeita o saldo contratado do aluno.
+5. Edição e mudança de status também respeitam saldo e regras de agenda.
+6. Exclusão de aula passa a arquivar/cancelar, sem DELETE físico do PostgreSQL.
+7. Aulas REALIZADA e FALTOU ficam protegidas contra arquivamento comum.
+8. Alunos inativos podem ser mostrados e reativados.
+9. Sugestão de horário livre respeita a disponibilidade do instrutor.
+10. Bloqueios transacionais reduzem risco de agendamento simultâneo duplicado.
+11. Consultas da agenda foram reduzidas aos períodos necessários.
+12. .gitignore e .env.example foram adicionados.
+13. Documentos antigos foram organizados em docs/historico/.
 
-BANCO
-Não execute schema.sql manualmente. O server.js faz as migrações automaticamente.
+ANTES DE SUBIR PARA O GITHUB
+----------------------------
+IMPORTANTE: no Render, configure PRIMEIRO:
+
+AUTOAGENDA_USER = escolha seu usuário
+AUTOAGENDA_PASSWORD = escolha uma senha forte
+
+NÃO coloque esses valores no GitHub.
+
+Depois:
+1. substitua os arquivos do projeto;
+2. faça Commit changes;
+3. aguarde o deploy;
+4. faça Ctrl + F5;
+5. confirme que a tela pede usuário/senha;
+6. verifique /api/health e procure version 1.8.1 e security_ready true;
+7. execute CHECKLIST_V1.8.1.md.
+
+BANCO GRATUITO
+--------------
+Esta atualização não faz upgrade do banco. O projeto permanece no plano gratuito conforme a decisão atual, com preparação de backup/migração até 22/09/2026.
+
+OBSERVAÇÃO SOBRE PACKAGE-LOCK
+-----------------------------
+Não foi adicionado package-lock.json nesta atualização. As versões das dependências foram fixadas diretamente no package.json e o Render continua usando npm install.

@@ -1,4 +1,4 @@
--- AutoAgenda V1.8.0
+-- AutoAgenda V1.8.1
 -- Schema compatível com o server.js atual.
 -- O servidor cria/migra automaticamente; este arquivo serve para referência e execução manual controlada.
 
@@ -118,6 +118,8 @@ CREATE TABLE IF NOT EXISTS autoagenda.aulas (
   numero_plano INTEGER,
   aulas_unidades INTEGER NOT NULL DEFAULT 1,
   excecao_plano BOOLEAN NOT NULL DEFAULT FALSE,
+  arquivada BOOLEAN NOT NULL DEFAULT FALSE,
+  arquivada_em TIMESTAMP,
   criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
   atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
 );
@@ -139,6 +141,8 @@ ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS plan_id INTEGER;
 ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS numero_plano INTEGER;
 ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS aulas_unidades INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS excecao_plano BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS arquivada BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS arquivada_em TIMESTAMP;
 
 DO $$
 BEGIN
@@ -154,6 +158,7 @@ BEGIN
 END $$;
 
 CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_data ON autoagenda.aulas(data_aula);
+CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_ativas_data ON autoagenda.aulas(data_aula, hora_inicio) WHERE arquivada = FALSE;
 CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_instrutor_data ON autoagenda.aulas(instrutor_id, data_aula);
 CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_veiculo_data ON autoagenda.aulas(veiculo_id, data_aula);
 CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_aluno_data ON autoagenda.aulas(aluno_id, data_aula);

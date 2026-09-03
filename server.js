@@ -2,11 +2,12 @@ require('dotenv').config();
 
 const express = require('express');
 const path = require('path');
+const crypto = require('crypto');
 const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '1.8.0';
+const APP_VERSION = '1.8.1';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -31,20 +32,39 @@ const pool = new Pool({
 
 app.disable('x-powered-by');
 
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const ADMIN_USER = String(process.env.AUTOAGENDA_USER || '').trim();
+const ADMIN_PASSWORD = String(process.env.AUTOAGENDA_PASSWORD || '');
+const AUTH_CONFIGURED = Boolean(ADMIN_USER && ADMIN_PASSWORD);
+const AUTH_REQUIRED = IS_PRODUCTION || AUTH_CONFIGURED;
+
+function textoSeguroIgual(a, b) {
+  const aa = Buffer.from(String(a || ''), 'utf8');
+  const bb = Buffer.from(String(b || ''), 'utf8');
+  return aa.length === bb.length && crypto.timingSafeEqual(aa, bb);
+}
+
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'same-origin');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  res.setHeader('Content-Security-Policy', "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+  if (IS_PRODUCTION) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   next();
 });
 
-const ADMIN_USER = String(process.env.AUTOAGENDA_USER || '').trim();
-const ADMIN_PASSWORD = String(process.env.AUTOAGENDA_PASSWORD || '');
-
 app.use((req, res, next) => {
   if (req.path === '/api/health') return next();
-  if (!ADMIN_USER || !ADMIN_PASSWORD) return next();
+
+  // Em produção, o AutoAgenda não expõe dados pessoais se usuário/senha não estiverem configurados.
+  if (AUTH_REQUIRED && !AUTH_CONFIGURED) {
+    const mensagem = 'AutoAgenda protegido: configure AUTOAGENDA_USER e AUTOAGENDA_PASSWORD no Render antes de liberar o acesso.';
+    if (req.path.startsWith('/api/')) return res.status(503).json({ error: mensagem, security_setup_required: true });
+    return res.status(503).type('text/plain; charset=utf-8').send(mensagem);
+  }
+
+  if (!AUTH_CONFIGURED) return next();
 
   const auth = String(req.headers.authorization || '');
   if (auth.startsWith('Basic ')) {
@@ -53,11 +73,12 @@ app.use((req, res, next) => {
       const sep = decoded.indexOf(':');
       const user = sep >= 0 ? decoded.slice(0, sep) : decoded;
       const pass = sep >= 0 ? decoded.slice(sep + 1) : '';
-      if (user === ADMIN_USER && pass === ADMIN_PASSWORD) return next();
+      if (textoSeguroIgual(user, ADMIN_USER) && textoSeguroIgual(pass, ADMIN_PASSWORD)) return next();
     } catch {}
   }
 
   res.setHeader('WWW-Authenticate', 'Basic realm="AutoAgenda", charset="UTF-8"');
+  if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Usuário ou senha inválidos.' });
   return res.status(401).send('Acesso protegido ao AutoAgenda.');
 });
 
@@ -260,6 +281,8 @@ async function initDatabase() {
     await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS numero_plano INTEGER');
     await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS aulas_unidades INTEGER NOT NULL DEFAULT 1');
     await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS excecao_plano BOOLEAN NOT NULL DEFAULT FALSE');
+    await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS arquivada BOOLEAN NOT NULL DEFAULT FALSE');
+    await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS arquivada_em TIMESTAMP');
 
     await client.query(`
       DO $$
@@ -278,6 +301,7 @@ async function initDatabase() {
     `);
 
     await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_data ON autoagenda.aulas(data_aula)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_ativas_data ON autoagenda.aulas(data_aula, hora_inicio) WHERE arquivada = FALSE');
     await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_instrutor_data ON autoagenda.aulas(instrutor_id, data_aula)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_veiculo_data ON autoagenda.aulas(veiculo_id, data_aula)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_aluno_data ON autoagenda.aulas(aluno_id, data_aula)');
@@ -323,7 +347,7 @@ app.get('/api/health', async (req, res) => {
                WHERE schema_name = 'autoagenda'
              ) AS schema_autoagenda
     `);
-    res.json({ ok: true, version: APP_VERSION, auth_required: Boolean(ADMIN_USER && ADMIN_PASSWORD), database: true, schema_autoagenda: result.rows[0].schema_autoagenda, agora: result.rows[0].agora });
+    res.json({ ok: true, version: APP_VERSION, auth_required: AUTH_REQUIRED, auth_configured: AUTH_CONFIGURED, security_ready: !AUTH_REQUIRED || AUTH_CONFIGURED, database: true, schema_autoagenda: result.rows[0].schema_autoagenda, agora: result.rows[0].agora });
   } catch (error) {
     console.error(error);
     res.status(500).json({ ok: false, database: false, error: 'Falha ao conectar ao banco.' });
@@ -356,7 +380,15 @@ function normalizarDias(dias, dataInicio) {
   return [dateOnlyUTC(dataInicio).getUTCDay()];
 }
 
-async function saldoAluno(client, alunoId) {
+function statusContaSaldo(status, dataAula) {
+  const st = String(status || '').toUpperCase();
+  if (st === 'REALIZADA') return true;
+  if (['AGENDADA','CONFIRMADA'].includes(st)) return String(dataAula || '').slice(0,10) >= hojeApp();
+  return false;
+}
+
+async function saldoAluno(client, alunoId, excluirAulaIds = []) {
+  const ids = (Array.isArray(excluirAulaIds) ? excluirAulaIds : [excluirAulaIds]).map(Number).filter(Boolean);
   const r = await client.query(`
     SELECT a.id, a.aulas_contratadas,
            (
@@ -364,7 +396,10 @@ async function saldoAluno(client, alunoId) {
              + COALESCE((
                SELECT SUM(au.aulas_unidades)
                FROM autoagenda.aulas au
-               WHERE au.aluno_id = a.id AND au.status = 'REALIZADA'
+               WHERE au.aluno_id = a.id
+                 AND au.status = 'REALIZADA'
+                 AND au.arquivada = FALSE
+                 AND (cardinality($3::int[]) = 0 OR NOT (au.id = ANY($3::int[])))
              ), 0)
            )::int AS realizadas,
            COALESCE((
@@ -373,10 +408,12 @@ async function saldoAluno(client, alunoId) {
              WHERE au.aluno_id = a.id
                AND au.data_aula >= $2::date
                AND au.status IN ('AGENDADA','CONFIRMADA')
+               AND au.arquivada = FALSE
+               AND (cardinality($3::int[]) = 0 OR NOT (au.id = ANY($3::int[])))
            ), 0)::int AS agendadas
     FROM autoagenda.alunos a
     WHERE a.id = $1 AND a.ativo = TRUE
-  `, [Number(alunoId), hojeApp()]);
+  `, [Number(alunoId), hojeApp(), ids]);
 
   if (!r.rowCount) return null;
   const x = r.rows[0];
@@ -386,9 +423,37 @@ async function saldoAluno(client, alunoId) {
   };
 }
 
+async function validarSaldoAula(client, { aluno_id, status, data_aula, aulas_unidades }, excluirAulaIds = []) {
+  if (!statusContaSaldo(status, data_aula)) return null;
+  const unidades = Math.min(4, validarInteiroPositivo(aulas_unidades, 1, 4));
+  const saldo = await saldoAluno(client, aluno_id, excluirAulaIds);
+  if (!saldo) throw erroHttp(404, 'Aluno não encontrado ou inativo.');
+  if (unidades > Number(saldo.disponiveis)) {
+    throw erroHttp(409, `O aluno possui somente ${saldo.disponiveis} aula(s) disponível(is). Ajuste a quantidade de aulas consumidas ou o pacote contratado.`);
+  }
+  return saldo;
+}
+
+function validarDataParaStatus(dataAula, status) {
+  const data = String(dataAula || '').slice(0,10);
+  const st = String(status || '').toUpperCase();
+  if (['AGENDADA','CONFIRMADA'].includes(st) && data < hojeApp()) {
+    throw erroHttp(400, 'Aulas agendadas ou confirmadas não podem ser criadas em data passada. Use REALIZADA para registrar uma aula já ocorrida.');
+  }
+  if (['REALIZADA','FALTOU'].includes(st) && data > hojeApp()) {
+    throw erroHttp(400, `${st === 'REALIZADA' ? 'Uma aula realizada' : 'Uma falta'} não pode ser registrada em data futura.`);
+  }
+}
+
 function validarInteiroPositivo(valor, padrao, maximo = 10000) {
   const n = Number(valor);
   if (!Number.isInteger(n) || n < 1 || n > maximo) return padrao;
+  return n;
+}
+
+function validarInteiroNaoNegativo(valor, padrao = 0, maximo = 10000) {
+  const n = Number(valor);
+  if (!Number.isInteger(n) || n < 0 || n > maximo) return padrao;
   return n;
 }
 
@@ -782,6 +847,23 @@ function gerarOcorrencias({ data_inicio, hora_inicio, duracao_base_minutos, aula
   return ocorrencias;
 }
 
+async function bloquearChavesTransacao(client, chaves) {
+  const unicas = Array.from(new Set((chaves || []).filter(Boolean).map(String))).sort();
+  for (const chave of unicas) {
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1)::bigint)', [chave]);
+  }
+}
+
+function chavesAgenda(dados) {
+  const data = String(dados.data_aula || '').slice(0,10);
+  return [
+    `saldo:aluno:${Number(dados.aluno_id)}`,
+    `agenda:aluno:${Number(dados.aluno_id)}:${data}`,
+    `agenda:instrutor:${Number(dados.instrutor_id)}:${data}`,
+    `agenda:veiculo:${Number(dados.veiculo_id)}:${data}`
+  ];
+}
+
 async function verificarConflito(client, dados, excluirIds = [], intervaloMinutos = null) {
   const inicio = `${dados.data_aula} ${String(dados.hora_inicio).slice(0, 5)}:00`;
   const ids = (Array.isArray(excluirIds) ? excluirIds : [excluirIds]).map(Number).filter(Boolean);
@@ -833,6 +915,12 @@ async function sugerirHorario(client, dados, excluirIds = [], config = null) {
     const teste = { ...dados, hora_inicio: horarioDeMinutos(min) };
     const permitido = avaliarHorarioFuncionamento(cfg, teste);
     if (!permitido.ok) continue;
+    try {
+      await validarDisponibilidadeInstrutor(client, teste.instrutor_id, teste, cfg);
+    } catch (error) {
+      if (error.statusCode === 400 || error.statusCode === 404) continue;
+      throw error;
+    }
     const conflito = await verificarConflito(client, teste, excluirIds, cfg.intervalo_minutos);
     if (!conflito.rowCount) return teste.hora_inicio;
   }
@@ -861,17 +949,59 @@ async function listarConflitosPlano(client, base, ocorrencias, config = null) {
 }
 
 // ========================= ALUNOS =========================
+function cpfMascaradoServidor(cpf) {
+  const x = normalizarCpf(cpf);
+  return x.length === 11 ? `***.***.***-${x.slice(-2)}` : null;
+}
+
+async function desativarAlunoComHistorico(client, id) {
+  const result = await client.query(`
+    UPDATE autoagenda.alunos
+    SET ativo = FALSE, atualizado_em = NOW()
+    WHERE id = $1 AND ativo = TRUE
+    RETURNING id
+  `, [id]);
+  if (!result.rowCount) throw erroHttp(404, 'Aluno não encontrado ou já está inativo.');
+
+  const planosEncerrados = await client.query(`
+    UPDATE autoagenda.planos_aula
+    SET ativo = FALSE, atualizado_em = NOW()
+    WHERE aluno_id = $1 AND ativo = TRUE
+    RETURNING id
+  `, [id]);
+
+  const futurasCanceladas = await client.query(`
+    UPDATE autoagenda.aulas
+    SET status = 'CANCELADA', atualizado_em = NOW()
+    WHERE aluno_id = $1
+      AND data_aula >= $2::date
+      AND status IN ('AGENDADA','CONFIRMADA')
+      AND arquivada = FALSE
+    RETURNING id
+  `, [id, hojeApp()]);
+
+  return {
+    ok: true,
+    planos_encerrados: planosEncerrados.rowCount,
+    aulas_futuras_canceladas: futurasCanceladas.rowCount
+  };
+}
+
 app.get('/api/alunos', async (req, res) => {
   try {
+    const mostrarTodos = incluirInativos(req);
     const result = await query(`
-      SELECT a.id, a.nome, a.cpf, a.whatsapp, a.email, a.categoria,
+      SELECT a.id, a.nome, a.whatsapp, a.email, a.categoria,
              a.aulas_contratadas, a.aulas_realizadas,
-             a.aulas_realizadas_anteriores, a.observacoes,
+             a.aulas_realizadas_anteriores,
              a.ativo, a.criado_em,
+             CASE WHEN LENGTH(COALESCE(a.cpf,'')) = 11
+                  THEN '***.***.***-' || RIGHT(a.cpf, 2)
+                  ELSE NULL END AS cpf_mascarado,
              COALESCE((
                SELECT SUM(au.aulas_unidades)
                FROM autoagenda.aulas au
-               WHERE au.aluno_id = a.id AND au.status = 'REALIZADA'
+               WHERE au.aluno_id = a.id AND au.status = 'REALIZADA' AND au.arquivada = FALSE
              ), 0)::int AS realizadas_sistema,
              COALESCE((
                SELECT SUM(au.aulas_unidades)
@@ -879,15 +1009,35 @@ app.get('/api/alunos', async (req, res) => {
                WHERE au.aluno_id = a.id
                  AND au.data_aula >= $1::date
                  AND au.status IN ('AGENDADA','CONFIRMADA')
+                 AND au.arquivada = FALSE
              ), 0)::int AS aulas_agendadas
       FROM autoagenda.alunos a
-      WHERE a.ativo = TRUE
-      ORDER BY a.nome
-    `, [hojeApp()]);
+      WHERE ($2::boolean = TRUE OR a.ativo = TRUE)
+      ORDER BY a.ativo DESC, a.nome
+    `, [hojeApp(), mostrarTodos]);
     res.json(result.rows);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao consultar alunos.' });
+  }
+});
+
+// O CPF completo só é enviado quando o usuário abre um aluno específico para edição.
+app.get('/api/alunos/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const result = await query(`
+      SELECT id, nome, cpf, whatsapp, email, categoria,
+             aulas_contratadas, aulas_realizadas, aulas_realizadas_anteriores,
+             observacoes, ativo, criado_em, atualizado_em
+      FROM autoagenda.alunos
+      WHERE id = $1
+    `, [id]);
+    if (!result.rowCount) return res.status(404).json({ error: 'Aluno não encontrado.' });
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao consultar aluno.' });
   }
 });
 
@@ -900,8 +1050,23 @@ app.post('/api/alunos', async (req, res) => {
     if (!nome || !whatsapp) return res.status(400).json({ error: 'Nome e WhatsApp são obrigatórios.' });
 
     const cpfLimpo = normalizarCpf(cpf);
-    if (!cpfValido(cpfLimpo)) {
-      return res.status(400).json({ error: 'Informe um CPF válido com 11 dígitos.' });
+    if (!cpfValido(cpfLimpo)) return res.status(400).json({ error: 'Informe um CPF válido com 11 dígitos.' });
+
+    const existente = await query('SELECT id, nome, ativo FROM autoagenda.alunos WHERE cpf=$1 LIMIT 1', [cpfLimpo]);
+    if (existente.rowCount) {
+      const a = existente.rows[0];
+      return res.status(409).json({
+        error: a.ativo
+          ? 'Este CPF já está cadastrado em outro aluno.'
+          : `Este CPF pertence ao aluno inativo ${a.nome}. Use “Mostrar inativos” e reative o cadastro.`,
+        aluno_inativo_id: a.ativo ? null : a.id
+      });
+    }
+
+    const contratadasFinal = validarInteiroPositivo(aulas_contratadas, 20, 500);
+    const anterioresFinal = validarInteiroNaoNegativo(aulas_realizadas_anteriores, 0, 500);
+    if (anterioresFinal > contratadasFinal) {
+      return res.status(400).json({ error: 'As aulas realizadas anteriormente não podem ser maiores que as aulas contratadas.' });
     }
 
     const result = await query(`
@@ -909,15 +1074,14 @@ app.post('/api/alunos', async (req, res) => {
         (nome, cpf, whatsapp, email, categoria, aulas_contratadas,
          aulas_realizadas, aulas_realizadas_anteriores, observacoes)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8)
-      RETURNING *
+      RETURNING id, nome, whatsapp, email, categoria, aulas_contratadas,
+                aulas_realizadas, aulas_realizadas_anteriores, observacoes, ativo
     `, [
       nome.trim(), cpfLimpo, whatsapp.trim(), email || null, categoria,
-      validarInteiroPositivo(aulas_contratadas, 20, 500),
-      Math.max(0, Number(aulas_realizadas_anteriores) || 0),
-      observacoes || ''
+      contratadasFinal, anterioresFinal, observacoes || ''
     ]);
 
-    res.status(201).json(result.rows[0]);
+    res.status(201).json({ ...result.rows[0], cpf_mascarado: cpfMascaradoServidor(cpfLimpo) });
   } catch (error) {
     console.error(error);
     if (error.code === '23505' && String(error.constraint || '').includes('alunos_cpf')) {
@@ -937,8 +1101,23 @@ app.put('/api/alunos/:id', async (req, res) => {
     if (!nome || !whatsapp) return res.status(400).json({ error: 'Nome e WhatsApp são obrigatórios.' });
 
     const cpfLimpo = normalizarCpf(cpf);
-    if (!cpfValido(cpfLimpo)) {
-      return res.status(400).json({ error: 'Informe um CPF válido com 11 dígitos.' });
+    if (!cpfValido(cpfLimpo)) return res.status(400).json({ error: 'Informe um CPF válido com 11 dígitos.' });
+
+    const duplicado = await query('SELECT id FROM autoagenda.alunos WHERE cpf=$1 AND id<>$2 LIMIT 1', [cpfLimpo, id]);
+    if (duplicado.rowCount) return res.status(409).json({ error: 'Este CPF já está cadastrado em outro aluno.' });
+
+    const contratadasFinal = validarInteiroPositivo(aulas_contratadas, 20, 500);
+    const anterioresFinal = validarInteiroNaoNegativo(aulas_realizadas_anteriores, 0, 500);
+    const consumoQ = await query(`
+      SELECT
+        COALESCE(SUM(CASE WHEN status='REALIZADA' AND arquivada=FALSE THEN aulas_unidades ELSE 0 END),0)::int AS realizadas_sistema,
+        COALESCE(SUM(CASE WHEN data_aula >= $2::date AND status IN ('AGENDADA','CONFIRMADA') AND arquivada=FALSE THEN aulas_unidades ELSE 0 END),0)::int AS agendadas
+      FROM autoagenda.aulas
+      WHERE aluno_id=$1
+    `, [id, hojeApp()]);
+    const comprometidas = anterioresFinal + Number(consumoQ.rows[0]?.realizadas_sistema || 0) + Number(consumoQ.rows[0]?.agendadas || 0);
+    if (contratadasFinal < comprometidas) {
+      return res.status(409).json({ error: `O aluno já possui ${comprometidas} aula(s) realizadas/agendadas. O total contratado não pode ser reduzido para ${contratadasFinal}.` });
     }
 
     const result = await query(`
@@ -950,73 +1129,64 @@ app.put('/api/alunos/:id', async (req, res) => {
           observacoes = $8,
           atualizado_em = NOW()
       WHERE id = $9 AND ativo = TRUE
-      RETURNING *
+      RETURNING id, nome, whatsapp, email, categoria, aulas_contratadas,
+                aulas_realizadas, aulas_realizadas_anteriores, observacoes, ativo
     `, [
       nome.trim(), cpfLimpo, whatsapp.trim(), email || null, categoria || 'B',
-      validarInteiroPositivo(aulas_contratadas, 20, 500),
-      Math.max(0, Number(aulas_realizadas_anteriores) || 0),
-      observacoes || '', id
+      contratadasFinal, anterioresFinal, observacoes || '', id
     ]);
 
-    if (!result.rowCount) return res.status(404).json({ error: 'Aluno não encontrado.' });
-    res.json(result.rows[0]);
+    if (!result.rowCount) return res.status(404).json({ error: 'Aluno não encontrado ou inativo.' });
+    res.json({ ...result.rows[0], cpf_mascarado: cpfMascaradoServidor(cpfLimpo) });
   } catch (error) {
     console.error(error);
-    if (error.code === '23505' && String(error.constraint || '').includes('alunos_cpf')) {
-      return res.status(409).json({ error: 'Este CPF já está cadastrado em outro aluno.' });
-    }
-    res.status(500).json({ error: 'Erro ao atualizar aluno.' });
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao atualizar aluno.' });
   }
 });
 
+app.patch('/api/alunos/:id/ativo', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const id = Number(req.params.id);
+    const ativo = req.body?.ativo === true;
+    await client.query('BEGIN');
+    const atual = await client.query('SELECT id, ativo FROM autoagenda.alunos WHERE id=$1 FOR UPDATE', [id]);
+    if (!atual.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Aluno não encontrado.' });
+    }
+
+    if (ativo) {
+      const r = await client.query('UPDATE autoagenda.alunos SET ativo=TRUE, atualizado_em=NOW() WHERE id=$1 RETURNING id, nome, ativo', [id]);
+      await client.query('COMMIT');
+      return res.json({ ok:true, aluno:r.rows[0] });
+    }
+
+    const info = await desativarAlunoComHistorico(client, id);
+    await client.query('COMMIT');
+    res.json(info);
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch {}
+    console.error(error);
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao alterar situação do aluno.' });
+  } finally { client.release(); }
+});
+
+// Compatibilidade: DELETE agora significa desativar, nunca apagar o histórico.
 app.delete('/api/alunos/:id', async (req, res) => {
   const client = await pool.connect();
   try {
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: 'Aluno inválido.' });
-
     await client.query('BEGIN');
-    const result = await client.query(`
-      UPDATE autoagenda.alunos
-      SET ativo = FALSE, atualizado_em = NOW()
-      WHERE id = $1 AND ativo = TRUE
-      RETURNING id
-    `, [id]);
-
-    if (!result.rowCount) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'Aluno não encontrado.' });
-    }
-
-    const planosEncerrados = await client.query(`
-      UPDATE autoagenda.planos_aula
-      SET ativo = FALSE, atualizado_em = NOW()
-      WHERE aluno_id = $1 AND ativo = TRUE
-      RETURNING id
-    `, [id]);
-
-    const futurasCanceladas = await client.query(`
-      UPDATE autoagenda.aulas
-      SET status = 'CANCELADA', atualizado_em = NOW()
-      WHERE aluno_id = $1
-        AND data_aula >= $2::date
-        AND status IN ('AGENDADA','CONFIRMADA')
-      RETURNING id
-    `, [id, hojeApp()]);
-
+    const info = await desativarAlunoComHistorico(client, id);
     await client.query('COMMIT');
-    res.json({
-      ok: true,
-      planos_encerrados: planosEncerrados.rowCount,
-      aulas_futuras_canceladas: futurasCanceladas.rowCount
-    });
+    res.json(info);
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
     console.error(error);
-    res.status(500).json({ error: 'Erro ao excluir aluno.' });
-  } finally {
-    client.release();
-  }
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao desativar aluno.' });
+  } finally { client.release(); }
 });
 
 // ========================= CONFIGURAÇÕES / APOIO =========================
@@ -1857,6 +2027,17 @@ app.post('/api/planos', async (req, res) => {
 
     await client.query('BEGIN');
 
+    const chavesPlano = [`saldo:aluno:${Number(base.aluno_id)}`];
+    for (const o of ocorrencias) {
+      chavesPlano.push(...chavesAgenda({
+        aluno_id: base.aluno_id,
+        instrutor_id: base.instrutor_id,
+        veiculo_id: base.veiculo_id,
+        data_aula: o.data_aula
+      }));
+    }
+    await bloquearChavesTransacao(client, chavesPlano);
+
     // Evita que dois salvamentos simultâneos ultrapassem o saldo do mesmo aluno.
     const lockAluno = await client.query(
       'SELECT id FROM autoagenda.alunos WHERE id = $1 AND ativo = TRUE FOR UPDATE',
@@ -1958,16 +2139,38 @@ app.patch('/api/planos/:id/encerrar', async (req, res) => {
   }
 });
 
+// Resumo leve para o painel; evita carregar todas as aulas do histórico no navegador.
+app.get('/api/dashboard/resumo', async (req, res) => {
+  try {
+    const r = await query(`
+      SELECT
+        (SELECT COUNT(*)::int FROM autoagenda.alunos WHERE ativo=TRUE) AS alunos_ativos,
+        (SELECT COUNT(*)::int FROM autoagenda.planos_aula WHERE ativo=TRUE) AS planos_ativos,
+        (SELECT COUNT(*)::int FROM autoagenda.aulas
+          WHERE data_aula=$1::date AND status <> 'CANCELADA' AND arquivada=FALSE) AS aulas_hoje,
+        (SELECT COALESCE(SUM(aulas_unidades),0)::int FROM autoagenda.aulas
+          WHERE data_aula >= $1::date AND status IN ('AGENDADA','CONFIRMADA') AND arquivada=FALSE) AS aulas_agendadas
+    `, [hojeApp()]);
+    res.json(r.rows[0]);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao carregar resumo do painel.' });
+  }
+});
+
 // ========================= AULAS =========================
 app.get('/api/aulas', async (req, res) => {
   try {
     const { data_inicio, data_fim } = req.query;
+    const incluirArquivadas = ['1','true','sim'].includes(String(req.query?.incluir_arquivadas || '').toLowerCase());
     const params = [];
-    let filtro = '';
+    const condicoes = [];
+    if (!incluirArquivadas) condicoes.push('a.arquivada = FALSE');
     if (data_inicio && data_fim) {
       params.push(data_inicio, data_fim);
-      filtro = 'WHERE a.data_aula BETWEEN $1 AND $2';
+      condicoes.push(`a.data_aula BETWEEN $${params.length - 1} AND $${params.length}`);
     }
+    const filtro = condicoes.length ? `WHERE ${condicoes.join(' AND ')}` : '';
 
     const result = await query(`
       SELECT a.id, a.aluno_id, al.nome AS aluno_nome,
@@ -1976,7 +2179,8 @@ app.get('/api/aulas', async (req, res) => {
              a.local_id, l.nome AS local_nome, l.endereco AS local_endereco,
              a.data_aula, a.hora_inicio, a.duracao_minutos,
              a.status, a.observacoes, a.criado_em,
-             a.plan_id, a.numero_plano, a.aulas_unidades, a.excecao_plano
+             a.plan_id, a.numero_plano, a.aulas_unidades, a.excecao_plano,
+             a.arquivada, a.arquivada_em
       FROM autoagenda.aulas a
       JOIN autoagenda.alunos al ON al.id = a.aluno_id
       JOIN autoagenda.instrutores i ON i.id = a.instrutor_id
@@ -1992,6 +2196,28 @@ app.get('/api/aulas', async (req, res) => {
   }
 });
 
+app.get('/api/aulas/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const r = await query(`
+      SELECT a.*, al.nome AS aluno_nome,
+             i.nome AS instrutor_nome, v.nome AS veiculo_nome, v.placa AS veiculo_placa,
+             l.nome AS local_nome, l.endereco AS local_endereco
+      FROM autoagenda.aulas a
+      JOIN autoagenda.alunos al ON al.id=a.aluno_id
+      JOIN autoagenda.instrutores i ON i.id=a.instrutor_id
+      JOIN autoagenda.veiculos v ON v.id=a.veiculo_id
+      JOIN autoagenda.locais l ON l.id=a.local_id
+      WHERE a.id=$1
+    `, [id]);
+    if (!r.rowCount) return res.status(404).json({ error:'Aula não encontrada.' });
+    res.json(r.rows[0]);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error:'Erro ao consultar aula.' });
+  }
+});
+
 app.post('/api/aulas', async (req, res) => {
   const client = await pool.connect();
   try {
@@ -1999,32 +2225,40 @@ app.post('/api/aulas', async (req, res) => {
     if (!aluno_id || !instrutor_id || !veiculo_id || !local_id || !data_aula || !hora_inicio) {
       return res.status(400).json({ error: 'Preencha aluno, instrutor, veículo, local, data e horário.' });
     }
+    const statusFinal = ['AGENDADA','CONFIRMADA','REALIZADA','REMARCADA','CANCELADA','FALTOU'].includes(status) ? status : 'AGENDADA';
+    const unidadesFinal = Math.min(4, validarInteiroPositivo(aulas_unidades, 1, 4));
+    validarDataParaStatus(data_aula, statusFinal);
 
-    await validarRecursosAtivos(client, { instrutor_id, veiculo_id, local_id });
+    await client.query('BEGIN');
     const configFuncionamento = await obterConfigFuncionamento(client);
     const duracaoFinal = validarInteiroPositivo(duracao_minutos, configFuncionamento.duracao_padrao_minutos, 480);
     const dados = { aluno_id, instrutor_id, veiculo_id, data_aula, hora_inicio, duracao_minutos: duracaoFinal };
-    await validarHorarioFuncionamento(client, dados, configFuncionamento);
-    await validarDisponibilidadeInstrutor(client, instrutor_id, dados, configFuncionamento);
-    await client.query('BEGIN');
-    const conflito = await verificarConflito(client, dados, [], configFuncionamento.intervalo_minutos);
-    if (conflito.rowCount) {
-      await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'Conflito de horário.', conflito: conflito.rows[0] });
+    await bloquearChavesTransacao(client, chavesAgenda(dados));
+    await validarRecursosAtivos(client, { instrutor_id, veiculo_id, local_id });
+
+    if (['AGENDADA','CONFIRMADA'].includes(statusFinal)) {
+      await validarHorarioFuncionamento(client, dados, configFuncionamento);
+      await validarDisponibilidadeInstrutor(client, instrutor_id, dados, configFuncionamento);
+    }
+    await validarSaldoAula(client, { aluno_id, status:statusFinal, data_aula, aulas_unidades:unidadesFinal });
+
+    if (['AGENDADA','CONFIRMADA'].includes(statusFinal)) {
+      const conflito = await verificarConflito(client, dados, [], configFuncionamento.intervalo_minutos);
+      if (conflito.rowCount) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'Conflito de horário.', conflito: conflito.rows[0] });
+      }
     }
 
     const result = await client.query(`
       INSERT INTO autoagenda.aulas
         (aluno_id, instrutor_id, veiculo_id, local_id, data_aula, hora_inicio,
-         duracao_minutos, status, observacoes, aulas_unidades)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         duracao_minutos, status, observacoes, aulas_unidades, arquivada)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,FALSE)
       RETURNING *
     `, [
       Number(aluno_id), Number(instrutor_id), Number(veiculo_id), Number(local_id), data_aula,
-      String(hora_inicio).slice(0, 5), duracaoFinal,
-      ['AGENDADA','CONFIRMADA','REALIZADA','REMARCADA','CANCELADA','FALTOU'].includes(status) ? status : 'AGENDADA',
-      observacoes || '',
-      Math.min(4, validarInteiroPositivo(aulas_unidades, 1, 4))
+      String(hora_inicio).slice(0, 5), duracaoFinal, statusFinal, observacoes || '', unidadesFinal
     ]);
 
     await client.query('COMMIT');
@@ -2033,9 +2267,7 @@ app.post('/api/aulas', async (req, res) => {
     try { await client.query('ROLLBACK'); } catch {}
     console.error(error);
     res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao agendar aula.' });
-  } finally {
-    client.release();
-  }
+  } finally { client.release(); }
 });
 
 // Edita apenas esta aula. Em aula de plano, registra como exceção.
@@ -2045,84 +2277,68 @@ app.put('/api/aulas/:id', async (req, res) => {
     const id = Number(req.params.id);
     const { aluno_id, instrutor_id, veiculo_id, local_id, data_aula, hora_inicio,
             duracao_minutos = 50, aulas_unidades = 1, status = 'AGENDADA', observacoes = '' } = req.body;
-
     if (!aluno_id || !instrutor_id || !veiculo_id || !local_id || !data_aula || !hora_inicio) {
       return res.status(400).json({ error: 'Preencha aluno, instrutor, veículo, local, data e horário.' });
     }
     const statusPermitidos = ['AGENDADA','CONFIRMADA','REALIZADA','REMARCADA','CANCELADA','FALTOU'];
     if (!statusPermitidos.includes(status)) return res.status(400).json({ error: 'Status inválido.' });
-
-    const existente = await client.query(
-      'SELECT id, plan_id, instrutor_id, veiculo_id, local_id, data_aula, hora_inicio, duracao_minutos, status FROM autoagenda.aulas WHERE id = $1',
-      [id]
-    );
-    if (!existente.rowCount) return res.status(404).json({ error: 'Aula não encontrada.' });
-
-    await validarRecursosAtivos(
-      client,
-      { instrutor_id, veiculo_id, local_id },
-      {
-        instrutor_id: existente.rows[0].instrutor_id,
-        veiculo_id: existente.rows[0].veiculo_id,
-        local_id: existente.rows[0].local_id
-      }
-    );
-
-    const configFuncionamento = await obterConfigFuncionamento(client);
-    const duracaoFinal = validarInteiroPositivo(duracao_minutos, Number(existente.rows[0].duracao_minutos) || configFuncionamento.duracao_padrao_minutos, 480);
-    const horarioAlterado =
-      String(existente.rows[0].data_aula).slice(0,10) !== String(data_aula).slice(0,10) ||
-      String(existente.rows[0].hora_inicio).slice(0,5) !== String(hora_inicio).slice(0,5) ||
-      Number(existente.rows[0].duracao_minutos) !== duracaoFinal;
-    const reativandoHorario =
-      !['AGENDADA','CONFIRMADA'].includes(String(existente.rows[0].status)) &&
-      ['AGENDADA','CONFIRMADA'].includes(status);
-    const instrutorAlterado = Number(existente.rows[0].instrutor_id) !== Number(instrutor_id);
-
-    if (horarioAlterado || reativandoHorario || instrutorAlterado) {
-      const dadosDisponibilidade = { data_aula, hora_inicio, duracao_minutos: duracaoFinal };
-      await validarHorarioFuncionamento(client, dadosDisponibilidade, configFuncionamento);
-      await validarDisponibilidadeInstrutor(client, instrutor_id, dadosDisponibilidade, configFuncionamento);
-    }
+    validarDataParaStatus(data_aula, status);
 
     await client.query('BEGIN');
-    if (!['CANCELADA','REMARCADA'].includes(status)) {
-      const conflito = await verificarConflito(
-        client,
-        { aluno_id, instrutor_id, veiculo_id, data_aula, hora_inicio, duracao_minutos: duracaoFinal },
-        [id],
-        configFuncionamento.intervalo_minutos
-      );
+    const existente = await client.query('SELECT * FROM autoagenda.aulas WHERE id=$1 FOR UPDATE', [id]);
+    if (!existente.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error:'Aula não encontrada.' });
+    }
+    const antiga = existente.rows[0];
+    if (antiga.arquivada) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error:'Esta aula está arquivada e não pode ser alterada.' });
+    }
+
+    const configFuncionamento = await obterConfigFuncionamento(client);
+    const duracaoFinal = validarInteiroPositivo(duracao_minutos, Number(antiga.duracao_minutos) || configFuncionamento.duracao_padrao_minutos, 480);
+    const unidadesFinal = Math.min(4, validarInteiroPositivo(aulas_unidades, Number(antiga.aulas_unidades) || 1, 4));
+    const dados = { aluno_id, instrutor_id, veiculo_id, data_aula, hora_inicio, duracao_minutos:duracaoFinal };
+    await bloquearChavesTransacao(client, chavesAgenda(dados));
+
+    await validarRecursosAtivos(client, { instrutor_id, veiculo_id, local_id }, {
+      instrutor_id: antiga.instrutor_id, veiculo_id: antiga.veiculo_id, local_id: antiga.local_id
+    });
+
+    if (['AGENDADA','CONFIRMADA'].includes(status)) {
+      await validarHorarioFuncionamento(client, dados, configFuncionamento);
+      await validarDisponibilidadeInstrutor(client, instrutor_id, dados, configFuncionamento);
+    }
+    await validarSaldoAula(client, { aluno_id, status, data_aula, aulas_unidades:unidadesFinal }, [id]);
+
+    if (['AGENDADA','CONFIRMADA'].includes(status)) {
+      const conflito = await verificarConflito(client, dados, [id], configFuncionamento.intervalo_minutos);
       if (conflito.rowCount) {
         await client.query('ROLLBACK');
-        return res.status(409).json({ error: 'Conflito de horário.', conflito: conflito.rows[0] });
+        return res.status(409).json({ error:'Conflito de horário.', conflito:conflito.rows[0] });
       }
     }
 
     const result = await client.query(`
       UPDATE autoagenda.aulas
-      SET aluno_id = $1, instrutor_id = $2, veiculo_id = $3, local_id = $4,
-          data_aula = $5, hora_inicio = $6, duracao_minutos = $7,
-          aulas_unidades = $8, status = $9, observacoes = $10,
-          excecao_plano = CASE WHEN plan_id IS NULL THEN FALSE ELSE TRUE END,
-          atualizado_em = NOW()
-      WHERE id = $11
+      SET aluno_id=$1, instrutor_id=$2, veiculo_id=$3, local_id=$4,
+          data_aula=$5, hora_inicio=$6, duracao_minutos=$7,
+          aulas_unidades=$8, status=$9, observacoes=$10,
+          excecao_plano=CASE WHEN plan_id IS NULL THEN FALSE ELSE TRUE END,
+          atualizado_em=NOW()
+      WHERE id=$11
       RETURNING *
-    `, [
-      Number(aluno_id), Number(instrutor_id), Number(veiculo_id), Number(local_id), data_aula,
-      String(hora_inicio).slice(0, 5), duracaoFinal,
-      Math.min(4, validarInteiroPositivo(aulas_unidades, 1, 4)), status, observacoes || '', id
-    ]);
+    `, [Number(aluno_id),Number(instrutor_id),Number(veiculo_id),Number(local_id),data_aula,
+        String(hora_inicio).slice(0,5),duracaoFinal,unidadesFinal,status,observacoes||'',id]);
 
     await client.query('COMMIT');
     res.json(result.rows[0]);
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
     console.error(error);
-    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao atualizar aula.' });
-  } finally {
-    client.release();
-  }
+    res.status(error.statusCode || 500).json({ error:error.statusCode ? error.message : 'Erro ao atualizar aula.' });
+  } finally { client.release(); }
 });
 
 // Edita esta aula e desloca todas as próximas do mesmo plano pelo mesmo intervalo.
@@ -2131,19 +2347,30 @@ app.put('/api/aulas/:id/serie', async (req, res) => {
   try {
     const id = Number(req.params.id);
     const payload = req.body || {};
-    const atual = await client.query('SELECT * FROM autoagenda.aulas WHERE id = $1', [id]);
-    if (!atual.rowCount) return res.status(404).json({ error: 'Aula não encontrada.' });
-    const alvo = atual.rows[0];
-    if (!alvo.plan_id) return res.status(400).json({ error: 'Esta aula não pertence a um plano automático.' });
-
     if (!payload.data_aula || !payload.hora_inicio || !payload.instrutor_id || !payload.veiculo_id || !payload.local_id) {
-      return res.status(400).json({ error: 'Preencha os dados da alteração.' });
+      return res.status(400).json({ error:'Preencha os dados da alteração.' });
     }
     if (payload.status && !['AGENDADA','CONFIRMADA','REALIZADA','REMARCADA','CANCELADA','FALTOU'].includes(payload.status)) {
-      return res.status(400).json({ error: 'Status inválido.' });
+      return res.status(400).json({ error:'Status inválido.' });
     }
-    if (String(payload.data_aula).slice(0, 10) < hojeApp()) {
-      return res.status(400).json({ error: 'Uma alteração em série não pode deslocar as próximas aulas para uma data passada.' });
+    if (String(payload.data_aula).slice(0,10) < hojeApp()) {
+      return res.status(400).json({ error:'Uma alteração em série não pode deslocar as próximas aulas para uma data passada.' });
+    }
+
+    await client.query('BEGIN');
+    const atual = await client.query('SELECT * FROM autoagenda.aulas WHERE id=$1 FOR UPDATE', [id]);
+    if (!atual.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error:'Aula não encontrada.' });
+    }
+    const alvo = atual.rows[0];
+    if (alvo.arquivada) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error:'Esta aula está arquivada.' });
+    }
+    if (!alvo.plan_id) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error:'Esta aula não pertence a um plano automático.' });
     }
 
     await validarRecursosAtivos(client, payload);
@@ -2151,147 +2378,171 @@ app.put('/api/aulas/:id/serie', async (req, res) => {
     const antigoDT = dateTimeUTC(alvo.data_aula, alvo.hora_inicio);
     const novoDT = dateTimeUTC(payload.data_aula, payload.hora_inicio);
     const delta = novoDT.getTime() - antigoDT.getTime();
-    const deltaDias = Math.round(
-      (dateOnlyUTC(payload.data_aula).getTime() - dateOnlyUTC(alvo.data_aula).getTime()) / 86400000
-    );
+    const deltaDias = Math.round((dateOnlyUTC(payload.data_aula).getTime() - dateOnlyUTC(alvo.data_aula).getTime()) / 86400000);
 
-    const planoQ = await client.query('SELECT dias_semana FROM autoagenda.planos_aula WHERE id = $1', [alvo.plan_id]);
-    if (!planoQ.rowCount) return res.status(404).json({ error: 'Plano automático não encontrado.' });
+    const planoQ = await client.query('SELECT dias_semana FROM autoagenda.planos_aula WHERE id=$1 FOR UPDATE', [alvo.plan_id]);
+    if (!planoQ.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error:'Plano automático não encontrado.' });
+    }
     const diasAtuais = Array.isArray(planoQ.rows[0].dias_semana) ? planoQ.rows[0].dias_semana.map(Number) : [];
-    const novosDias = Array.from(new Set(diasAtuais.map(d => ((d + deltaDias) % 7 + 7) % 7))).sort((a, b) => a - b);
+    const novosDias = Array.from(new Set(diasAtuais.map(d => ((d + deltaDias) % 7 + 7) % 7))).sort((a,b)=>a-b);
 
-    await client.query('BEGIN');
     const afetadasQ = await client.query(`
       SELECT * FROM autoagenda.aulas
-      WHERE plan_id = $1
+      WHERE plan_id=$1 AND arquivada=FALSE
         AND (data_aula + hora_inicio) >= $2::timestamp
         AND status IN ('AGENDADA','CONFIRMADA')
       ORDER BY data_aula, hora_inicio
     `, [alvo.plan_id, `${String(alvo.data_aula).slice(0,10)} ${String(alvo.hora_inicio).slice(0,8)}`]);
-
     const afetadas = afetadasQ.rows;
-    const ids = afetadas.map(a => Number(a.id));
+    const ids = afetadas.map(a=>Number(a.id));
     if (!afetadas.length) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Não há aulas futuras deste plano para alterar.' });
+      return res.status(400).json({ error:'Não há aulas futuras deste plano para alterar.' });
     }
 
     const novas = afetadas.map(a => {
       const dt = dateTimeUTC(a.data_aula, a.hora_inicio);
-      const novo = new Date(dt.getTime() + delta);
-      const isAlvo = Number(a.id) === id;
+      const novo = new Date(dt.getTime()+delta);
+      const isAlvo = Number(a.id)===id;
       return {
         ...a,
-        data_aula_nova: isoDateUTC(novo),
-        hora_inicio_nova: hhmmUTC(novo),
-        instrutor_id_novo: Number(payload.instrutor_id),
-        veiculo_id_novo: Number(payload.veiculo_id),
-        local_id_novo: Number(payload.local_id),
-        duracao_minutos_nova: isAlvo
-          ? validarInteiroPositivo(payload.duracao_minutos, Number(a.duracao_minutos), 480)
-          : Number(a.duracao_minutos),
-        aulas_unidades_nova: isAlvo
-          ? Math.min(4, validarInteiroPositivo(payload.aulas_unidades, Number(a.aulas_unidades) || 1, 4))
-          : Number(a.aulas_unidades || 1)
+        data_aula_nova:isoDateUTC(novo), hora_inicio_nova:hhmmUTC(novo),
+        instrutor_id_novo:Number(payload.instrutor_id), veiculo_id_novo:Number(payload.veiculo_id), local_id_novo:Number(payload.local_id),
+        duracao_minutos_nova:isAlvo ? validarInteiroPositivo(payload.duracao_minutos,Number(a.duracao_minutos),480) : Number(a.duracao_minutos),
+        aulas_unidades_nova:isAlvo ? Math.min(4,validarInteiroPositivo(payload.aulas_unidades,Number(a.aulas_unidades)||1,4)) : Number(a.aulas_unidades||1)
       };
     });
 
-    for (const n of novas) {
-      const dadosDisponibilidade = {
-        data_aula: n.data_aula_nova,
-        hora_inicio: n.hora_inicio_nova,
-        duracao_minutos: n.duracao_minutos_nova
-      };
-      await validarHorarioFuncionamento(client, dadosDisponibilidade, configFuncionamento);
-      await validarDisponibilidadeInstrutor(client, n.instrutor_id_novo, dadosDisponibilidade, configFuncionamento);
+    const chaves=[];
+    for (const n of novas) chaves.push(...chavesAgenda({ aluno_id:n.aluno_id,instrutor_id:n.instrutor_id_novo,veiculo_id:n.veiculo_id_novo,data_aula:n.data_aula_nova }));
+    await bloquearChavesTransacao(client,chaves);
 
-      const conflito = await verificarConflito(client, {
-        aluno_id: n.aluno_id,
-        instrutor_id: n.instrutor_id_novo,
-        veiculo_id: n.veiculo_id_novo,
-        data_aula: n.data_aula_nova,
-        hora_inicio: n.hora_inicio_nova,
-        duracao_minutos: n.duracao_minutos_nova
-      }, ids, configFuncionamento.intervalo_minutos);
-      if (conflito.rowCount) {
-        await client.query('ROLLBACK');
-        return res.status(409).json({
-          error: `Conflito ao alterar a série em ${n.data_aula_nova} às ${n.hora_inicio_nova}.`,
-          conflito: conflito.rows[0]
-        });
+    const alvoNovo = novas.find(n=>Number(n.id)===id);
+    const statusAlvo = payload.status || alvo.status;
+    await validarSaldoAula(client,{ aluno_id:alvo.aluno_id,status:statusAlvo,data_aula:alvoNovo.data_aula_nova,aulas_unidades:alvoNovo.aulas_unidades_nova },[id]);
+
+    for (const n of novas) {
+      const isAlvo = Number(n.id)===id;
+      const statusNovo = isAlvo ? statusAlvo : n.status;
+      const dadosDisponibilidade={ data_aula:n.data_aula_nova,hora_inicio:n.hora_inicio_nova,duracao_minutos:n.duracao_minutos_nova };
+      if (['AGENDADA','CONFIRMADA'].includes(statusNovo)) {
+        await validarHorarioFuncionamento(client,dadosDisponibilidade,configFuncionamento);
+        await validarDisponibilidadeInstrutor(client,n.instrutor_id_novo,dadosDisponibilidade,configFuncionamento);
+        const conflito=await verificarConflito(client,{ aluno_id:n.aluno_id,instrutor_id:n.instrutor_id_novo,veiculo_id:n.veiculo_id_novo,data_aula:n.data_aula_nova,hora_inicio:n.hora_inicio_nova,duracao_minutos:n.duracao_minutos_nova },ids,configFuncionamento.intervalo_minutos);
+        if (conflito.rowCount) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ error:`Conflito ao alterar a série em ${n.data_aula_nova} às ${n.hora_inicio_nova}.`, conflito:conflito.rows[0] });
+        }
       }
     }
 
     for (const n of novas) {
-      const isAlvo = Number(n.id) === id;
+      const isAlvo=Number(n.id)===id;
       await client.query(`
         UPDATE autoagenda.aulas
-        SET instrutor_id = $1, veiculo_id = $2, local_id = $3,
-            data_aula = $4, hora_inicio = $5, duracao_minutos = $6,
-            aulas_unidades = $7,
-            status = CASE WHEN $8 THEN $9 ELSE status END,
-            observacoes = CASE WHEN $8 THEN $10 ELSE observacoes END,
-            excecao_plano = FALSE,
-            atualizado_em = NOW()
-        WHERE id = $11
-      `, [
-        n.instrutor_id_novo, n.veiculo_id_novo, n.local_id_novo,
-        n.data_aula_nova, n.hora_inicio_nova, n.duracao_minutos_nova,
-        n.aulas_unidades_nova, isAlvo, payload.status || alvo.status,
-        payload.observacoes || '', Number(n.id)
-      ]);
+        SET instrutor_id=$1,veiculo_id=$2,local_id=$3,data_aula=$4,hora_inicio=$5,duracao_minutos=$6,
+            aulas_unidades=$7,status=CASE WHEN $8 THEN $9 ELSE status END,
+            observacoes=CASE WHEN $8 THEN $10 ELSE observacoes END,
+            excecao_plano=FALSE,atualizado_em=NOW()
+        WHERE id=$11
+      `,[n.instrutor_id_novo,n.veiculo_id_novo,n.local_id_novo,n.data_aula_nova,n.hora_inicio_nova,n.duracao_minutos_nova,n.aulas_unidades_nova,isAlvo,statusAlvo,payload.observacoes||'',Number(n.id)]);
     }
 
-    await client.query(`
-      UPDATE autoagenda.planos_aula
-      SET hora_inicio = $1, instrutor_id = $2, veiculo_id = $3, local_id = $4,
-          dias_semana = $5::int[], atualizado_em = NOW()
-      WHERE id = $6
-    `, [
-      String(payload.hora_inicio).slice(0,5), Number(payload.instrutor_id), Number(payload.veiculo_id),
-      Number(payload.local_id), novosDias, alvo.plan_id
-    ]);
+    await client.query(`UPDATE autoagenda.planos_aula SET hora_inicio=$1,instrutor_id=$2,veiculo_id=$3,local_id=$4,dias_semana=$5::int[],atualizado_em=NOW() WHERE id=$6`,
+      [String(payload.hora_inicio).slice(0,5),Number(payload.instrutor_id),Number(payload.veiculo_id),Number(payload.local_id),novosDias,alvo.plan_id]);
 
     await client.query('COMMIT');
-    res.json({ ok: true, alteradas: novas.length });
+    res.json({ ok:true,alteradas:novas.length });
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
     console.error(error);
-    res.status(error.statusCode || 500).json({ error: error.message || 'Erro ao alterar a série de aulas.' });
+    res.status(error.statusCode || 500).json({ error:error.statusCode ? error.message : (error.message || 'Erro ao alterar a série de aulas.') });
+  } finally { client.release(); }
+});
+
+// Mantém o histórico: DELETE arquiva a aula em vez de removê-la fisicamente.
+// Aulas já REALIZADAS ou com FALTA são registros históricos consolidados e não podem ser arquivadas por esta rota.
+app.delete('/api/aulas/:id', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const id=Number(req.params.id);
+    await client.query('BEGIN');
+    const atual=await client.query('SELECT id,status,arquivada FROM autoagenda.aulas WHERE id=$1 FOR UPDATE',[id]);
+    if (!atual.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error:'Aula não encontrada.' });
+    }
+    const aula=atual.rows[0];
+    if (aula.arquivada) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error:'Esta aula já está arquivada.' });
+    }
+    if (['REALIZADA','FALTOU'].includes(aula.status)) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error:'Aulas realizadas ou com falta fazem parte do histórico e não podem ser arquivadas.' });
+    }
+    const result=await client.query(`
+      UPDATE autoagenda.aulas
+      SET status='CANCELADA', arquivada=TRUE, arquivada_em=NOW(), atualizado_em=NOW()
+      WHERE id=$1
+      RETURNING id, status, arquivada, arquivada_em
+    `,[id]);
+    await client.query('COMMIT');
+    res.json({ ok:true,aula:result.rows[0] });
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch {}
+    console.error(error);
+    res.status(500).json({ error:'Erro ao arquivar aula.' });
   } finally {
     client.release();
   }
 });
 
-app.delete('/api/aulas/:id', async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    const result = await query('DELETE FROM autoagenda.aulas WHERE id = $1 RETURNING id', [id]);
-    if (!result.rowCount) return res.status(404).json({ error: 'Aula não encontrada.' });
-    res.json({ ok: true });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Erro ao excluir aula.' });
-  }
-});
-
 app.patch('/api/aulas/:id/status', async (req, res) => {
+  const client=await pool.connect();
   try {
-    const id = Number(req.params.id);
-    const { status } = req.body;
-    const permitidos = ['AGENDADA', 'CONFIRMADA', 'REALIZADA', 'REMARCADA', 'CANCELADA', 'FALTOU'];
-    if (!permitidos.includes(status)) return res.status(400).json({ error: 'Status inválido.' });
+    const id=Number(req.params.id);
+    const { status }=req.body;
+    const permitidos=['AGENDADA','CONFIRMADA','REALIZADA','REMARCADA','CANCELADA','FALTOU'];
+    if (!permitidos.includes(status)) return res.status(400).json({ error:'Status inválido.' });
 
-    const result = await query(`
-      UPDATE autoagenda.aulas SET status = $1, atualizado_em = NOW()
-      WHERE id = $2 RETURNING *
-    `, [status, id]);
-    if (!result.rowCount) return res.status(404).json({ error: 'Aula não encontrada.' });
+    await client.query('BEGIN');
+    const q=await client.query('SELECT * FROM autoagenda.aulas WHERE id=$1 FOR UPDATE',[id]);
+    if (!q.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error:'Aula não encontrada.' });
+    }
+    const aula=q.rows[0];
+    if (aula.arquivada) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error:'Aula arquivada não pode ter o status alterado.' });
+    }
+    validarDataParaStatus(aula.data_aula,status);
+    await bloquearChavesTransacao(client,chavesAgenda(aula));
+
+    const config=await obterConfigFuncionamento(client);
+    if (['AGENDADA','CONFIRMADA'].includes(status)) {
+      await validarRecursosAtivos(client,aula);
+      await validarHorarioFuncionamento(client,aula,config);
+      await validarDisponibilidadeInstrutor(client,aula.instrutor_id,aula,config);
+      const conflito=await verificarConflito(client,aula,[id],config.intervalo_minutos);
+      if (conflito.rowCount) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error:'Conflito de horário ao reativar a aula.',conflito:conflito.rows[0] });
+      }
+    }
+    await validarSaldoAula(client,{ aluno_id:aula.aluno_id,status,data_aula:aula.data_aula,aulas_unidades:aula.aulas_unidades },[id]);
+
+    const result=await client.query('UPDATE autoagenda.aulas SET status=$1,atualizado_em=NOW() WHERE id=$2 RETURNING *',[status,id]);
+    await client.query('COMMIT');
     res.json(result.rows[0]);
   } catch (error) {
+    try { await client.query('ROLLBACK'); } catch {}
     console.error(error);
-    res.status(500).json({ error: 'Erro ao atualizar status da aula.' });
-  }
+    res.status(error.statusCode || 500).json({ error:error.statusCode ? error.message : 'Erro ao atualizar status da aula.' });
+  } finally { client.release(); }
 });
 
 app.get('*', (req, res) => {
@@ -2303,8 +2554,10 @@ async function start() {
     await initDatabase();
     app.listen(PORT, () => {
       console.log(`AutoAgenda V${APP_VERSION} rodando na porta ${PORT}`);
-      if (!ADMIN_USER || !ADMIN_PASSWORD) {
-        console.warn('SEGURANÇA: AUTOAGENDA_USER/AUTOAGENDA_PASSWORD não configurados. O acesso está sem autenticação.');
+      if (AUTH_REQUIRED && !AUTH_CONFIGURED) {
+        console.error('SEGURANÇA: produção bloqueada até configurar AUTOAGENDA_USER e AUTOAGENDA_PASSWORD.');
+      } else if (AUTH_CONFIGURED) {
+        console.log('Segurança: acesso protegido por autenticação básica.');
       }
     });
   } catch (error) {
