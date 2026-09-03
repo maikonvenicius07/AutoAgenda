@@ -6,7 +6,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '1.6.0';
+const APP_VERSION = '1.7.0';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -138,6 +138,27 @@ async function initDatabase() {
         criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
         atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
       )
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS autoagenda.configuracoes (
+        id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+        dias_funcionamento INTEGER[] NOT NULL DEFAULT ARRAY[0,1,2,3,4,5,6],
+        hora_abertura TIME NOT NULL DEFAULT '07:00',
+        hora_encerramento TIME NOT NULL DEFAULT '20:00',
+        duracao_padrao_minutos INTEGER NOT NULL DEFAULT 50
+          CHECK (duracao_padrao_minutos BETWEEN 10 AND 240),
+        intervalo_minutos INTEGER NOT NULL DEFAULT 0
+          CHECK (intervalo_minutos BETWEEN 0 AND 120),
+        atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    await client.query(`
+      INSERT INTO autoagenda.configuracoes
+        (id, dias_funcionamento, hora_abertura, hora_encerramento, duracao_padrao_minutos, intervalo_minutos)
+      VALUES (1, ARRAY[0,1,2,3,4,5,6], '07:00', '20:00', 50, 0)
+      ON CONFLICT (id) DO NOTHING
     `);
 
     await client.query(`
@@ -350,6 +371,137 @@ function cpfValido(valor) {
   return digito(9) === Number(cpf[9]) && digito(10) === Number(cpf[10]);
 }
 
+const NOMES_DIAS = ['domingo','segunda-feira','terça-feira','quarta-feira','quinta-feira','sexta-feira','sábado'];
+
+function minutosDoHorario(valor) {
+  const m = String(valor || '').match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return NaN;
+  const hh = Number(m[1]), mm = Number(m[2]);
+  if (!Number.isInteger(hh) || !Number.isInteger(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) return NaN;
+  return hh * 60 + mm;
+}
+
+function horarioDeMinutos(total) {
+  const n = Math.max(0, Math.min(23 * 60 + 59, Number(total) || 0));
+  return `${String(Math.floor(n / 60)).padStart(2, '0')}:${String(n % 60).padStart(2, '0')}`;
+}
+
+function diaSemanaDaData(data) {
+  return dateOnlyUTC(data).getUTCDay();
+}
+
+async function obterConfigFuncionamento(client) {
+  const r = await client.query(`
+    SELECT id, dias_funcionamento,
+           TO_CHAR(hora_abertura, 'HH24:MI') AS hora_abertura,
+           TO_CHAR(hora_encerramento, 'HH24:MI') AS hora_encerramento,
+           duracao_padrao_minutos, intervalo_minutos, atualizado_em
+    FROM autoagenda.configuracoes
+    WHERE id = 1
+  `);
+  if (r.rowCount) {
+    const x = r.rows[0];
+    return {
+      ...x,
+      dias_funcionamento: (Array.isArray(x.dias_funcionamento) ? x.dias_funcionamento : []).map(Number).sort((a,b) => a-b),
+      duracao_padrao_minutos: Number(x.duracao_padrao_minutos || 50),
+      intervalo_minutos: Number(x.intervalo_minutos || 0)
+    };
+  }
+  return {
+    id: 1,
+    dias_funcionamento: [0,1,2,3,4,5,6],
+    hora_abertura: '07:00',
+    hora_encerramento: '20:00',
+    duracao_padrao_minutos: 50,
+    intervalo_minutos: 0
+  };
+}
+
+function avaliarHorarioFuncionamento(config, dados) {
+  const data = String(dados.data_aula || dados.data_inicio || '').slice(0, 10);
+  const horaInicio = String(dados.hora_inicio || '').slice(0, 5);
+  const duracao = Number(dados.duracao_minutos || dados.duracao_base_minutos || config.duracao_padrao_minutos || 50);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) return { ok: false, motivo: 'Data inválida.' };
+
+  const dia = diaSemanaDaData(data);
+  const dias = Array.isArray(config.dias_funcionamento) ? config.dias_funcionamento.map(Number) : [];
+  if (!dias.includes(dia)) {
+    return { ok: false, motivo: `A autoescola está fechada no ${NOMES_DIAS[dia]}.` };
+  }
+
+  const inicio = minutosDoHorario(horaInicio);
+  const abertura = minutosDoHorario(config.hora_abertura);
+  const encerramento = minutosDoHorario(config.hora_encerramento);
+  if (!Number.isFinite(inicio)) return { ok: false, motivo: 'Horário inválido.' };
+  if (!Number.isFinite(duracao) || duracao < 1) return { ok: false, motivo: 'Duração inválida.' };
+
+  if (inicio < abertura) {
+    return { ok: false, motivo: `O horário deve começar a partir das ${config.hora_abertura}.` };
+  }
+  if (inicio + duracao > encerramento) {
+    return { ok: false, motivo: `A aula deve terminar até ${config.hora_encerramento}.` };
+  }
+  return { ok: true, dia, inicio, fim: inicio + duracao };
+}
+
+async function validarHorarioFuncionamento(client, dados, config = null) {
+  const cfg = config || await obterConfigFuncionamento(client);
+  const r = avaliarHorarioFuncionamento(cfg, dados);
+  if (!r.ok) {
+    const data = String(dados.data_aula || dados.data_inicio || '').slice(0, 10);
+    const h = String(dados.hora_inicio || '').slice(0, 5);
+    throw erroHttp(400, `Horário fora do funcionamento em ${data || 'data não informada'}${h ? ` às ${h}` : ''}: ${r.motivo}`);
+  }
+  return cfg;
+}
+
+async function validarOcorrenciasFuncionamento(client, ocorrencias, config = null) {
+  const cfg = config || await obterConfigFuncionamento(client);
+  for (const o of ocorrencias) {
+    await validarHorarioFuncionamento(client, o, cfg);
+  }
+  return cfg;
+}
+
+function normalizarConfiguracaoFuncionamento(payload) {
+  const dias = Array.from(new Set(
+    (Array.isArray(payload?.dias_funcionamento) ? payload.dias_funcionamento : [])
+      .map(Number)
+      .filter(n => Number.isInteger(n) && n >= 0 && n <= 6)
+  )).sort((a,b) => a-b);
+  if (!dias.length) throw erroHttp(400, 'Selecione pelo menos um dia de funcionamento.');
+
+  const horaAbertura = String(payload?.hora_abertura || '').slice(0,5);
+  const horaEncerramento = String(payload?.hora_encerramento || '').slice(0,5);
+  const abertura = minutosDoHorario(horaAbertura);
+  const encerramento = minutosDoHorario(horaEncerramento);
+  if (!Number.isFinite(abertura) || !Number.isFinite(encerramento)) {
+    throw erroHttp(400, 'Informe horários válidos de abertura e encerramento.');
+  }
+  if (encerramento <= abertura) throw erroHttp(400, 'O horário de encerramento deve ser depois do horário de abertura.');
+
+  const duracao = Number(payload?.duracao_padrao_minutos);
+  const intervalo = Number(payload?.intervalo_minutos ?? 0);
+  if (!Number.isInteger(duracao) || duracao < 10 || duracao > 240) {
+    throw erroHttp(400, 'A duração padrão deve estar entre 10 e 240 minutos.');
+  }
+  if (!Number.isInteger(intervalo) || intervalo < 0 || intervalo > 120) {
+    throw erroHttp(400, 'O intervalo deve estar entre 0 e 120 minutos.');
+  }
+  if (duracao > (encerramento - abertura)) {
+    throw erroHttp(400, 'A duração padrão é maior que o período diário de funcionamento.');
+  }
+
+  return {
+    dias_funcionamento: dias,
+    hora_abertura: horaAbertura,
+    hora_encerramento: horaEncerramento,
+    duracao_padrao_minutos: duracao,
+    intervalo_minutos: intervalo
+  };
+}
+
 function gerarOcorrencias({ data_inicio, hora_inicio, duracao_base_minutos, aulas_por_encontro, total_aulas, dias_semana }) {
   const dias = normalizarDias(dias_semana, data_inicio);
   const base = Math.max(1, Number(duracao_base_minutos) || 50);
@@ -381,9 +533,12 @@ function gerarOcorrencias({ data_inicio, hora_inicio, duracao_base_minutos, aula
   return ocorrencias;
 }
 
-async function verificarConflito(client, dados, excluirIds = []) {
+async function verificarConflito(client, dados, excluirIds = [], intervaloMinutos = null) {
   const inicio = `${dados.data_aula} ${String(dados.hora_inicio).slice(0, 5)}:00`;
   const ids = (Array.isArray(excluirIds) ? excluirIds : [excluirIds]).map(Number).filter(Boolean);
+  const intervalo = intervaloMinutos === null
+    ? Number((await obterConfigFuncionamento(client)).intervalo_minutos || 0)
+    : Math.max(0, Number(intervaloMinutos) || 0);
 
   return client.query(`
     SELECT a.id, a.data_aula, a.hora_inicio, a.duracao_minutos,
@@ -397,8 +552,8 @@ async function verificarConflito(client, dados, excluirIds = []) {
       AND a.status IN ('AGENDADA', 'CONFIRMADA')
       AND (cardinality($7::int[]) = 0 OR NOT (a.id = ANY($7::int[])))
       AND (a.aluno_id = $2 OR a.instrutor_id = $3 OR a.veiculo_id = $4)
-      AND ((a.data_aula + a.hora_inicio) < ($5::timestamp + ($6 || ' minutes')::interval))
-      AND ($5::timestamp < (a.data_aula + a.hora_inicio + (a.duracao_minutos || ' minutes')::interval))
+      AND ((a.data_aula + a.hora_inicio) < ($5::timestamp + (($6::int + $8::int) * INTERVAL '1 minute')))
+      AND ($5::timestamp < (a.data_aula + a.hora_inicio + ((a.duracao_minutos + $8::int) * INTERVAL '1 minute')))
     ORDER BY a.hora_inicio
     LIMIT 1
   `, [
@@ -408,25 +563,35 @@ async function verificarConflito(client, dados, excluirIds = []) {
     Number(dados.veiculo_id),
     inicio,
     Number(dados.duracao_minutos),
-    ids
+    ids,
+    intervalo
   ]);
 }
 
-async function sugerirHorario(client, dados, excluirIds = []) {
-  const inicioBase = 7 * 60;
-  const fim = 20 * 60;
-  const passo = 30;
+async function sugerirHorario(client, dados, excluirIds = [], config = null) {
+  const cfg = config || await obterConfigFuncionamento(client);
+  const avaliacaoDia = avaliarHorarioFuncionamento(cfg, {
+    data_aula: dados.data_aula,
+    hora_inicio: cfg.hora_abertura,
+    duracao_minutos: Math.min(Number(dados.duracao_minutos || cfg.duracao_padrao_minutos), Number(cfg.duracao_padrao_minutos))
+  });
+  if (!avaliacaoDia.ok && !String(avaliacaoDia.motivo).includes('terminar')) return null;
+
+  const inicioBase = minutosDoHorario(cfg.hora_abertura);
+  const fim = minutosDoHorario(cfg.hora_encerramento);
+  const passo = Math.max(5, Number(cfg.duracao_padrao_minutos || 50) + Number(cfg.intervalo_minutos || 0));
   for (let min = inicioBase; min + Number(dados.duracao_minutos) <= fim; min += passo) {
-    const hh = String(Math.floor(min / 60)).padStart(2, '0');
-    const mm = String(min % 60).padStart(2, '0');
-    const teste = { ...dados, hora_inicio: `${hh}:${mm}` };
-    const conflito = await verificarConflito(client, teste, excluirIds);
-    if (!conflito.rowCount) return `${hh}:${mm}`;
+    const teste = { ...dados, hora_inicio: horarioDeMinutos(min) };
+    const permitido = avaliarHorarioFuncionamento(cfg, teste);
+    if (!permitido.ok) continue;
+    const conflito = await verificarConflito(client, teste, excluirIds, cfg.intervalo_minutos);
+    if (!conflito.rowCount) return teste.hora_inicio;
   }
   return null;
 }
 
-async function listarConflitosPlano(client, base, ocorrencias) {
+async function listarConflitosPlano(client, base, ocorrencias, config = null) {
+  const cfg = config || await obterConfigFuncionamento(client);
   const conflitos = [];
   for (const o of ocorrencias) {
     const dados = {
@@ -437,9 +602,9 @@ async function listarConflitosPlano(client, base, ocorrencias) {
       hora_inicio: o.hora_inicio,
       duracao_minutos: o.duracao_minutos
     };
-    const c = await verificarConflito(client, dados);
+    const c = await verificarConflito(client, dados, [], cfg.intervalo_minutos);
     if (c.rowCount) {
-      const sugestao = await sugerirHorario(client, dados);
+      const sugestao = await sugerirHorario(client, dados, [], cfg);
       conflitos.push({ ...o, conflito: c.rows[0], sugestao_horario: sugestao });
     }
   }
@@ -826,6 +991,73 @@ async function excluirRecursoPermanente(client, tipo, tabela, id) {
   return historico;
 }
 
+// ---------- Horário de funcionamento ----------
+app.get('/api/configuracoes/funcionamento', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    res.json(await obterConfigFuncionamento(client));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao consultar horário de funcionamento.' });
+  } finally {
+    client.release();
+  }
+});
+
+app.put('/api/configuracoes/funcionamento', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const cfg = normalizarConfiguracaoFuncionamento(req.body || {});
+    await client.query('BEGIN');
+    const r = await client.query(`
+      INSERT INTO autoagenda.configuracoes
+        (id, dias_funcionamento, hora_abertura, hora_encerramento, duracao_padrao_minutos, intervalo_minutos, atualizado_em)
+      VALUES (1, $1::int[], $2::time, $3::time, $4, $5, NOW())
+      ON CONFLICT (id) DO UPDATE
+      SET dias_funcionamento = EXCLUDED.dias_funcionamento,
+          hora_abertura = EXCLUDED.hora_abertura,
+          hora_encerramento = EXCLUDED.hora_encerramento,
+          duracao_padrao_minutos = EXCLUDED.duracao_padrao_minutos,
+          intervalo_minutos = EXCLUDED.intervalo_minutos,
+          atualizado_em = NOW()
+      RETURNING id, dias_funcionamento,
+                TO_CHAR(hora_abertura, 'HH24:MI') AS hora_abertura,
+                TO_CHAR(hora_encerramento, 'HH24:MI') AS hora_encerramento,
+                duracao_padrao_minutos, intervalo_minutos, atualizado_em
+    `, [
+      cfg.dias_funcionamento, cfg.hora_abertura, cfg.hora_encerramento,
+      cfg.duracao_padrao_minutos, cfg.intervalo_minutos
+    ]);
+
+    // Compatibilidade: aulas existentes nunca são apagadas ou remarcadas ao mudar o funcionamento.
+    // Apenas informamos quantas futuras já existentes ficaram fora da nova regra.
+    const futuras = await client.query(`
+      SELECT data_aula, hora_inicio, duracao_minutos
+      FROM autoagenda.aulas
+      WHERE data_aula >= $1::date
+        AND status IN ('AGENDADA','CONFIRMADA')
+    `, [hojeApp()]);
+    const configSalva = {
+      ...r.rows[0],
+      dias_funcionamento: r.rows[0].dias_funcionamento.map(Number),
+      duracao_padrao_minutos: Number(r.rows[0].duracao_padrao_minutos),
+      intervalo_minutos: Number(r.rows[0].intervalo_minutos)
+    };
+    const fora = futuras.rows.filter(a => !avaliarHorarioFuncionamento(configSalva, a).ok).length;
+
+    await client.query('COMMIT');
+    res.json({ ...configSalva, aulas_futuras_fora_do_horario: fora });
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch {}
+    console.error(error);
+    res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Erro ao salvar horário de funcionamento.'
+    });
+  } finally {
+    client.release();
+  }
+});
+
 // ---------- Instrutores ----------
 app.get('/api/instrutores', async (req, res) => {
   try {
@@ -1179,6 +1411,12 @@ app.post('/api/planos/preview', async (req, res) => {
     }
 
     await validarRecursosAtivos(client, base);
+    const configFuncionamento = await obterConfigFuncionamento(client);
+    base.duracao_base_minutos = validarInteiroPositivo(
+      base.duracao_base_minutos,
+      configFuncionamento.duracao_padrao_minutos,
+      480
+    );
     const saldo = await saldoAluno(client, base.aluno_id);
     if (!saldo) return res.status(404).json({ error: 'Aluno não encontrado ou inativo.' });
 
@@ -1191,7 +1429,8 @@ app.post('/api/planos/preview', async (req, res) => {
     }
 
     const ocorrencias = gerarOcorrencias({ ...base, total_aulas: totalSolicitado });
-    const conflitos = await listarConflitosPlano(client, base, ocorrencias);
+    await validarOcorrenciasFuncionamento(client, ocorrencias, configFuncionamento);
+    const conflitos = await listarConflitosPlano(client, base, ocorrencias, configFuncionamento);
     const conflitoMap = new Map(conflitos.map(c => [`${c.data_aula}|${c.hora_inicio}`, c]));
     const preview = ocorrencias.map(o => {
       const c = conflitoMap.get(`${o.data_aula}|${o.hora_inicio}`);
@@ -1226,6 +1465,12 @@ app.post('/api/planos', async (req, res) => {
     }
 
     await validarRecursosAtivos(client, base);
+    const configFuncionamento = await obterConfigFuncionamento(client);
+    base.duracao_base_minutos = validarInteiroPositivo(
+      base.duracao_base_minutos,
+      configFuncionamento.duracao_padrao_minutos,
+      480
+    );
     const saldo = await saldoAluno(client, base.aluno_id);
     if (!saldo) return res.status(404).json({ error: 'Aluno não encontrado ou inativo.' });
 
@@ -1239,6 +1484,7 @@ app.post('/api/planos', async (req, res) => {
 
     const dias = normalizarDias(base.dias_semana, base.data_inicio);
     const ocorrencias = gerarOcorrencias({ ...base, total_aulas: totalSolicitado, dias_semana: dias });
+    await validarOcorrenciasFuncionamento(client, ocorrencias, configFuncionamento);
 
     await client.query('BEGIN');
 
@@ -1261,7 +1507,7 @@ app.post('/api/planos', async (req, res) => {
       });
     }
 
-    const conflitos = await listarConflitosPlano(client, base, ocorrencias);
+    const conflitos = await listarConflitosPlano(client, base, ocorrencias, configFuncionamento);
     if (conflitos.length) {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'Existem conflitos na agenda. Revise a prévia.', conflitos });
@@ -1276,7 +1522,7 @@ app.post('/api/planos', async (req, res) => {
     `, [
       Number(base.aluno_id), Number(base.instrutor_id), Number(base.veiculo_id), Number(base.local_id),
       base.data_inicio, String(base.hora_inicio).slice(0, 5),
-      Math.max(1, Number(base.duracao_base_minutos) || 50),
+      validarInteiroPositivo(base.duracao_base_minutos, configFuncionamento.duracao_padrao_minutos, 480),
       Math.min(4, Math.max(1, Number(base.aulas_por_encontro) || 1)),
       totalSolicitado, dias, base.observacoes || ''
     ]);
@@ -1380,15 +1626,18 @@ app.get('/api/aulas', async (req, res) => {
 app.post('/api/aulas', async (req, res) => {
   const client = await pool.connect();
   try {
-    const { aluno_id, instrutor_id, veiculo_id, local_id, data_aula, hora_inicio, duracao_minutos = 50, aulas_unidades = 1, status = 'AGENDADA', observacoes = '' } = req.body;
+    const { aluno_id, instrutor_id, veiculo_id, local_id, data_aula, hora_inicio, duracao_minutos = null, aulas_unidades = 1, status = 'AGENDADA', observacoes = '' } = req.body;
     if (!aluno_id || !instrutor_id || !veiculo_id || !local_id || !data_aula || !hora_inicio) {
       return res.status(400).json({ error: 'Preencha aluno, instrutor, veículo, local, data e horário.' });
     }
 
     await validarRecursosAtivos(client, { instrutor_id, veiculo_id, local_id });
-    const dados = { aluno_id, instrutor_id, veiculo_id, data_aula, hora_inicio, duracao_minutos: validarInteiroPositivo(duracao_minutos, 50, 480) };
+    const configFuncionamento = await obterConfigFuncionamento(client);
+    const duracaoFinal = validarInteiroPositivo(duracao_minutos, configFuncionamento.duracao_padrao_minutos, 480);
+    const dados = { aluno_id, instrutor_id, veiculo_id, data_aula, hora_inicio, duracao_minutos: duracaoFinal };
+    await validarHorarioFuncionamento(client, dados, configFuncionamento);
     await client.query('BEGIN');
-    const conflito = await verificarConflito(client, dados);
+    const conflito = await verificarConflito(client, dados, [], configFuncionamento.intervalo_minutos);
     if (conflito.rowCount) {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'Conflito de horário.', conflito: conflito.rows[0] });
@@ -1402,7 +1651,7 @@ app.post('/api/aulas', async (req, res) => {
       RETURNING *
     `, [
       Number(aluno_id), Number(instrutor_id), Number(veiculo_id), Number(local_id), data_aula,
-      String(hora_inicio).slice(0, 5), validarInteiroPositivo(duracao_minutos, 50, 480),
+      String(hora_inicio).slice(0, 5), duracaoFinal,
       ['AGENDADA','CONFIRMADA','REALIZADA','REMARCADA','CANCELADA','FALTOU'].includes(status) ? status : 'AGENDADA',
       observacoes || '',
       Math.min(4, validarInteiroPositivo(aulas_unidades, 1, 4))
@@ -1434,7 +1683,7 @@ app.put('/api/aulas/:id', async (req, res) => {
     if (!statusPermitidos.includes(status)) return res.status(400).json({ error: 'Status inválido.' });
 
     const existente = await client.query(
-      'SELECT id, plan_id, instrutor_id, veiculo_id, local_id FROM autoagenda.aulas WHERE id = $1',
+      'SELECT id, plan_id, instrutor_id, veiculo_id, local_id, data_aula, hora_inicio, duracao_minutos, status FROM autoagenda.aulas WHERE id = $1',
       [id]
     );
     if (!existente.rowCount) return res.status(404).json({ error: 'Aula não encontrada.' });
@@ -1449,9 +1698,30 @@ app.put('/api/aulas/:id', async (req, res) => {
       }
     );
 
+    const configFuncionamento = await obterConfigFuncionamento(client);
+    const duracaoFinal = validarInteiroPositivo(duracao_minutos, Number(existente.rows[0].duracao_minutos) || configFuncionamento.duracao_padrao_minutos, 480);
+    const horarioAlterado =
+      String(existente.rows[0].data_aula).slice(0,10) !== String(data_aula).slice(0,10) ||
+      String(existente.rows[0].hora_inicio).slice(0,5) !== String(hora_inicio).slice(0,5) ||
+      Number(existente.rows[0].duracao_minutos) !== duracaoFinal;
+    const reativandoHorario =
+      !['AGENDADA','CONFIRMADA'].includes(String(existente.rows[0].status)) &&
+      ['AGENDADA','CONFIRMADA'].includes(status);
+
+    if (horarioAlterado || reativandoHorario) {
+      await validarHorarioFuncionamento(client, {
+        data_aula, hora_inicio, duracao_minutos: duracaoFinal
+      }, configFuncionamento);
+    }
+
     await client.query('BEGIN');
     if (!['CANCELADA','REMARCADA'].includes(status)) {
-      const conflito = await verificarConflito(client, { aluno_id, instrutor_id, veiculo_id, data_aula, hora_inicio, duracao_minutos }, [id]);
+      const conflito = await verificarConflito(
+        client,
+        { aluno_id, instrutor_id, veiculo_id, data_aula, hora_inicio, duracao_minutos: duracaoFinal },
+        [id],
+        configFuncionamento.intervalo_minutos
+      );
       if (conflito.rowCount) {
         await client.query('ROLLBACK');
         return res.status(409).json({ error: 'Conflito de horário.', conflito: conflito.rows[0] });
@@ -1469,7 +1739,7 @@ app.put('/api/aulas/:id', async (req, res) => {
       RETURNING *
     `, [
       Number(aluno_id), Number(instrutor_id), Number(veiculo_id), Number(local_id), data_aula,
-      String(hora_inicio).slice(0, 5), validarInteiroPositivo(duracao_minutos, 50, 480),
+      String(hora_inicio).slice(0, 5), duracaoFinal,
       Math.min(4, validarInteiroPositivo(aulas_unidades, 1, 4)), status, observacoes || '', id
     ]);
 
@@ -1506,6 +1776,7 @@ app.put('/api/aulas/:id/serie', async (req, res) => {
     }
 
     await validarRecursosAtivos(client, payload);
+    const configFuncionamento = await obterConfigFuncionamento(client);
     const antigoDT = dateTimeUTC(alvo.data_aula, alvo.hora_inicio);
     const novoDT = dateTimeUTC(payload.data_aula, payload.hora_inicio);
     const delta = novoDT.getTime() - antigoDT.getTime();
@@ -1555,6 +1826,12 @@ app.put('/api/aulas/:id/serie', async (req, res) => {
     });
 
     for (const n of novas) {
+      await validarHorarioFuncionamento(client, {
+        data_aula: n.data_aula_nova,
+        hora_inicio: n.hora_inicio_nova,
+        duracao_minutos: n.duracao_minutos_nova
+      }, configFuncionamento);
+
       const conflito = await verificarConflito(client, {
         aluno_id: n.aluno_id,
         instrutor_id: n.instrutor_id_novo,
@@ -1562,7 +1839,7 @@ app.put('/api/aulas/:id/serie', async (req, res) => {
         data_aula: n.data_aula_nova,
         hora_inicio: n.hora_inicio_nova,
         duracao_minutos: n.duracao_minutos_nova
-      }, ids);
+      }, ids, configFuncionamento.intervalo_minutos);
       if (conflito.rowCount) {
         await client.query('ROLLBACK');
         return res.status(409).json({
@@ -1607,7 +1884,7 @@ app.put('/api/aulas/:id/serie', async (req, res) => {
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
     console.error(error);
-    res.status(500).json({ error: error.message || 'Erro ao alterar a série de aulas.' });
+    res.status(error.statusCode || 500).json({ error: error.message || 'Erro ao alterar a série de aulas.' });
   } finally {
     client.release();
   }

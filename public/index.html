@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#111111">
   <title>AutoAgenda</title>
-  <link rel="stylesheet" href="style.css?v=1.6.0">
+  <link rel="stylesheet" href="style.css?v=1.7.0">
 </head>
 <body>
 <header>
@@ -105,7 +105,7 @@
       <span><i class="legend-dot confirmada"></i> Confirmada</span>
       <span><i class="legend-dot realizada"></i> Realizada</span>
       <span><i class="legend-dot cancelada"></i> Cancelada/Faltou</span>
-      <small>Enquanto o horário de funcionamento ainda não foi configurado, a grade usa como base 07:00–20:00 e intervalos de 50 minutos.</small>
+      <small id="weekHorarioInfo">Grade conforme o horário de funcionamento configurado.</small>
     </div>
     <div class="weekly-scroll">
       <div id="agendaSemanal" class="weekly-grid"></div>
@@ -140,6 +140,50 @@
       <div><span>Locais ativos</span><b id="cfgQtdLocais">0</b></div>
     </div>
     <div id="cfgInativosInfo" class="config-inactive-info">Nenhum recurso inativo.</div>
+
+    <article class="card funcionamento-card">
+      <div class="head compact">
+        <div>
+          <h3>🕒 Horário de funcionamento</h3>
+          <p>Defina quando novas aulas, planos automáticos e reagendamentos podem ser marcados.</p>
+        </div>
+        <span id="cfgFuncionamentoResumo" class="remaining-badge">Carregando...</span>
+      </div>
+
+      <form id="fFuncionamento" class="funcionamento-form">
+        <fieldset class="weekdays funcionamento-dias">
+          <legend>Dias de funcionamento</legend>
+          <label><input type="checkbox" name="cfgDia" value="0"> Dom</label>
+          <label><input type="checkbox" name="cfgDia" value="1"> Seg</label>
+          <label><input type="checkbox" name="cfgDia" value="2"> Ter</label>
+          <label><input type="checkbox" name="cfgDia" value="3"> Qua</label>
+          <label><input type="checkbox" name="cfgDia" value="4"> Qui</label>
+          <label><input type="checkbox" name="cfgDia" value="5"> Sex</label>
+          <label><input type="checkbox" name="cfgDia" value="6"> Sáb</label>
+        </fieldset>
+
+        <div class="funcionamento-grid">
+          <label>Abre às<input id="cfgHoraAbertura" type="time" required></label>
+          <label>Fecha às<input id="cfgHoraEncerramento" type="time" required></label>
+          <label>Duração padrão da aula
+            <input id="cfgDuracaoPadrao" type="number" min="10" max="240" step="5" required>
+          </label>
+          <label>Intervalo entre aulas
+            <input id="cfgIntervalo" type="number" min="0" max="120" step="5" required>
+            <small class="field-help">Use 0 se não houver intervalo.</small>
+          </label>
+        </div>
+
+        <div class="funcionamento-actions">
+          <div class="config-rule-note">
+            Aulas já existentes não serão apagadas nem remarcadas ao alterar esta configuração.
+            A nova regra vale para novas aulas, novos planos e reagendamentos.
+          </div>
+          <button type="submit" id="salvarFuncionamento">💾 Salvar funcionamento</button>
+        </div>
+        <div id="erroFuncionamento" class="erro hide"></div>
+      </form>
+    </article>
 
     <div class="config-grid">
       <article class="card config-card">
@@ -210,7 +254,7 @@
       <label>Horário<input id="aHora" type="time" value="08:00" required></label>
     </div>
     <div class="form-2">
-      <label>Duração<select id="aDur"><option value="50">50 minutos</option><option value="60">60 minutos</option><option value="100">100 minutos</option></select></label>
+      <label>Duração (minutos)<input id="aDur" type="number" min="10" max="240" step="5" value="50" required></label>
       <label>Aulas consumidas<select id="aUnidades"><option value="1">1 aula</option><option value="2">2 aulas</option><option value="3">3 aulas</option><option value="4">4 aulas</option></select></label>
     </div>
     <label>Status<select id="aStatus"><option value="AGENDADA">Agendada</option><option value="CONFIRMADA">Confirmada</option><option value="REALIZADA">Realizada</option><option value="CANCELADA">Cancelada</option><option value="FALTOU">Faltou</option></select></label>
@@ -271,7 +315,7 @@
     </fieldset>
 
     <div class="form-2">
-      <label>Duração de cada aula<select id="pDuracao"><option value="50">50 minutos</option><option value="60">60 minutos</option></select></label>
+      <label>Duração de cada aula (minutos)<input id="pDuracao" type="number" min="10" max="240" step="5" value="50" required></label>
       <label>Aulas por encontro<select id="pPorEncontro"><option value="1">1 aula por encontro</option><option value="2">2 aulas consecutivas</option></select></label>
     </div>
 
@@ -348,6 +392,6 @@
 </div>
 
 <div id="toast" class="toast hide"></div>
-<script src="app.js?v=1.6.0"></script>
+<script src="app.js?v=1.7.0"></script>
 </body>
 </html>

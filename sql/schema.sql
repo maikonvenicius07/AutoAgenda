@@ -1,4 +1,4 @@
--- AutoAgenda V1.6.0
+-- AutoAgenda V1.7.0
 -- Schema compatível com o server.js atual.
 -- O servidor cria/migra automaticamente; este arquivo serve para referência e execução manual controlada.
 
@@ -49,6 +49,21 @@ CREATE TABLE IF NOT EXISTS autoagenda.locais (
   criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
   atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS autoagenda.configuracoes (
+  id SMALLINT PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  dias_funcionamento INTEGER[] NOT NULL DEFAULT ARRAY[0,1,2,3,4,5,6],
+  hora_abertura TIME NOT NULL DEFAULT '07:00',
+  hora_encerramento TIME NOT NULL DEFAULT '20:00',
+  duracao_padrao_minutos INTEGER NOT NULL DEFAULT 50 CHECK (duracao_padrao_minutos BETWEEN 10 AND 240),
+  intervalo_minutos INTEGER NOT NULL DEFAULT 0 CHECK (intervalo_minutos BETWEEN 0 AND 120),
+  atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO autoagenda.configuracoes
+  (id, dias_funcionamento, hora_abertura, hora_encerramento, duracao_padrao_minutos, intervalo_minutos)
+VALUES (1, ARRAY[0,1,2,3,4,5,6], '07:00', '20:00', 50, 0)
+ON CONFLICT (id) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS autoagenda.planos_aula (
   id SERIAL PRIMARY KEY,

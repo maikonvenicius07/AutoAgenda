@@ -1,32 +1,41 @@
-AUTOAGENDA V1.6.0 — CPF + AGENDA SEMANAL COMPLETA
+AUTOAGENDA V1.7.0 — HORÁRIO DE FUNCIONAMENTO
 
-ALTERAÇÕES PRINCIPAIS
-1. Campo CPF no cadastro/edição do aluno.
-2. Máscara e validação real de CPF.
-3. CPF duplicado bloqueado.
-4. CPF mascarado na listagem de alunos.
-5. Agenda semanal em grade: horários nas linhas e dias nas colunas.
-6. Filtro por instrutor e por veículo.
-7. Aula semanal mostra aluno, instrutor, veículo, local e status.
-8. Clique em uma aula abre a edição.
-9. Clique em horário livre abre Nova aula já com data/hora.
-10. Consulta semanal usa somente o intervalo de sete dias.
-11. Regras de conflito existentes foram preservadas.
+O QUE FOI IMPLEMENTADO
+- Configuração dos dias de funcionamento.
+- Horário de abertura e encerramento.
+- Duração padrão da aula.
+- Intervalo entre aulas.
+- Validação no backend para aula manual.
+- Validação na prévia e criação de plano automático.
+- Validação em reagendamento e alteração em série.
+- Intervalo considerado na regra de conflitos.
+- Agenda semanal passa a obedecer à configuração.
+- Dias fechados e horários fora da regra ficam bloqueados na grade.
+- Aulas antigas fora da nova regra são preservadas e continuam visíveis.
 
 BANCO
-- A coluna autoagenda.alunos.cpf é criada automaticamente se ainda não existir.
-- Não execute schema.sql manualmente no Render.
+- Nova tabela: autoagenda.configuracoes.
+- Migração automática no início do servidor.
+- Não execute schema.sql manualmente em produção.
 - Não altere DATABASE_URL.
 
-COMO ATUALIZAR
-1. Faça backup da versão atual.
-2. Copie o conteúdo desta pasta para a raiz do repositório.
-3. Faça Commit changes.
-4. Aguarde o Render terminar o deploy.
-5. Pressione Ctrl + F5.
-6. Confirme: Banco conectado — AutoAgenda V1.6.0.
-7. Siga o arquivo CHECKLIST_V1.6.md.
+VALORES INICIAIS
+- Dias: todos habilitados.
+- Abertura: 07:00.
+- Encerramento: 20:00.
+- Duração padrão: 50 minutos.
+- Intervalo: 0 minuto.
 
-OBSERVAÇÃO SOBRE ALUNOS ANTIGOS
-Alunos já existentes continuam no banco mesmo sem CPF. Quando você editar um cadastro antigo,
-o formulário solicitará um CPF válido antes de salvar as alterações.
+COMO ATUALIZAR
+1. Faça uma cópia da versão atual.
+2. Copie o conteúdo desta pasta para a raiz do repositório AutoAgenda.
+3. Substitua os arquivos existentes.
+4. Faça Commit changes no GitHub.
+5. Aguarde o deploy do Render.
+6. Pressione Ctrl + F5.
+7. Verifique AutoAgenda V1.7.0 no topo.
+8. Configure o horário real da autoescola.
+9. Execute CHECKLIST_V1.7.md.
+
+PRÓXIMA ETAPA
+ETAPA 4 — Disponibilidade individual dos instrutores.

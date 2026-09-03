@@ -1,68 +1,82 @@
-# AutoAgenda V1.6 — CPF + Agenda Semanal completa
+# AutoAgenda V1.7 — Horário de Funcionamento
 
-Esta versão conclui a **ETAPA 2 — Agenda Semanal** do roteiro de evolução do AutoAgenda e inclui, a pedido do projeto, o campo **CPF** no cadastro de alunos.
+Esta versão implementa a **ETAPA 3 — Horário de funcionamento** do roteiro de evolução do AutoAgenda, mantendo as funcionalidades da V1.6 (CPF, configurações completas, planos automáticos e agenda semanal em grade).
 
 ## Novidades
 
-### Cadastro de alunos
-- Novo campo **CPF** no cadastro e na edição.
-- Máscara automática no formato `000.000.000-00`.
-- Validação dos dígitos verificadores no backend.
-- CPF duplicado é bloqueado.
-- Registros antigos sem CPF são preservados; ao editá-los, o sistema solicitará o preenchimento.
-- Na lista de alunos o CPF aparece mascarado, exibindo somente os dois últimos dígitos.
+### Horário de funcionamento
+Na aba **Configurações** agora é possível definir:
 
-### Agenda semanal completa
-- Dias da semana em **colunas**.
-- Horários em **linhas**.
-- Navegação: semana anterior, hoje e próxima semana.
-- Filtro por **instrutor**.
-- Novo filtro por **veículo**.
-- Cada aula mostra:
-  - horário;
-  - aluno;
-  - instrutor;
-  - veículo;
-  - local;
-  - status.
-- Clique na aula para editar.
-- Clique em uma célula livre para abrir **Nova aula** já com data e horário preenchidos.
-- Quando houver filtro por instrutor/veículo, o recurso filtrado já vem selecionado na nova aula.
-- A semana consulta o backend somente pelo intervalo de 7 dias.
-- As regras existentes de conflito do backend foram preservadas.
+- dias de funcionamento;
+- horário de abertura;
+- horário de encerramento;
+- duração padrão da aula;
+- intervalo entre aulas.
 
-## Horários da grade
+A configuração é gravada no PostgreSQL na tabela `autoagenda.configuracoes`.
 
-A ETAPA 3 ainda definirá o horário oficial de funcionamento da autoescola. Até lá, a agenda semanal utiliza como base **07:00 a 20:00**, em intervalos de **50 minutos**, incluindo automaticamente horários reais que já existam fora dessa grade.
+### Regras automáticas
+O backend impede novos agendamentos fora da configuração em:
+
+- aula manual;
+- criação de plano automático;
+- prévia do plano automático;
+- reagendamento/alteração de data e horário;
+- alteração em série das próximas aulas de um plano.
+
+O intervalo configurado também é considerado na detecção de conflito para aluno, instrutor e veículo.
+
+### Compatibilidade com o histórico
+Alterar o horário de funcionamento **não apaga nem remarca aulas já existentes**.
+
+Se uma configuração nova deixar aulas futuras antigas fora do novo horário, o AutoAgenda informa a quantidade, mas preserva os registros. Essas aulas continuam visíveis na agenda semanal.
+
+### Agenda semanal
+A grade semanal agora usa automaticamente:
+
+- abertura;
+- encerramento;
+- duração padrão;
+- intervalo.
+
+Dias fechados aparecem como **Fechado** e horários externos à regra aparecem como **Fora do horário**. Aulas antigas fora da regra continuam visíveis.
+
+### Duração padrão
+Ao criar uma nova aula ou um novo plano, o formulário inicia com a duração padrão definida em Configurações. O backend também utiliza essa duração como padrão quando ela não é enviada pela interface.
+
+## Valores iniciais seguros
+
+Na primeira inicialização da V1.7, a configuração padrão é:
+
+- todos os dias habilitados;
+- 07:00 às 20:00;
+- 50 minutos por aula;
+- 0 minuto de intervalo.
+
+Esses valores foram escolhidos para não restringir automaticamente o comportamento que já existia na V1.6. Depois do deploy, ajuste-os para o funcionamento real.
 
 ## Banco de dados
 
-Não é necessário criar outro banco nem executar SQL manualmente.
+Não é necessário criar outro banco e não é necessário executar SQL manualmente.
 
-Na inicialização, o `server.js` executa migração segura:
-
-```sql
-ALTER TABLE autoagenda.alunos
-ADD COLUMN IF NOT EXISTS cpf VARCHAR(11);
-```
-
-Também cria índice único para CPF preenchido.
+O `server.js` cria automaticamente a tabela de configuração e o registro inicial, sem apagar alunos, aulas, planos ou recursos existentes.
 
 ## Atualização
 
-1. Faça backup da versão que está funcionando.
+1. Faça backup da versão atual que está funcionando.
 2. Substitua os arquivos do repositório pelos arquivos desta pasta.
 3. Não altere `DATABASE_URL`.
 4. Faça commit no GitHub.
 5. Aguarde o deploy do Render.
-6. Pressione `Ctrl + F5` no navegador.
-7. Confirme no topo **AutoAgenda V1.6.0**.
-8. Execute o `CHECKLIST_V1.6.md`.
+6. Pressione `Ctrl + F5`.
+7. Confirme no topo **AutoAgenda V1.7.0**.
+8. Abra **Configurações → Horário de funcionamento**.
+9. Execute o `CHECKLIST_V1.7.md`.
 
 ## Próxima etapa
 
-Depois que esta versão estiver aprovada:
+Depois de testar e aprovar esta versão:
 
-**ETAPA 3 — Horário de funcionamento**
+**ETAPA 4 — Disponibilidade individual do instrutor**
 
-Nela serão definidos dias de funcionamento, abertura, encerramento, duração padrão da aula e intervalo entre aulas.
+Essa etapa adicionará dias e horários de trabalho por instrutor, intervalos, folgas e indisponibilidades específicas, sem modificar aulas antigas.

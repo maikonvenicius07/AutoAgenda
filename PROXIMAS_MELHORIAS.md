@@ -1,19 +1,19 @@
 # Próximas melhorias do AutoAgenda
 
-A **V1.6** conclui a ETAPA 2 — Agenda Semanal e adiciona CPF ao cadastro do aluno.
+A **V1.7** implementa a ETAPA 3 — Horário de funcionamento.
 
-## Próxima etapa: Horário de funcionamento
+## Próxima etapa: Disponibilidade individual dos instrutores
 
-Implementar depois de testar e aprovar a V1.6:
+Implementar somente depois de testar e aprovar a V1.7:
 
-1. dias de funcionamento;
-2. horário de abertura;
-3. horário de encerramento;
-4. duração padrão da aula;
-5. intervalo entre aulas;
-6. bloquear aula manual fora do horário permitido;
-7. bloquear plano automático fora do horário permitido;
-8. preparar a regra para reagendamento e futura busca de horários livres;
-9. manter compatibilidade com aulas já existentes.
+1. dias em que cada instrutor trabalha;
+2. horário inicial e final individual;
+3. intervalo/pausa do instrutor;
+4. folgas recorrentes;
+5. datas específicas indisponíveis;
+6. validação na aula manual;
+7. validação no plano automático;
+8. preparação para Encontrar horário livre;
+9. preservar aulas antigas.
 
-Depois: **Disponibilidade individual dos instrutores**.
+Depois: **Disponibilidade dos veículos**.

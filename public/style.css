@@ -80,3 +80,19 @@ nav{grid-template-columns:repeat(6,1fr)}
 .week-lesson{margin:0;padding:7px;min-width:0}.week-lesson-time{font-size:13px}.week-lesson b{font-size:11px;overflow-wrap:anywhere}.week-lesson small{font-size:9px;overflow-wrap:anywhere}
 @media(max-width:1000px){.week-filters{grid-template-columns:1fr 1fr}.week-range{grid-column:auto}.week-legend small{width:100%;margin-left:0}}
 @media(max-width:700px){.week-filters{grid-template-columns:1fr}.weekly-grid{min-width:1260px}.week-legend{gap:8px}}
+
+/* ========================= V1.7 HORÁRIO DE FUNCIONAMENTO ========================= */
+.funcionamento-card{margin:0 0 14px;border-top:5px solid var(--yellow)}
+.funcionamento-form{display:grid;gap:12px}
+.funcionamento-dias{margin:0}
+.funcionamento-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.funcionamento-grid label{display:grid;gap:5px;font-size:12px;font-weight:700}
+.funcionamento-grid input{width:100%;padding:11px;border:1px solid #ccc;border-radius:9px;font:inherit;background:#fff}
+.funcionamento-actions{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.config-rule-note{font-size:12px;color:#5b5637;background:#fffbed;border:1px solid #eadb86;border-radius:9px;padding:10px 12px;flex:1}
+.day-disabled{opacity:.42;cursor:not-allowed!important;text-decoration:line-through}
+.week-slot.closed{background:#f3f3f1}
+.week-closed-slot{min-height:74px;width:100%;display:grid;place-content:center;text-align:center;color:#aaa;border:1px dashed #dededb;border-radius:7px;background:#f8f8f6;gap:3px}
+.week-closed-slot span{font-size:18px}.week-closed-slot small{font-size:9px;font-weight:700}
+@media(max-width:1000px){.funcionamento-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:700px){.funcionamento-grid{grid-template-columns:1fr}.funcionamento-actions{align-items:stretch;flex-direction:column}.funcionamento-actions button{width:100%}}

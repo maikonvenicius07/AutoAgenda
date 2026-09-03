@@ -3,6 +3,13 @@ const $$ = s => [...document.querySelectorAll(s)];
 
 let alunos = [], instrutores = [], veiculos = [], locais = [], aulas = [], aulasSemana = [], planos = [];
 let configInstrutores = [], configVeiculos = [], configLocais = [];
+let configFuncionamento = {
+  dias_funcionamento: [0,1,2,3,4,5,6],
+  hora_abertura: '07:00',
+  hora_encerramento: '20:00',
+  duracao_padrao_minutos: 50,
+  intervalo_minutos: 0
+};
 let mostrarInativosConfig = false;
 let confirmAction = null;
 let ultimoPreviewPlano = null;
@@ -47,6 +54,44 @@ const minHora = h => {
   return (Number.isFinite(hh) ? hh : 0) * 60 + (Number.isFinite(mm) ? mm : 0);
 };
 const horaMin = min => `${String(Math.floor(min / 60)).padStart(2,'0')}:${String(min % 60).padStart(2,'0')}`;
+
+function diaSemanaISO(data) {
+  const [y,m,d] = dataISO(data).split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+}
+
+function diasFuncionamento() {
+  return (Array.isArray(configFuncionamento?.dias_funcionamento)
+    ? configFuncionamento.dias_funcionamento
+    : [0,1,2,3,4,5,6]).map(Number);
+}
+
+function proximaDataFuncionamento(dataBase = iso()) {
+  let data = dataISO(dataBase) || iso();
+  const dias = diasFuncionamento();
+  for (let i = 0; i < 14; i++) {
+    if (dias.includes(diaSemanaISO(data))) return data;
+    data = addDaysISO(data, 1);
+  }
+  return dataISO(dataBase) || iso();
+}
+
+function horarioPermitidoFront(data, horario, duracao = null) {
+  const dia = diaSemanaISO(data);
+  if (!diasFuncionamento().includes(dia)) return { ok: false, motivo: 'Dia sem funcionamento' };
+  const ini = minHora(horario);
+  const abre = minHora(configFuncionamento.hora_abertura || '07:00');
+  const fecha = minHora(configFuncionamento.hora_encerramento || '20:00');
+  const dur = Number(duracao || configFuncionamento.duracao_padrao_minutos || 50);
+  if (ini < abre || ini + dur > fecha) return { ok: false, motivo: 'Fora do horário' };
+  return { ok: true };
+}
+
+function resumoFuncionamento() {
+  const dias = diasFuncionamento().map(d => nomesDias[Number(d)]).join(', ');
+  const intervalo = Number(configFuncionamento.intervalo_minutos || 0);
+  return `${dias} · ${hora(configFuncionamento.hora_abertura)}–${hora(configFuncionamento.hora_encerramento)} · ${Number(configFuncionamento.duracao_padrao_minutos || 50)} min${intervalo ? ` + ${intervalo} min intervalo` : ''}`;
+}
 
 async function api(u, o = {}) {
   const { headers = {}, ...rest } = o;
@@ -233,7 +278,39 @@ function configItemHtml(tipo, x) {
   </div>`;
 }
 
+function renderFuncionamento() {
+  const cfg = configFuncionamento || {};
+  $$('input[name="cfgDia"]').forEach(c => {
+    c.checked = diasFuncionamento().includes(Number(c.value));
+  });
+  if ($('#cfgHoraAbertura')) $('#cfgHoraAbertura').value = hora(cfg.hora_abertura || '07:00');
+  if ($('#cfgHoraEncerramento')) $('#cfgHoraEncerramento').value = hora(cfg.hora_encerramento || '20:00');
+  if ($('#cfgDuracaoPadrao')) $('#cfgDuracaoPadrao').value = String(Number(cfg.duracao_padrao_minutos || 50));
+  if ($('#cfgIntervalo')) $('#cfgIntervalo').value = String(Number(cfg.intervalo_minutos || 0));
+  if ($('#cfgFuncionamentoResumo')) $('#cfgFuncionamentoResumo').textContent = `${hora(cfg.hora_abertura)}–${hora(cfg.hora_encerramento)}`;
+  if ($('#weekHorarioInfo')) $('#weekHorarioInfo').textContent = `Funcionamento: ${resumoFuncionamento()}. Aulas antigas fora da regra continuam visíveis.`;
+
+  const abertura = hora(cfg.hora_abertura || '07:00');
+  const encerramento = hora(cfg.hora_encerramento || '20:00');
+  ['#aHora','#pHora'].forEach(sel => {
+    const el = $(sel);
+    if (el) {
+      el.min = abertura;
+      el.max = encerramento;
+    }
+  });
+
+  // No plano automático, dias fechados não podem ser selecionados.
+  $$('input[name="pDia"]').forEach(c => {
+    const aberto = diasFuncionamento().includes(Number(c.value));
+    c.disabled = !aberto;
+    if (!aberto) c.checked = false;
+    c.closest('label')?.classList.toggle('day-disabled', !aberto);
+  });
+}
+
 function renderConfiguracoes() {
+  renderFuncionamento();
   const inativosInstrutores = configInstrutores.filter(x => x.ativo === false).length;
   const inativosVeiculos = configVeiculos.filter(x => x.ativo === false).length;
   const inativosLocais = configLocais.filter(x => x.ativo === false).length;
@@ -284,7 +361,14 @@ function aulaSemanaHtml(a) {
 
 function slotsAgendaSemanal(lista) {
   const slots = new Set();
-  for (let m = 7 * 60; m <= 20 * 60; m += 50) slots.add(horaMin(m));
+  const abre = minHora(configFuncionamento.hora_abertura || '07:00');
+  const fecha = minHora(configFuncionamento.hora_encerramento || '20:00');
+  const duracao = Math.max(10, Number(configFuncionamento.duracao_padrao_minutos || 50));
+  const passo = Math.max(5, duracao + Math.max(0, Number(configFuncionamento.intervalo_minutos || 0)));
+
+  for (let m = abre; m + duracao <= fecha; m += passo) slots.add(horaMin(m));
+
+  // Preserva a visualização de aulas antigas ou excepcionais fora da nova grade.
   lista.forEach(a => {
     const h = hora(a.hora_inicio);
     if (h) slots.add(h);
@@ -349,12 +433,16 @@ function renderSemana() {
   const linhas = slots.map(slot => {
     const cells = datas.map(data => {
       const doSlot = visiveis.filter(a => dataISO(a.data_aula) === data && hora(a.hora_inicio) === slot);
+      const permitido = horarioPermitidoFront(data, slot, Number(configFuncionamento.duracao_padrao_minutos || 50));
+      const diaAberto = diasFuncionamento().includes(diaSemanaISO(data));
       const conteudo = doSlot.length
         ? doSlot.map(aulaSemanaHtml).join('')
-        : `<button type="button" class="week-empty-slot" data-new-week-slot="1" data-week-date="${data}" data-week-time="${slot}" title="Criar aula em ${fmtData(data)} às ${slot}">
-             <span>＋</span><small>Livre</small>
-           </button>`;
-      return `<div class="week-slot ${data === hoje ? 'today' : ''}" data-slot-date="${data}" data-slot-time="${slot}">${conteudo}</div>`;
+        : permitido.ok
+          ? `<button type="button" class="week-empty-slot" data-new-week-slot="1" data-week-date="${data}" data-week-time="${slot}" title="Criar aula em ${fmtData(data)} às ${slot}">
+               <span>＋</span><small>Livre</small>
+             </button>`
+          : `<div class="week-closed-slot" title="${esc(permitido.motivo)}"><span>—</span><small>${diaAberto ? 'Fora do horário' : 'Fechado'}</small></div>`;
+      return `<div class="week-slot ${data === hoje ? 'today' : ''} ${permitido.ok ? '' : 'closed'}" data-slot-date="${data}" data-slot-time="${slot}">${conteudo}</div>`;
     }).join('');
     return `<div class="week-time">${slot}</div>${cells}`;
   }).join('');
@@ -450,7 +538,7 @@ function bindDynamic() {
 
 async function load() {
   try {
-    [alunos, instrutores, veiculos, locais, aulas, planos, configInstrutores, configVeiculos, configLocais] = await Promise.all([
+    [alunos, instrutores, veiculos, locais, aulas, planos, configInstrutores, configVeiculos, configLocais, configFuncionamento] = await Promise.all([
       api('/api/alunos'),
       api('/api/instrutores'),
       api('/api/veiculos'),
@@ -459,7 +547,8 @@ async function load() {
       api('/api/planos'),
       api('/api/instrutores?incluir_inativos=1'),
       api('/api/veiculos?incluir_inativos=1'),
-      api('/api/locais?incluir_inativos=1')
+      api('/api/locais?incluir_inativos=1'),
+      api('/api/configuracoes/funcionamento')
     ]);
     render();
     await carregarAulasSemana(true);
@@ -473,7 +562,7 @@ async function health() {
   try {
     const h = await api('/api/health');
     const seguranca = h.auth_required ? ' · 🔒 acesso protegido' : ' · ⚠️ acesso sem senha';
-    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '1.6.0'}${seguranca}.`;
+    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '1.7.0'}${seguranca}.`;
     $('#db').className = h.auth_required ? 'db ok' : 'db warn';
   } catch {
     $('#db').textContent = '🔴 Banco não conectado. Verifique DATABASE_URL no Render.';
@@ -583,9 +672,10 @@ function novaAula(prefill = null) {
   $('#fAula').reset();
   $('#aulaId').value = '';
   $('#aulaPlanId').value = '';
-  $('#aData').value = prefill?.data || $('#filtroData').value || iso();
-  $('#aHora').value = prefill?.hora || '08:00';
-  $('#aDur').value = String(prefill?.duracao || 50);
+  const dataBase = prefill?.data || $('#filtroData').value || iso();
+  $('#aData').value = prefill?.data ? dataBase : proximaDataFuncionamento(dataBase);
+  $('#aHora').value = prefill?.hora || hora(configFuncionamento.hora_abertura || '07:00');
+  $('#aDur').value = String(prefill?.duracao || Number(configFuncionamento.duracao_padrao_minutos || 50));
   $('#aUnidades').value = String(prefill?.unidades || 1);
   $('#aStatus').value = 'AGENDADA';
   $('#tituloAula').textContent = prefill?.reposicao ? 'Repor aula' : 'Nova aula';
@@ -845,6 +935,41 @@ $('#toggleInativosConfig').onclick = () => {
   bindDynamic();
 };
 
+$('#fFuncionamento').onsubmit = async e => {
+  e.preventDefault();
+  $('#erroFuncionamento').classList.add('hide');
+
+  const payload = {
+    dias_funcionamento: $$('input[name="cfgDia"]:checked').map(c => Number(c.value)),
+    hora_abertura: $('#cfgHoraAbertura').value,
+    hora_encerramento: $('#cfgHoraEncerramento').value,
+    duracao_padrao_minutos: Number($('#cfgDuracaoPadrao').value),
+    intervalo_minutos: Number($('#cfgIntervalo').value || 0)
+  };
+
+  try {
+    $('#salvarFuncionamento').disabled = true;
+    $('#salvarFuncionamento').textContent = 'Salvando...';
+    const r = await api('/api/configuracoes/funcionamento', {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+    configFuncionamento = r;
+    renderFuncionamento();
+    renderSemana();
+    const fora = Number(r.aulas_futuras_fora_do_horario || 0);
+    toast(fora
+      ? `✅ Funcionamento salvo. ⚠️ ${fora} aula(s) futura(s) antiga(s) ficaram fora da nova regra e foram preservadas.`
+      : '✅ Horário de funcionamento salvo.');
+  } catch (x) {
+    $('#erroFuncionamento').textContent = x.message;
+    $('#erroFuncionamento').classList.remove('hide');
+  } finally {
+    $('#salvarFuncionamento').disabled = false;
+    $('#salvarFuncionamento').textContent = '💾 Salvar funcionamento';
+  }
+};
+
 // ========================= PLANO AUTOMÁTICO =========================
 function weekdayUTC(data) {
   if (!data) return null;
@@ -908,9 +1033,9 @@ function abrirPlano(id) {
   $('#pAlunoResumo').textContent = `${a.aulas_contratadas} contratadas · ${realizadasAluno(a)} realizadas · ${a.aulas_agendadas || 0} já agendadas · ${ainda} ainda a programar`;
   $('#pTotal').max = String(ainda);
   $('#pDataInicio').min = iso();
-  $('#pDataInicio').value = iso();
-  $('#pHora').value = '08:00';
-  $('#pDuracao').value = '50';
+  $('#pDataInicio').value = proximaDataFuncionamento(iso());
+  $('#pHora').value = hora(configFuncionamento.hora_abertura || '07:00');
+  $('#pDuracao').value = String(Number(configFuncionamento.duracao_padrao_minutos || 50));
   $('#pPorEncontro').value = '1';
   $('#pTotal').value = Math.max(1, ainda || 1);
   $('#previewBox').classList.add('hide');
