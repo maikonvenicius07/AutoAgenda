@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#111111">
   <title>AutoAgenda</title>
-  <link rel="stylesheet" href="style.css?v=1.5.1">
+  <link rel="stylesheet" href="style.css?v=1.6.0">
 </head>
 <body>
 <header>
@@ -86,7 +86,7 @@
     <div class="head">
       <div>
         <h2>Agenda semanal</h2>
-        <p>Veja a semana inteira, filtre por instrutor e abra uma aula diretamente no dia desejado.</p>
+        <p>Veja os dias em colunas e os horários em linhas. Filtre por instrutor ou veículo e clique em um horário livre para criar a aula.</p>
       </div>
       <div class="week-toolbar">
         <button type="button" class="secondary mini" id="semanaAnterior">← Semana anterior</button>
@@ -97,7 +97,15 @@
     <div class="week-filters card compact-card">
       <label>Semana de referência<input id="filtroSemana" type="date"></label>
       <label>Instrutor<select id="filtroInstrutorSemana"><option value="">Todos os instrutores</option></select></label>
+      <label>Veículo<select id="filtroVeiculoSemana"><option value="">Todos os veículos</option></select></label>
       <div class="week-range"><span>Período</span><b id="periodoSemana">—</b></div>
+    </div>
+    <div class="week-legend">
+      <span><i class="legend-dot agendada"></i> Agendada</span>
+      <span><i class="legend-dot confirmada"></i> Confirmada</span>
+      <span><i class="legend-dot realizada"></i> Realizada</span>
+      <span><i class="legend-dot cancelada"></i> Cancelada/Faltou</span>
+      <small>Enquanto o horário de funcionamento ainda não foi configurado, a grade usa como base 07:00–20:00 e intervalos de 50 minutos.</small>
     </div>
     <div class="weekly-scroll">
       <div id="agendaSemanal" class="weekly-grid"></div>
@@ -172,6 +180,7 @@
     <h2 id="tituloAluno">Novo aluno</h2>
     <input id="alunoId" type="hidden">
     <input id="nome" placeholder="Nome*" required>
+    <input id="cpf" inputmode="numeric" autocomplete="off" maxlength="14" placeholder="CPF* (000.000.000-00)" required>
     <input id="whats" placeholder="WhatsApp*" required>
     <input id="email" type="email" placeholder="E-mail">
     <select id="cat">
@@ -339,6 +348,6 @@
 </div>
 
 <div id="toast" class="toast hide"></div>
-<script src="app.js?v=1.5.1"></script>
+<script src="app.js?v=1.6.0"></script>
 </body>
 </html>

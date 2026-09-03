@@ -1,19 +1,19 @@
 # Próximas melhorias do AutoAgenda
 
-A **V1.5.1** conclui a ETAPA 1 — Configurações.
+A **V1.6** conclui a ETAPA 2 — Agenda Semanal e adiciona CPF ao cadastro do aluno.
 
-## Próxima etapa: Agenda Semanal completa
+## Próxima etapa: Horário de funcionamento
 
-Implementar somente depois de testar a V1.5.1:
+Implementar depois de testar e aprovar a V1.6:
 
-1. dias da semana em colunas;
-2. horários em linhas;
-3. cada aula mostrando aluno, instrutor, veículo, local e status;
-4. semana anterior / atual / próxima;
-5. filtro por instrutor;
-6. filtro por veículo;
-7. clique na aula para editar;
-8. criação de aula clicando diretamente em uma célula de horário vazio;
-9. preservar as regras atuais de conflito.
+1. dias de funcionamento;
+2. horário de abertura;
+3. horário de encerramento;
+4. duração padrão da aula;
+5. intervalo entre aulas;
+6. bloquear aula manual fora do horário permitido;
+7. bloquear plano automático fora do horário permitido;
+8. preparar a regra para reagendamento e futura busca de horários livres;
+9. manter compatibilidade com aulas já existentes.
 
-Depois dessa etapa, seguir para Horário de Funcionamento.
+Depois: **Disponibilidade individual dos instrutores**.

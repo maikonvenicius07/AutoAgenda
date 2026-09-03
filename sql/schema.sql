@@ -1,4 +1,4 @@
--- AutoAgenda V1.5.1
+-- AutoAgenda V1.6.0
 -- Schema compatível com o server.js atual.
 -- O servidor cria/migra automaticamente; este arquivo serve para referência e execução manual controlada.
 
@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS autoagenda.instrutores (
 CREATE TABLE IF NOT EXISTS autoagenda.alunos (
   id SERIAL PRIMARY KEY,
   nome VARCHAR(150) NOT NULL,
+  cpf VARCHAR(11),
   whatsapp VARCHAR(30) NOT NULL,
   email VARCHAR(180),
   categoria VARCHAR(10) DEFAULT 'B',
@@ -88,6 +89,11 @@ CREATE TABLE IF NOT EXISTS autoagenda.aulas (
 );
 
 -- Migrações seguras para instalações anteriores.
+ALTER TABLE autoagenda.alunos ADD COLUMN IF NOT EXISTS cpf VARCHAR(11);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_autoagenda_alunos_cpf
+  ON autoagenda.alunos(cpf)
+  WHERE cpf IS NOT NULL AND cpf <> '';
+
 ALTER TABLE autoagenda.alunos ADD COLUMN IF NOT EXISTS aulas_realizadas_anteriores INTEGER;
 UPDATE autoagenda.alunos
 SET aulas_realizadas_anteriores = COALESCE(aulas_realizadas, 0)

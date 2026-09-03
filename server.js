@@ -6,7 +6,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '1.5.1';
+const APP_VERSION = '1.6.0';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -101,6 +101,7 @@ async function initDatabase() {
       CREATE TABLE IF NOT EXISTS autoagenda.alunos (
         id SERIAL PRIMARY KEY,
         nome VARCHAR(150) NOT NULL,
+        cpf VARCHAR(11),
         whatsapp VARCHAR(30) NOT NULL,
         email VARCHAR(180),
         categoria VARCHAR(10) DEFAULT 'B',
@@ -177,7 +178,15 @@ async function initDatabase() {
       )
     `);
 
-    // Migração segura das versões anteriores para a V1.5.
+    // Migrações seguras das versões anteriores.
+    // CPF é opcional apenas para registros legados; novos cadastros exigem CPF válido.
+    await client.query('ALTER TABLE autoagenda.alunos ADD COLUMN IF NOT EXISTS cpf VARCHAR(11)');
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_autoagenda_alunos_cpf
+      ON autoagenda.alunos(cpf)
+      WHERE cpf IS NOT NULL AND cpf <> ''
+    `);
+
     // Se a coluna nova ainda não existir, copiamos o valor legado como ponto de partida.
     await client.query('ALTER TABLE autoagenda.alunos ADD COLUMN IF NOT EXISTS aulas_realizadas_anteriores INTEGER');
     await client.query(`
@@ -323,6 +332,24 @@ function validarInteiroPositivo(valor, padrao, maximo = 10000) {
   return n;
 }
 
+function normalizarCpf(valor) {
+  return String(valor || '').replace(/\D/g, '').slice(0, 11);
+}
+
+function cpfValido(valor) {
+  const cpf = normalizarCpf(valor);
+  if (cpf.length !== 11 || /^(\d)\1{10}$/.test(cpf)) return false;
+
+  const digito = tamanho => {
+    let soma = 0;
+    for (let i = 0; i < tamanho; i++) soma += Number(cpf[i]) * (tamanho + 1 - i);
+    const resto = (soma * 10) % 11;
+    return resto === 10 ? 0 : resto;
+  };
+
+  return digito(9) === Number(cpf[9]) && digito(10) === Number(cpf[10]);
+}
+
 function gerarOcorrencias({ data_inicio, hora_inicio, duracao_base_minutos, aulas_por_encontro, total_aulas, dias_semana }) {
   const dias = normalizarDias(dias_semana, data_inicio);
   const base = Math.max(1, Number(duracao_base_minutos) || 50);
@@ -423,7 +450,7 @@ async function listarConflitosPlano(client, base, ocorrencias) {
 app.get('/api/alunos', async (req, res) => {
   try {
     const result = await query(`
-      SELECT a.id, a.nome, a.whatsapp, a.email, a.categoria,
+      SELECT a.id, a.nome, a.cpf, a.whatsapp, a.email, a.categoria,
              a.aulas_contratadas, a.aulas_realizadas,
              a.aulas_realizadas_anteriores, a.observacoes,
              a.ativo, a.criado_em,
@@ -453,19 +480,24 @@ app.get('/api/alunos', async (req, res) => {
 app.post('/api/alunos', async (req, res) => {
   try {
     const {
-      nome, whatsapp, email, categoria = 'B', aulas_contratadas = 20,
+      nome, cpf, whatsapp, email, categoria = 'B', aulas_contratadas = 20,
       aulas_realizadas_anteriores = 0, observacoes = ''
     } = req.body;
     if (!nome || !whatsapp) return res.status(400).json({ error: 'Nome e WhatsApp são obrigatórios.' });
 
+    const cpfLimpo = normalizarCpf(cpf);
+    if (!cpfValido(cpfLimpo)) {
+      return res.status(400).json({ error: 'Informe um CPF válido com 11 dígitos.' });
+    }
+
     const result = await query(`
       INSERT INTO autoagenda.alunos
-        (nome, whatsapp, email, categoria, aulas_contratadas,
+        (nome, cpf, whatsapp, email, categoria, aulas_contratadas,
          aulas_realizadas, aulas_realizadas_anteriores, observacoes)
-      VALUES ($1, $2, $3, $4, $5, $6, $6, $7)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8)
       RETURNING *
     `, [
-      nome.trim(), whatsapp.trim(), email || null, categoria,
+      nome.trim(), cpfLimpo, whatsapp.trim(), email || null, categoria,
       validarInteiroPositivo(aulas_contratadas, 20, 500),
       Math.max(0, Number(aulas_realizadas_anteriores) || 0),
       observacoes || ''
@@ -474,6 +506,9 @@ app.post('/api/alunos', async (req, res) => {
     res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error(error);
+    if (error.code === '23505' && String(error.constraint || '').includes('alunos_cpf')) {
+      return res.status(409).json({ error: 'Este CPF já está cadastrado em outro aluno.' });
+    }
     res.status(500).json({ error: 'Erro ao cadastrar aluno.' });
   }
 });
@@ -482,23 +517,28 @@ app.put('/api/alunos/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
     const {
-      nome, whatsapp, email, categoria, aulas_contratadas,
+      nome, cpf, whatsapp, email, categoria, aulas_contratadas,
       aulas_realizadas_anteriores = 0, observacoes
     } = req.body;
     if (!nome || !whatsapp) return res.status(400).json({ error: 'Nome e WhatsApp são obrigatórios.' });
 
+    const cpfLimpo = normalizarCpf(cpf);
+    if (!cpfValido(cpfLimpo)) {
+      return res.status(400).json({ error: 'Informe um CPF válido com 11 dígitos.' });
+    }
+
     const result = await query(`
       UPDATE autoagenda.alunos
-      SET nome = $1, whatsapp = $2, email = $3, categoria = $4,
-          aulas_contratadas = $5,
-          aulas_realizadas = $6,
-          aulas_realizadas_anteriores = $6,
-          observacoes = $7,
+      SET nome = $1, cpf = $2, whatsapp = $3, email = $4, categoria = $5,
+          aulas_contratadas = $6,
+          aulas_realizadas = $7,
+          aulas_realizadas_anteriores = $7,
+          observacoes = $8,
           atualizado_em = NOW()
-      WHERE id = $8 AND ativo = TRUE
+      WHERE id = $9 AND ativo = TRUE
       RETURNING *
     `, [
-      nome.trim(), whatsapp.trim(), email || null, categoria || 'B',
+      nome.trim(), cpfLimpo, whatsapp.trim(), email || null, categoria || 'B',
       validarInteiroPositivo(aulas_contratadas, 20, 500),
       Math.max(0, Number(aulas_realizadas_anteriores) || 0),
       observacoes || '', id
@@ -508,6 +548,9 @@ app.put('/api/alunos/:id', async (req, res) => {
     res.json(result.rows[0]);
   } catch (error) {
     console.error(error);
+    if (error.code === '23505' && String(error.constraint || '').includes('alunos_cpf')) {
+      return res.status(409).json({ error: 'Este CPF já está cadastrado em outro aluno.' });
+    }
     res.status(500).json({ error: 'Erro ao atualizar aluno.' });
   }
 });

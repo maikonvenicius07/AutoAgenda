@@ -1,58 +1,68 @@
-# AutoAgenda V1.5.1 — Configurações completas
+# AutoAgenda V1.6 — CPF + Agenda Semanal completa
 
-Esta versão conclui a **ETAPA 1 — Configurações** do roteiro de evolução do AutoAgenda.
+Esta versão conclui a **ETAPA 2 — Agenda Semanal** do roteiro de evolução do AutoAgenda e inclui, a pedido do projeto, o campo **CPF** no cadastro de alunos.
 
-## O que mudou nesta versão
+## Novidades
 
-- Cadastro e edição de **instrutores**, **veículos** e **locais** foram preservados.
-- Agora os três tipos de recurso podem ser **desativados** sem apagar o histórico.
-- Novo botão **Mostrar inativos** na área Configurações.
-- Recursos inativos podem ser **reativados**.
-- A exclusão definitiva só é permitida quando o cadastro **nunca foi usado** em nenhuma aula ou plano.
-- Se houver plano ativo ou aula futura vinculada, a desativação é bloqueada.
-- Recursos inativos deixam de aparecer em novas aulas e novos planos automáticos.
-- O backend também valida que novos agendamentos usem recursos ativos.
-- Foram adicionadas verificações para evitar duplicidades evidentes:
-  - instrutor por e-mail/WhatsApp ou, sem contato, pelo mesmo nome;
-  - veículo pela placa ou, sem placa, por nome + categoria;
-  - local por nome + endereço.
-- Ao tentar cadastrar novamente um recurso já inativo, o sistema orienta a usar **Mostrar inativos** e reativar o cadastro.
-- A Agenda Semanal da V1.5 foi mantida sem novas alterações nesta etapa.
+### Cadastro de alunos
+- Novo campo **CPF** no cadastro e na edição.
+- Máscara automática no formato `000.000.000-00`.
+- Validação dos dígitos verificadores no backend.
+- CPF duplicado é bloqueado.
+- Registros antigos sem CPF são preservados; ao editá-los, o sistema solicitará o preenchimento.
+- Na lista de alunos o CPF aparece mascarado, exibindo somente os dois últimos dígitos.
+
+### Agenda semanal completa
+- Dias da semana em **colunas**.
+- Horários em **linhas**.
+- Navegação: semana anterior, hoje e próxima semana.
+- Filtro por **instrutor**.
+- Novo filtro por **veículo**.
+- Cada aula mostra:
+  - horário;
+  - aluno;
+  - instrutor;
+  - veículo;
+  - local;
+  - status.
+- Clique na aula para editar.
+- Clique em uma célula livre para abrir **Nova aula** já com data e horário preenchidos.
+- Quando houver filtro por instrutor/veículo, o recurso filtrado já vem selecionado na nova aula.
+- A semana consulta o backend somente pelo intervalo de 7 dias.
+- As regras existentes de conflito do backend foram preservadas.
+
+## Horários da grade
+
+A ETAPA 3 ainda definirá o horário oficial de funcionamento da autoescola. Até lá, a agenda semanal utiliza como base **07:00 a 20:00**, em intervalos de **50 minutos**, incluindo automaticamente horários reais que já existam fora dessa grade.
 
 ## Banco de dados
 
 Não é necessário criar outro banco nem executar SQL manualmente.
 
-As colunas `ativo` já existiam nas tabelas:
-- `autoagenda.instrutores`
-- `autoagenda.veiculos`
-- `autoagenda.locais`
+Na inicialização, o `server.js` executa migração segura:
 
-A V1.5.1 apenas utiliza essa estrutura de forma mais completa e segura.
+```sql
+ALTER TABLE autoagenda.alunos
+ADD COLUMN IF NOT EXISTS cpf VARCHAR(11);
+```
+
+Também cria índice único para CPF preenchido.
 
 ## Atualização
 
-1. Faça backup da versão atual.
+1. Faça backup da versão que está funcionando.
 2. Substitua os arquivos do repositório pelos arquivos desta pasta.
-3. Não altere a sua `DATABASE_URL`.
+3. Não altere `DATABASE_URL`.
 4. Faça commit no GitHub.
 5. Aguarde o deploy do Render.
-6. No navegador, pressione **Ctrl + F5** uma vez.
-7. No topo, confirme **AutoAgenda V1.5.1**.
-
-## Arquivos principais alterados
-
-- `server.js`
-- `public/index.html`
-- `public/app.js`
-- `public/style.css`
-- `package.json`
-- `sql/schema.sql`
+6. Pressione `Ctrl + F5` no navegador.
+7. Confirme no topo **AutoAgenda V1.6.0**.
+8. Execute o `CHECKLIST_V1.6.md`.
 
 ## Próxima etapa
 
-Depois de testar e aprovar esta versão, a próxima etapa do roteiro será:
+Depois que esta versão estiver aprovada:
 
-**ETAPA 2 — Agenda Semanal completa**
+**ETAPA 3 — Horário de funcionamento**
 
-Nela vamos trabalhar a grade com horários em linhas, dias em colunas, filtro por veículo e criação de aula clicando diretamente em um horário vazio.
+Nela serão definidos dias de funcionamento, abertura, encerramento, duração padrão da aula e intervalo entre aulas.

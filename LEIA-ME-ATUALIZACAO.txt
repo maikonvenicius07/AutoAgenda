@@ -1,40 +1,32 @@
-AUTOAGENDA V1.5.1 — CONFIGURAÇÕES COMPLETAS
-================================================
+AUTOAGENDA V1.6.0 — CPF + AGENDA SEMANAL COMPLETA
 
-OBJETIVO DESTA VERSÃO
-Concluir somente a ETAPA 1 do Roteiro de Prompts do AutoAgenda.
-A Agenda Semanal foi preservada sem novas funcionalidades nesta versão.
+ALTERAÇÕES PRINCIPAIS
+1. Campo CPF no cadastro/edição do aluno.
+2. Máscara e validação real de CPF.
+3. CPF duplicado bloqueado.
+4. CPF mascarado na listagem de alunos.
+5. Agenda semanal em grade: horários nas linhas e dias nas colunas.
+6. Filtro por instrutor e por veículo.
+7. Aula semanal mostra aluno, instrutor, veículo, local e status.
+8. Clique em uma aula abre a edição.
+9. Clique em horário livre abre Nova aula já com data/hora.
+10. Consulta semanal usa somente o intervalo de sete dias.
+11. Regras de conflito existentes foram preservadas.
 
-NOVIDADES
-1. Instrutores, veículos e locais agora podem ser DESATIVADOS.
-2. Existe o botão MOSTRAR INATIVOS.
-3. Cadastros inativos podem ser REATIVADOS.
-4. A exclusão definitiva somente é permitida quando o cadastro nunca foi usado.
-5. Cadastros com histórico permanecem salvos e podem ficar inativos.
-6. Plano ativo ou aula futura bloqueiam a desativação do recurso.
-7. Recursos inativos não aparecem em novas aulas nem em novos planos.
-8. O backend valida recursos ativos mesmo se alguém tentar chamar a API diretamente.
-9. Há prevenção de duplicidades evidentes.
+BANCO
+- A coluna autoagenda.alunos.cpf é criada automaticamente se ainda não existir.
+- Não execute schema.sql manualmente no Render.
+- Não altere DATABASE_URL.
 
 COMO ATUALIZAR
 1. Faça backup da versão atual.
-2. Copie o conteúdo desta pasta para a raiz do repositório AutoAgenda.
-3. Substitua os arquivos existentes.
-4. NÃO altere DATABASE_URL.
-5. Faça Commit changes no GitHub.
-6. Aguarde o Render concluir o deploy.
-7. Pressione Ctrl + F5 no navegador.
-8. Confirme no topo: Banco conectado — AutoAgenda V1.5.1.
+2. Copie o conteúdo desta pasta para a raiz do repositório.
+3. Faça Commit changes.
+4. Aguarde o Render terminar o deploy.
+5. Pressione Ctrl + F5.
+6. Confirme: Banco conectado — AutoAgenda V1.6.0.
+7. Siga o arquivo CHECKLIST_V1.6.md.
 
-BANCO
-Não é necessário executar schema.sql manualmente.
-Não é necessário criar outro PostgreSQL.
-
-IMPORTANTE
-A exclusão definitiva é diferente da desativação:
-- DESATIVAR: preserva o cadastro e todo o histórico.
-- EXCLUIR DEFINITIVAMENTE: só aparece para cadastro inativo sem nenhuma aula ou plano no histórico.
-
-PRÓXIMA ETAPA
-Somente depois de testar esta versão:
-ETAPA 2 — Agenda Semanal completa.
+OBSERVAÇÃO SOBRE ALUNOS ANTIGOS
+Alunos já existentes continuam no banco mesmo sem CPF. Quando você editar um cadastro antigo,
+o formulário solicitará um CPF válido antes de salvar as alterações.

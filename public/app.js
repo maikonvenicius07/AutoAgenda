@@ -1,7 +1,7 @@
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 
-let alunos = [], instrutores = [], veiculos = [], locais = [], aulas = [], planos = [];
+let alunos = [], instrutores = [], veiculos = [], locais = [], aulas = [], aulasSemana = [], planos = [];
 let configInstrutores = [], configVeiculos = [], configLocais = [];
 let mostrarInativosConfig = false;
 let confirmAction = null;
@@ -29,6 +29,24 @@ const inicioSemanaISO = data => {
   return x.toISOString().slice(0, 10);
 };
 const esc = v => String(v ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+
+const soDigitos = v => String(v || '').replace(/\D/g, '');
+const formatCpf = v => {
+  const d = soDigitos(v).slice(0, 11);
+  return d
+    .replace(/^(\d{3})(\d)/, '$1.$2')
+    .replace(/^(\d{3})\.(\d{3})(\d)/, '$1.$2.$3')
+    .replace(/\.(\d{3})(\d)/, '.$1-$2');
+};
+const cpfMascarado = v => {
+  const d = soDigitos(v);
+  return d.length === 11 ? `***.***.***-${d.slice(-2)}` : 'Não informado';
+};
+const minHora = h => {
+  const [hh, mm] = hora(h).split(':').map(Number);
+  return (Number.isFinite(hh) ? hh : 0) * 60 + (Number.isFinite(mm) ? mm : 0);
+};
+const horaMin = min => `${String(Math.floor(min / 60)).padStart(2,'0')}:${String(min % 60).padStart(2,'0')}`;
 
 async function api(u, o = {}) {
   const { headers = {}, ...rest } = o;
@@ -59,7 +77,7 @@ function close(id) { $('#' + id).classList.add('hide'); }
 function abrirTab(id) {
   $$('.tab').forEach(x => x.classList.toggle('active', x.dataset.tab === id));
   $$('.panel').forEach(p => p.classList.toggle('active', p.id === id));
-  if (id === 'semana') renderSemana();
+  if (id === 'semana') carregarAulasSemana();
 }
 $$('.tab').forEach(b => b.onclick = () => abrirTab(b.dataset.tab));
 $$('[data-close]').forEach(b => b.onclick = () => close(b.dataset.close));
@@ -95,6 +113,7 @@ function studentHtml(a) {
     <div class="student-top">
       <div>
         <h3>${esc(a.nome)}</h3>
+        <p>🪪 CPF ${esc(cpfMascarado(a.cpf))}</p>
         <p>📲 ${esc(a.whatsapp)}</p>
         <p>📧 ${esc(a.email || 'Sem e-mail')}</p>
         <p>🚘 Categoria ${esc(a.categoria)}</p>
@@ -253,7 +272,43 @@ function renderConfiguracoes() {
 
 function aulaSemanaHtml(a) {
   const cls = String(a.status || '').toLowerCase();
-  return `<div class="week-lesson ${cls}" data-week-edit="${a.id}"><div class="week-lesson-time">${hora(a.hora_inicio)}</div><b>${esc(a.aluno_nome)}</b><small>👨‍🏫 ${esc(a.instrutor_nome)}</small><small>🚗 ${esc(a.veiculo_nome)}${a.veiculo_placa ? ' · ' + esc(a.veiculo_placa) : ''}</small><small>${statusLabel(a.status)}</small></div>`;
+  return `<div class="week-lesson ${cls}" data-week-edit="${a.id}" title="Clique para editar">
+    <div class="week-lesson-time">${hora(a.hora_inicio)}</div>
+    <b>${esc(a.aluno_nome)}</b>
+    <small>👨‍🏫 ${esc(a.instrutor_nome)}</small>
+    <small>🚗 ${esc(a.veiculo_nome)}${a.veiculo_placa ? ' · ' + esc(a.veiculo_placa) : ''}</small>
+    <small>📍 ${esc(a.local_nome || 'Local não informado')}</small>
+    <small>${statusLabel(a.status)}</small>
+  </div>`;
+}
+
+function slotsAgendaSemanal(lista) {
+  const slots = new Set();
+  for (let m = 7 * 60; m <= 20 * 60; m += 50) slots.add(horaMin(m));
+  lista.forEach(a => {
+    const h = hora(a.hora_inicio);
+    if (h) slots.add(h);
+  });
+  return [...slots].sort((a, b) => minHora(a) - minHora(b));
+}
+
+async function carregarAulasSemana(silencioso = false) {
+  const ref = $('#filtroSemana')?.value || iso();
+  const inicio = inicioSemanaISO(ref);
+  const fim = addDaysISO(inicio, 6);
+  try {
+    aulasSemana = await api(`/api/aulas?data_inicio=${encodeURIComponent(inicio)}&data_fim=${encodeURIComponent(fim)}`);
+    renderSemana();
+  } catch (e) {
+    console.error(e);
+    if (!silencioso) toast('Não foi possível carregar a agenda semanal.');
+    // Mantém uma alternativa visual com os dados já carregados.
+    aulasSemana = aulas.filter(a => {
+      const d = dataISO(a.data_aula);
+      return d >= inicio && d <= fim;
+    });
+    renderSemana();
+  }
 }
 
 function renderSemana() {
@@ -261,16 +316,57 @@ function renderSemana() {
   const inicio = inicioSemanaISO(ref);
   const fim = addDaysISO(inicio, 6);
   if ($('#periodoSemana')) $('#periodoSemana').textContent = `${fmtData(inicio)} a ${fmtData(fim)}`;
+
   const filtroInstrutor = Number($('#filtroInstrutorSemana')?.value || 0);
+  const filtroVeiculo = Number($('#filtroVeiculoSemana')?.value || 0);
   const diasLongos = ['Segunda','Terça','Quarta','Quinta','Sexta','Sábado','Domingo'];
   const hoje = iso();
-  const colunas = Array.from({length: 7}, (_, i) => {
-    const data = addDaysISO(inicio, i);
-    const doDia = aulas.filter(a => dataISO(a.data_aula) === data && (!filtroInstrutor || Number(a.instrutor_id) === filtroInstrutor));
-    return `<section class="week-day ${data === hoje ? 'today' : ''}"><header class="week-day-head"><div><b>${diasLongos[i]}</b><span>${fmtData(data)}</span></div><button type="button" class="mini secondary" data-new-week-day="${data}" title="Nova aula neste dia">＋</button></header><div class="week-day-body">${doDia.length ? doDia.map(aulaSemanaHtml).join('') : '<div class="week-empty">Livre</div>'}</div></section>`;
+
+  const origemSemana = aulasSemana.length
+    ? aulasSemana
+    : aulas.filter(a => {
+        const d = dataISO(a.data_aula);
+        return d >= inicio && d <= fim;
+      });
+
+  const visiveis = origemSemana.filter(a =>
+    (!filtroInstrutor || Number(a.instrutor_id) === filtroInstrutor) &&
+    (!filtroVeiculo || Number(a.veiculo_id) === filtroVeiculo)
+  );
+
+  const datas = Array.from({ length: 7 }, (_, i) => addDaysISO(inicio, i));
+  const slots = slotsAgendaSemanal(visiveis);
+
+  const cabecalho = `
+    <div class="week-corner">Horário</div>
+    ${datas.map((data, i) => `
+      <div class="week-column-head ${data === hoje ? 'today' : ''}">
+        <b>${diasLongos[i]}</b>
+        <span>${fmtData(data)}</span>
+      </div>`).join('')}
+  `;
+
+  const linhas = slots.map(slot => {
+    const cells = datas.map(data => {
+      const doSlot = visiveis.filter(a => dataISO(a.data_aula) === data && hora(a.hora_inicio) === slot);
+      const conteudo = doSlot.length
+        ? doSlot.map(aulaSemanaHtml).join('')
+        : `<button type="button" class="week-empty-slot" data-new-week-slot="1" data-week-date="${data}" data-week-time="${slot}" title="Criar aula em ${fmtData(data)} às ${slot}">
+             <span>＋</span><small>Livre</small>
+           </button>`;
+      return `<div class="week-slot ${data === hoje ? 'today' : ''}" data-slot-date="${data}" data-slot-time="${slot}">${conteudo}</div>`;
+    }).join('');
+    return `<div class="week-time">${slot}</div>${cells}`;
   }).join('');
-  $('#agendaSemanal').innerHTML = colunas;
-  $$('[data-new-week-day]').forEach(b => b.onclick = () => novaAula({ data: b.dataset.newWeekDay, hora: '08:00', instrutor_id: filtroInstrutor || undefined }));
+
+  $('#agendaSemanal').innerHTML = cabecalho + linhas;
+
+  $$('[data-new-week-slot]').forEach(b => b.onclick = () => novaAula({
+    data: b.dataset.weekDate,
+    hora: b.dataset.weekTime,
+    instrutor_id: filtroInstrutor || undefined,
+    veiculo_id: filtroVeiculo || undefined
+  }));
   $$('[data-week-edit]').forEach(b => b.onclick = () => editarAula(Number(b.dataset.weekEdit)));
 }
 
@@ -320,6 +416,13 @@ function preencherSelects() {
     filtroSemana.innerHTML = '<option value="">Todos os instrutores</option>' + optsInstrutor;
     if ([...filtroSemana.options].some(o => o.value === atual)) filtroSemana.value = atual;
   }
+
+  const filtroVeiculoSemana = $('#filtroVeiculoSemana');
+  if (filtroVeiculoSemana) {
+    const atual = filtroVeiculoSemana.value;
+    filtroVeiculoSemana.innerHTML = '<option value="">Todos os veículos</option>' + optsVeiculo;
+    if ([...filtroVeiculoSemana.options].some(o => o.value === atual)) filtroVeiculoSemana.value = atual;
+  }
 }
 
 function bindDynamic() {
@@ -359,6 +462,7 @@ async function load() {
       api('/api/locais?incluir_inativos=1')
     ]);
     render();
+    await carregarAulasSemana(true);
   } catch (e) {
     console.error(e);
     toast('Erro ao carregar dados');
@@ -369,7 +473,7 @@ async function health() {
   try {
     const h = await api('/api/health');
     const seguranca = h.auth_required ? ' · 🔒 acesso protegido' : ' · ⚠️ acesso sem senha';
-    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '1.5.1'}${seguranca}.`;
+    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '1.6.0'}${seguranca}.`;
     $('#db').className = h.auth_required ? 'db ok' : 'db warn';
   } catch {
     $('#db').textContent = '🔴 Banco não conectado. Verifique DATABASE_URL no Render.';
@@ -394,6 +498,7 @@ function editarAluno(id) {
   if (!a) return;
   $('#alunoId').value = a.id;
   $('#nome').value = a.nome || '';
+  $('#cpf').value = formatCpf(a.cpf || '');
   $('#whats').value = a.whatsapp || '';
   $('#email').value = a.email || '';
   $('#cat').value = a.categoria || 'B';
@@ -439,12 +544,16 @@ function pedirExcluirAluno(id) {
 }
 
 $('#novoAluno').onclick = novoAluno;
+$('#cpf').addEventListener('input', e => {
+  e.target.value = formatCpf(e.target.value);
+});
 $('#fAluno').onsubmit = async e => {
   e.preventDefault();
   $('#erroAluno').classList.add('hide');
   const id = Number($('#alunoId').value || 0);
   const payload = {
     nome: $('#nome').value,
+    cpf: soDigitos($('#cpf').value),
     whatsapp: $('#whats').value,
     email: $('#email').value,
     categoria: $('#cat').value,
@@ -950,11 +1059,18 @@ $('#filtroData').onchange = render;
 $('#irAgenda').onclick = () => abrirTab('agenda');
 
 $('#filtroSemana').value = iso();
-$('#filtroSemana').onchange = renderSemana;
+$('#filtroSemana').onchange = () => carregarAulasSemana();
 $('#filtroInstrutorSemana').onchange = renderSemana;
-$('#semanaHoje').onclick = () => { $('#filtroSemana').value = iso(); renderSemana(); };
-$('#semanaAnterior').onclick = () => { $('#filtroSemana').value = addDaysISO(inicioSemanaISO($('#filtroSemana').value || iso()), -7); renderSemana(); };
-$('#semanaProxima').onclick = () => { $('#filtroSemana').value = addDaysISO(inicioSemanaISO($('#filtroSemana').value || iso()), 7); renderSemana(); };
+$('#filtroVeiculoSemana').onchange = renderSemana;
+$('#semanaHoje').onclick = () => { $('#filtroSemana').value = iso(); carregarAulasSemana(); };
+$('#semanaAnterior').onclick = () => {
+  $('#filtroSemana').value = addDaysISO(inicioSemanaISO($('#filtroSemana').value || iso()), -7);
+  carregarAulasSemana();
+};
+$('#semanaProxima').onclick = () => {
+  $('#filtroSemana').value = addDaysISO(inicioSemanaISO($('#filtroSemana').value || iso()), 7);
+  carregarAulasSemana();
+};
 
 health();
 load();
