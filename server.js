@@ -7,7 +7,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '2.3.2';
+const APP_VERSION = '2.3.3';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -2730,7 +2730,8 @@ app.get('/whatsapp/aula/:id', async (req, res) => {
     }
 
     const result = await query(`
-      SELECT a.id, a.data_aula,
+      SELECT a.id,
+             TO_CHAR(a.data_aula, 'DD/MM/YYYY') AS data_br,
              TO_CHAR(a.hora_inicio, 'HH24:MI') AS hora_inicio,
              a.status, a.arquivada,
              al.nome AS aluno_nome, al.whatsapp AS aluno_whatsapp,
@@ -2738,8 +2739,8 @@ app.get('/whatsapp/aula/:id', async (req, res) => {
              l.nome AS local_nome
       FROM autoagenda.aulas a
       JOIN autoagenda.alunos al ON al.id = a.aluno_id
-      JOIN autoagenda.instrutores i ON i.id = a.instrutor_id
-      JOIN autoagenda.locais l ON l.id = a.local_id
+      LEFT JOIN autoagenda.instrutores i ON i.id = a.instrutor_id
+      LEFT JOIN autoagenda.locais l ON l.id = a.local_id
       WHERE a.id = $1
     `, [id]);
 
@@ -2759,9 +2760,10 @@ app.get('/whatsapp/aula/:id', async (req, res) => {
         .send('Este aluno não possui um WhatsApp válido cadastrado. Edite o aluno e informe o número com DDD, por exemplo: (69) 99999-9999.');
     }
 
-    const dataBr = aula.data_aula
-      ? new Intl.DateTimeFormat('pt-BR', { timeZone: 'UTC' }).format(new Date(`${String(aula.data_aula).slice(0, 10)}T12:00:00Z`))
-      : '';
+    // PostgreSQL já devolve a data pronta para exibição. Evitamos converter DATE para
+    // JavaScript Date aqui, pois o driver pg pode entregar a coluna DATE como objeto Date,
+    // e String(date).slice(0, 10) não produz YYYY-MM-DD, causando "Invalid time value".
+    const dataBr = String(aula.data_br || '').trim();
     const texto = `Olá, ${aula.aluno_nome}! Seguem os dados da sua aula prática:\n\n` +
       `📅 Data: ${dataBr}\n` +
       `🕐 Horário: ${String(aula.hora_inicio || '').slice(0, 5)}\n` +
