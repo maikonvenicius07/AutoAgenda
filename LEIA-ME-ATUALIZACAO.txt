@@ -1,40 +1,34 @@
-AUTOAGENDA V2.3.1 — CONSOLIDAÇÃO
+AUTOAGENDA V2.4.0 — CONFIRMAÇÃO DA AULA
 
-Esta atualização foi preparada a partir do AutoAgenda-main(1).zip enviado em 04/09/2026, que estava na V2.0.
+Esta versão implementa a ETAPA 10 do roteiro.
 
-Ela consolida de uma vez:
-- V2.1 Reagendamento Inteligente;
-- V2.2 Histórico Completo do Aluno;
-- V2.3 WhatsApp simples;
-- correções V2.3.1 de segurança e consistência.
+NOVO
+- Campo de confirmação separado da situação operacional da aula.
+- Aguardando confirmação.
+- Confirmada.
+- Pediu reagendamento.
+- A confirmação aparece na agenda e no histórico.
+- Alteração manual pela tela Alterar aula.
+- Estrutura no PostgreSQL pronta para futura confirmação automática via WhatsApp:
+  confirmacao_status
+  confirmacao_origem
+  confirmacao_atualizada_em
 
-ARQUIVOS PARA SUBSTITUIR NO GITHUB:
-- server.js
-- package.json
-- public/app.js
-- public/index.html
-- public/style.css
-- sql/schema.sql
-- README.md
-- PROXIMAS_MELHORIAS.md
-- LEIA-ME-ATUALIZACAO.txt
+COMPATIBILIDADE
+- Registros antigos com status CONFIRMADA são reconhecidos como confirmação já realizada.
+- Aulas e histórico existentes não são apagados.
+- Migração é automática ao iniciar o servidor.
+- Não é necessário executar SQL manualmente.
 
-ARQUIVOS NOVOS PARA ADICIONAR:
-- .gitignore
-- .env.example
+IMPORTANTE
+- "Pediu reagendamento" não cancela a aula automaticamente.
+- Para efetivar o reagendamento, altere a situação da aula para CANCELADA e use o Reagendamento Inteligente já existente.
 
-NÃO ALTERAR NO RENDER:
-- DATABASE_URL
-- AUTOAGENDA_USER
-- AUTOAGENDA_PASSWORD
+DEPLOY
+1. Substitua os arquivos indicados no GitHub.
+2. Faça Commit changes.
+3. Aguarde o Render concluir o deploy.
+4. Pressione Ctrl+F5.
+5. Confirme no topo: AutoAgenda V2.4.0.
 
-A migração do banco é automática pelo server.js. Não execute SQL manualmente.
-
-Após o commit:
-1. aguarde o deploy do Render;
-2. abra o AutoAgenda;
-3. pressione Ctrl+F5;
-4. confirme no indicador do banco: AutoAgenda V2.3.1;
-5. teste uma aula, uma reposição, o histórico do aluno e o WhatsApp.
-
-O WhatsApp de lembrete agora só aparece para aulas AGENDADAS ou CONFIRMADAS.
+Não altere DATABASE_URL, AUTOAGENDA_USER ou AUTOAGENDA_PASSWORD.

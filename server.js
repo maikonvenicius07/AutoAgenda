@@ -7,7 +7,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '2.3.6';
+const APP_VERSION = '2.4.0';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -331,6 +331,11 @@ async function initDatabase() {
         duracao_minutos INTEGER NOT NULL DEFAULT 50 CHECK (duracao_minutos > 0),
         status VARCHAR(30) NOT NULL DEFAULT 'AGENDADA'
           CHECK (status IN ('AGENDADA','CONFIRMADA','REALIZADA','REMARCADA','CANCELADA','FALTOU')),
+        confirmacao_status VARCHAR(30) NOT NULL DEFAULT 'AGUARDANDO'
+          CHECK (confirmacao_status IN ('AGUARDANDO','CONFIRMADA','PEDIU_REAGENDAMENTO')),
+        confirmacao_origem VARCHAR(20) NOT NULL DEFAULT 'MANUAL'
+          CHECK (confirmacao_origem IN ('MANUAL','WHATSAPP','SISTEMA')),
+        confirmacao_atualizada_em TIMESTAMP,
         observacoes TEXT,
         criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
         atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
@@ -406,6 +411,45 @@ async function initDatabase() {
     await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS arquivada BOOLEAN NOT NULL DEFAULT FALSE');
     await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS arquivada_em TIMESTAMP');
     await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS reposicao_de_id INTEGER');
+
+    // V2.4 — confirmação da aula separada do status operacional.
+    await client.query("ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS confirmacao_status VARCHAR(30) NOT NULL DEFAULT 'AGUARDANDO'");
+    await client.query("ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS confirmacao_origem VARCHAR(20) NOT NULL DEFAULT 'MANUAL'");
+    await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS confirmacao_atualizada_em TIMESTAMP');
+
+    await client.query(`
+      UPDATE autoagenda.aulas
+      SET confirmacao_status = 'CONFIRMADA',
+          confirmacao_origem = 'SISTEMA',
+          confirmacao_atualizada_em = COALESCE(confirmacao_atualizada_em, atualizado_em, NOW())
+      WHERE status = 'CONFIRMADA'
+        AND confirmacao_status = 'AGUARDANDO'
+        AND confirmacao_atualizada_em IS NULL
+    `);
+
+    await client.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = 'aulas_confirmacao_status_check'
+            AND conrelid = 'autoagenda.aulas'::regclass
+        ) THEN
+          ALTER TABLE autoagenda.aulas
+          ADD CONSTRAINT aulas_confirmacao_status_check
+          CHECK (confirmacao_status IN ('AGUARDANDO','CONFIRMADA','PEDIU_REAGENDAMENTO'));
+        END IF;
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = 'aulas_confirmacao_origem_check'
+            AND conrelid = 'autoagenda.aulas'::regclass
+        ) THEN
+          ALTER TABLE autoagenda.aulas
+          ADD CONSTRAINT aulas_confirmacao_origem_check
+          CHECK (confirmacao_origem IN ('MANUAL','WHATSAPP','SISTEMA'));
+        END IF;
+      END $$;
+    `);
 
     await client.query(`
       DO $$
@@ -1319,7 +1363,8 @@ app.get('/api/alunos/:id/historico', async (req, res) => {
       `, [id, hoje]),
       query(`
         SELECT a.id, a.data_aula, a.hora_inicio, a.duracao_minutos,
-               a.status, a.observacoes, a.aulas_unidades,
+               a.status, a.confirmacao_status, a.confirmacao_origem, a.confirmacao_atualizada_em,
+               a.observacoes, a.aulas_unidades,
                a.plan_id, a.numero_plano, a.excecao_plano,
                a.arquivada, a.arquivada_em, a.reposicao_de_id,
                i.nome AS instrutor_nome,
@@ -2749,6 +2794,13 @@ const ROTULO_STATUS_WHATSAPP = status => ({
   FALTOU: '🚫 Faltou — aula descontada'
 })[String(status || '').toUpperCase()] || String(status || '');
 
+const CONFIRMACAO_STATUS_PERMITIDOS = ['AGUARDANDO','CONFIRMADA','PEDIU_REAGENDAMENTO'];
+function normalizarConfirmacaoStatus(valor, fallback = 'AGUARDANDO') {
+  const v = String(valor || '').trim().toUpperCase();
+  if (CONFIRMACAO_STATUS_PERMITIDOS.includes(v)) return v;
+  return CONFIRMACAO_STATUS_PERMITIDOS.includes(fallback) ? fallback : '';
+}
+
 app.get('/whatsapp/aula/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -2976,11 +3028,13 @@ app.get('/api/aulas/:id', async (req, res) => {
 app.post('/api/aulas', async (req, res) => {
   const client = await pool.connect();
   try {
-    const { aluno_id, instrutor_id, veiculo_id, local_id, data_aula, hora_inicio, duracao_minutos = null, aulas_unidades = 1, status = 'AGENDADA', observacoes = '' } = req.body;
+    const { aluno_id, instrutor_id, veiculo_id, local_id, data_aula, hora_inicio, duracao_minutos = null,
+            aulas_unidades = 1, status = 'AGENDADA', confirmacao_status = null, observacoes = '' } = req.body;
     if (!aluno_id || !instrutor_id || !veiculo_id || !local_id || !data_aula || !hora_inicio) {
       return res.status(400).json({ error: 'Preencha aluno, instrutor, veículo, local, data e horário.' });
     }
     const statusFinal = ['AGENDADA','CONFIRMADA','REALIZADA','REMARCADA','CANCELADA','FALTOU'].includes(status) ? status : 'AGENDADA';
+    const confirmacaoFinal = normalizarConfirmacaoStatus(confirmacao_status, statusFinal === 'CONFIRMADA' ? 'CONFIRMADA' : 'AGUARDANDO');
     const unidadesFinal = Math.min(4, validarInteiroPositivo(aulas_unidades, 1, 4));
     validarDataParaStatus(data_aula, statusFinal);
 
@@ -3009,12 +3063,13 @@ app.post('/api/aulas', async (req, res) => {
     const result = await client.query(`
       INSERT INTO autoagenda.aulas
         (aluno_id, instrutor_id, veiculo_id, local_id, data_aula, hora_inicio,
-         duracao_minutos, status, observacoes, aulas_unidades, arquivada)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,FALSE)
+         duracao_minutos, status, confirmacao_status, confirmacao_origem, confirmacao_atualizada_em,
+         observacoes, aulas_unidades, arquivada)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'MANUAL',NOW(),$10,$11,FALSE)
       RETURNING *
     `, [
       Number(aluno_id), Number(instrutor_id), Number(veiculo_id), Number(local_id), data_aula,
-      String(hora_inicio).slice(0, 5), duracaoFinal, statusFinal, observacoes || '', unidadesFinal
+      String(hora_inicio).slice(0, 5), duracaoFinal, statusFinal, confirmacaoFinal, observacoes || '', unidadesFinal
     ]);
 
     await client.query('COMMIT');
@@ -3129,7 +3184,8 @@ app.put('/api/aulas/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
     const { aluno_id, instrutor_id, veiculo_id, local_id, data_aula, hora_inicio,
-            duracao_minutos = 50, aulas_unidades = 1, status = 'AGENDADA', observacoes = '' } = req.body;
+            duracao_minutos = 50, aulas_unidades = 1, status = 'AGENDADA',
+            confirmacao_status = null, observacoes = '' } = req.body;
     if (!aluno_id || !instrutor_id || !veiculo_id || !local_id || !data_aula || !hora_inicio) {
       return res.status(400).json({ error: 'Preencha aluno, instrutor, veículo, local, data e horário.' });
     }
@@ -3144,6 +3200,10 @@ app.put('/api/aulas/:id', async (req, res) => {
       return res.status(404).json({ error:'Aula não encontrada.' });
     }
     const antiga = existente.rows[0];
+    const confirmacaoFinal = normalizarConfirmacaoStatus(
+      confirmacao_status,
+      normalizarConfirmacaoStatus(antiga.confirmacao_status, String(antiga.status || '').toUpperCase() === 'CONFIRMADA' ? 'CONFIRMADA' : 'AGUARDANDO')
+    );
     if (antiga.arquivada) {
       await client.query('ROLLBACK');
       return res.status(409).json({ error:'Esta aula está arquivada e não pode ser alterada.' });
@@ -3178,13 +3238,17 @@ app.put('/api/aulas/:id', async (req, res) => {
       UPDATE autoagenda.aulas
       SET aluno_id=$1, instrutor_id=$2, veiculo_id=$3, local_id=$4,
           data_aula=$5, hora_inicio=$6, duracao_minutos=$7,
-          aulas_unidades=$8, status=$9, observacoes=$10,
+          aulas_unidades=$8, status=$9,
+          confirmacao_status=$10,
+          confirmacao_origem=CASE WHEN confirmacao_status IS DISTINCT FROM $10 THEN 'MANUAL' ELSE confirmacao_origem END,
+          confirmacao_atualizada_em=CASE WHEN confirmacao_status IS DISTINCT FROM $10 THEN NOW() ELSE confirmacao_atualizada_em END,
+          observacoes=$11,
           excecao_plano=CASE WHEN plan_id IS NULL THEN FALSE ELSE TRUE END,
           atualizado_em=NOW()
-      WHERE id=$11
+      WHERE id=$12
       RETURNING *
     `, [Number(aluno_id),Number(instrutor_id),Number(veiculo_id),Number(local_id),data_aula,
-        String(hora_inicio).slice(0,5),duracaoFinal,unidadesFinal,status,observacoes||'',id]);
+        String(hora_inicio).slice(0,5),duracaoFinal,unidadesFinal,status,confirmacaoFinal,observacoes||'',id]);
 
     await client.query('COMMIT');
     res.json(result.rows[0]);
@@ -3275,6 +3339,10 @@ app.put('/api/aulas/:id/serie', async (req, res) => {
 
     const alvoNovo = novas.find(n=>Number(n.id)===id);
     const statusAlvo = payload.status || alvo.status;
+    const confirmacaoAlvo = normalizarConfirmacaoStatus(
+      payload.confirmacao_status,
+      normalizarConfirmacaoStatus(alvo.confirmacao_status, String(alvo.status || '').toUpperCase() === 'CONFIRMADA' ? 'CONFIRMADA' : 'AGUARDANDO')
+    );
     await validarSaldoAula(client,{ aluno_id:alvo.aluno_id,status:statusAlvo,data_aula:alvoNovo.data_aula_nova,aulas_unidades:alvoNovo.aulas_unidades_nova },[id]);
 
     for (const n of novas) {
@@ -3299,10 +3367,13 @@ app.put('/api/aulas/:id/serie', async (req, res) => {
         UPDATE autoagenda.aulas
         SET instrutor_id=$1,veiculo_id=$2,local_id=$3,data_aula=$4,hora_inicio=$5,duracao_minutos=$6,
             aulas_unidades=$7,status=CASE WHEN $8 THEN $9 ELSE status END,
-            observacoes=CASE WHEN $8 THEN $10 ELSE observacoes END,
+            confirmacao_status=CASE WHEN $8 THEN $10 ELSE confirmacao_status END,
+            confirmacao_origem=CASE WHEN $8 AND confirmacao_status IS DISTINCT FROM $10 THEN 'MANUAL' ELSE confirmacao_origem END,
+            confirmacao_atualizada_em=CASE WHEN $8 AND confirmacao_status IS DISTINCT FROM $10 THEN NOW() ELSE confirmacao_atualizada_em END,
+            observacoes=CASE WHEN $8 THEN $11 ELSE observacoes END,
             excecao_plano=FALSE,atualizado_em=NOW()
-        WHERE id=$11
-      `,[n.instrutor_id_novo,n.veiculo_id_novo,n.local_id_novo,n.data_aula_nova,n.hora_inicio_nova,n.duracao_minutos_nova,n.aulas_unidades_nova,isAlvo,statusAlvo,payload.observacoes||'',Number(n.id)]);
+        WHERE id=$12
+      `,[n.instrutor_id_novo,n.veiculo_id_novo,n.local_id_novo,n.data_aula_nova,n.hora_inicio_nova,n.duracao_minutos_nova,n.aulas_unidades_nova,isAlvo,statusAlvo,confirmacaoAlvo,payload.observacoes||'',Number(n.id)]);
     }
 
     await client.query(`UPDATE autoagenda.planos_aula SET hora_inicio=$1,instrutor_id=$2,veiculo_id=$3,local_id=$4,dias_semana=$5::int[],atualizado_em=NOW() WHERE id=$6`,
@@ -3355,6 +3426,38 @@ app.delete('/api/aulas/:id', async (req, res) => {
   }
 });
 
+// V2.4 — alteração manual da confirmação da aula.
+// Origem e data/hora ficam prontas para futura confirmação automática via WhatsApp.
+app.patch('/api/aulas/:id/confirmacao', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const id = Number(req.params.id);
+    const confirmacao = normalizarConfirmacaoStatus(req.body?.confirmacao_status, '');
+    if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error:'Aula inválida.' });
+    if (!confirmacao) return res.status(400).json({ error:'Status de confirmação inválido.' });
+    await client.query('BEGIN');
+    const atual = await client.query('SELECT * FROM autoagenda.aulas WHERE id=$1 FOR UPDATE',[id]);
+    if (!atual.rowCount) { await client.query('ROLLBACK'); return res.status(404).json({ error:'Aula não encontrada.' }); }
+    const aula = atual.rows[0];
+    if (aula.arquivada) { await client.query('ROLLBACK'); return res.status(409).json({ error:'Aula arquivada não pode ter a confirmação alterada.' }); }
+    if (!['AGENDADA','CONFIRMADA'].includes(String(aula.status || '').toUpperCase())) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error:'A confirmação só pode ser alterada em aulas agendadas.' });
+    }
+    const result = await client.query(`
+      UPDATE autoagenda.aulas
+      SET confirmacao_status=$1, confirmacao_origem='MANUAL', confirmacao_atualizada_em=NOW(), atualizado_em=NOW()
+      WHERE id=$2 RETURNING *
+    `,[confirmacao,id]);
+    await client.query('COMMIT');
+    res.json(result.rows[0]);
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch {}
+    console.error(error);
+    res.status(500).json({ error:'Erro ao atualizar a confirmação da aula.' });
+  } finally { client.release(); }
+});
+
 app.patch('/api/aulas/:id/status', async (req, res) => {
   const client=await pool.connect();
   try {
@@ -3391,7 +3494,15 @@ app.patch('/api/aulas/:id/status', async (req, res) => {
     }
     await validarSaldoAula(client,{ aluno_id:aula.aluno_id,status,data_aula:aula.data_aula,aulas_unidades:aula.aulas_unidades },[id]);
 
-    const result=await client.query('UPDATE autoagenda.aulas SET status=$1,atualizado_em=NOW() WHERE id=$2 RETURNING *',[status,id]);
+    const result=await client.query(`
+      UPDATE autoagenda.aulas
+      SET status=$1,
+          confirmacao_status=CASE WHEN $1='CONFIRMADA' THEN 'CONFIRMADA' ELSE confirmacao_status END,
+          confirmacao_origem=CASE WHEN $1='CONFIRMADA' THEN 'MANUAL' ELSE confirmacao_origem END,
+          confirmacao_atualizada_em=CASE WHEN $1='CONFIRMADA' THEN NOW() ELSE confirmacao_atualizada_em END,
+          atualizado_em=NOW()
+      WHERE id=$2 RETURNING *
+    `,[status,id]);
     await client.query('COMMIT');
     res.json(result.rows[0]);
   } catch (error) {

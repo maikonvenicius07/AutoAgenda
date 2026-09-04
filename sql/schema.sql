@@ -1,4 +1,4 @@
--- AutoAgenda V2.3.1
+-- AutoAgenda V2.4.0
 -- Schema compatível com o server.js atual.
 -- O servidor cria/migra automaticamente; este arquivo serve para referência e execução manual controlada.
 
@@ -128,6 +128,11 @@ CREATE TABLE IF NOT EXISTS autoagenda.aulas (
   duracao_minutos INTEGER NOT NULL DEFAULT 50 CHECK (duracao_minutos > 0),
   status VARCHAR(30) NOT NULL DEFAULT 'AGENDADA'
     CHECK (status IN ('AGENDADA','CONFIRMADA','REALIZADA','REMARCADA','CANCELADA','FALTOU')),
+  confirmacao_status VARCHAR(30) NOT NULL DEFAULT 'AGUARDANDO'
+    CHECK (confirmacao_status IN ('AGUARDANDO','CONFIRMADA','PEDIU_REAGENDAMENTO')),
+  confirmacao_origem VARCHAR(20) NOT NULL DEFAULT 'MANUAL'
+    CHECK (confirmacao_origem IN ('MANUAL','WHATSAPP','SISTEMA')),
+  confirmacao_atualizada_em TIMESTAMP,
   observacoes TEXT,
   plan_id INTEGER REFERENCES autoagenda.planos_aula(id) ON DELETE SET NULL,
   numero_plano INTEGER,
@@ -160,6 +165,24 @@ ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS excecao_plano BOOLEAN NOT 
 ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS arquivada BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS arquivada_em TIMESTAMP;
 ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS reposicao_de_id INTEGER;
+ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS confirmacao_status VARCHAR(30) NOT NULL DEFAULT 'AGUARDANDO';
+ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS confirmacao_origem VARCHAR(20) NOT NULL DEFAULT 'MANUAL';
+ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS confirmacao_atualizada_em TIMESTAMP;
+
+UPDATE autoagenda.aulas
+SET confirmacao_status = 'CONFIRMADA', confirmacao_origem = 'SISTEMA',
+    confirmacao_atualizada_em = COALESCE(confirmacao_atualizada_em, atualizado_em, NOW())
+WHERE status = 'CONFIRMADA' AND confirmacao_status = 'AGUARDANDO' AND confirmacao_atualizada_em IS NULL;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='aulas_confirmacao_status_check' AND conrelid='autoagenda.aulas'::regclass) THEN
+    ALTER TABLE autoagenda.aulas ADD CONSTRAINT aulas_confirmacao_status_check CHECK (confirmacao_status IN ('AGUARDANDO','CONFIRMADA','PEDIU_REAGENDAMENTO'));
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='aulas_confirmacao_origem_check' AND conrelid='autoagenda.aulas'::regclass) THEN
+    ALTER TABLE autoagenda.aulas ADD CONSTRAINT aulas_confirmacao_origem_check CHECK (confirmacao_origem IN ('MANUAL','WHATSAPP','SISTEMA'));
+  END IF;
+END $$;
 
 DO $$
 BEGIN

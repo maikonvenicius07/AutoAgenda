@@ -1,6 +1,6 @@
 # Próximas melhorias — AutoAgenda
 
-Versão atual consolidada: **V2.3.1**.
+Versão atual consolidada: **V2.4.0**.
 
 Concluído até aqui:
 
@@ -13,14 +13,13 @@ Concluído até aqui:
 
 ## Próxima etapa
 
-**ETAPA 10 — Confirmação da aula**
+**ETAPA 11 — Lembretes**
 
-Adicionar situação de confirmação independente do status operacional da aula:
+Preparar lembretes de aula no dia anterior e algumas horas antes, com campos de controle no banco para horário previsto, envio e data/hora do envio. Nesta etapa ainda não será necessária API paga de WhatsApp.
 
-- aguardando confirmação;
-- confirmada;
-- pediu reagendamento.
+Depois seguem: dashboard, relatórios, financeiro, backup/exportação, login individual e permissões.
 
-A informação deverá aparecer na agenda e deixar a estrutura pronta para futura confirmação automática via WhatsApp, mantendo a alteração manual nesta fase.
 
-Depois seguem: lembretes, dashboard, relatórios, financeiro, backup/exportação, login individual e permissões.
+## Após a V2.4.0
+Próxima etapa do roteiro: **ETAPA 11 — Lembretes**.
+Preparar lembretes no dia anterior e algumas horas antes, mantendo a integração sem API paga nesta etapa.

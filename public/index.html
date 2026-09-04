@@ -14,7 +14,7 @@
       document.documentElement.dataset.theme = 'light';
     }
   </script>
-  <link rel="stylesheet" href="style.css?v=2.3.6-dark">
+  <link rel="stylesheet" href="style.css?v=2.4.0">
 </head>
 <body>
 <header>
@@ -336,7 +336,11 @@
       <label>Duração (minutos)<input id="aDur" type="number" min="10" max="240" step="5" value="50" required></label>
       <label>Aulas consumidas<select id="aUnidades"><option value="1">1 aula</option><option value="2">2 aulas</option><option value="3">3 aulas</option><option value="4">4 aulas</option></select></label>
     </div>
-    <label>Status<select id="aStatus"><option value="AGENDADA">Agendada</option><option value="CONFIRMADA">Confirmada</option><option value="REALIZADA">Realizada</option><option value="CANCELADA">Cancelada</option><option value="FALTOU">Faltou — desconta a aula</option></select></label>
+    <div class="form-2">
+      <label>Situação da aula<select id="aStatus"><option value="AGENDADA">Agendada</option><option value="REALIZADA">Realizada</option><option value="CANCELADA">Cancelada</option><option value="FALTOU">Faltou — desconta a aula</option></select></label>
+      <label>Confirmação<select id="aConfirmacao"><option value="AGUARDANDO">🕐 Aguardando confirmação</option><option value="CONFIRMADA">✅ Confirmada</option><option value="PEDIU_REAGENDAMENTO">🔄 Pediu reagendamento</option></select></label>
+    </div>
+    <div id="confirmacaoAjuda" class="confirmation-help">A confirmação é independente da situação da aula e pode ser alterada manualmente.</div>
     <label>Observações<textarea id="aObs" placeholder="Observações da aula"></textarea></label>
 
     <div id="serieBox" class="series-box hide">
@@ -538,6 +542,6 @@
 </div>
 
 <div id="toast" class="toast hide"></div>
-<script src="app.js?v=2.3.6-dark"></script>
+<script src="app.js?v=2.4.0"></script>
 </body>
 </html>

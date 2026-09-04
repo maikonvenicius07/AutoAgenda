@@ -240,12 +240,38 @@ $$('[data-close]').forEach(b => b.onclick = () => close(b.dataset.close));
 function statusLabel(s) {
   return ({
     AGENDADA: '⏳ Agendada',
-    CONFIRMADA: '✅ Confirmada',
+    CONFIRMADA: '⏳ Agendada',
     REALIZADA: '🏁 Realizada',
     REMARCADA: '🔄 Remarcada',
     CANCELADA: '❌ Cancelada',
     FALTOU: '🚫 Faltou — aula perdida'
   })[s] || s;
+}
+
+function confirmacaoStatusAula(aula) {
+  const operacional = String(aula?.status || '').toUpperCase();
+  const informado = String(aula?.confirmacao_status || '').toUpperCase();
+  if (['AGUARDANDO','CONFIRMADA','PEDIU_REAGENDAMENTO'].includes(informado)) return informado;
+  return operacional === 'CONFIRMADA' ? 'CONFIRMADA' : 'AGUARDANDO';
+}
+function confirmacaoLabel(status) {
+  return ({AGUARDANDO:'🕐 Aguardando confirmação',CONFIRMADA:'✅ Confirmada',PEDIU_REAGENDAMENTO:'🔄 Pediu reagendamento'})[status] || '🕐 Aguardando confirmação';
+}
+function confirmacaoHtmlAula(aula, mostrarMesmoEncerrada = false) {
+  const operacional = String(aula?.status || '').toUpperCase();
+  if ((!['AGENDADA','CONFIRMADA'].includes(operacional) || aula?.arquivada) && !mostrarMesmoEncerrada) return '';
+  const st = confirmacaoStatusAula(aula);
+  return `<span class="confirmation-badge ${st.toLowerCase()}">${esc(confirmacaoLabel(st))}</span>`;
+}
+function atualizarAjudaConfirmacao() {
+  const box = $('#confirmacaoAjuda');
+  if (!box) return;
+  const situacao = $('#aStatus')?.value || 'AGENDADA';
+  const confirmacao = $('#aConfirmacao')?.value || 'AGUARDANDO';
+  $('#aConfirmacao').disabled = !['AGENDADA','CONFIRMADA'].includes(situacao);
+  if (!['AGENDADA','CONFIRMADA'].includes(situacao)) box.textContent = 'A confirmação fica preservada no histórico, mas só pode ser alterada enquanto a aula estiver agendada.';
+  else if (confirmacao === 'PEDIU_REAGENDAMENTO') box.textContent = 'O pedido de reagendamento não cancela a aula automaticamente. Para efetivar a mudança, salve e depois altere a situação da aula para Cancelada; o Reagendamento Inteligente poderá procurar outro horário.';
+  else box.textContent = 'A confirmação é independente da situação da aula e pode ser alterada manualmente.';
 }
 
 function realizadasAluno(a) {
@@ -319,6 +345,7 @@ function aulaHtml(x, comAcoes = false) {
     : '';
   const podeArquivar = comAcoes && !['REALIZADA','FALTOU'].includes(x.status);
   const whatsapp = whatsappHtmlAula(x);
+  const confirmacao = confirmacaoHtmlAula(x);
 
   return `<div class="lesson ${String(x.status || '').toLowerCase()}">
     <div class="lesson-time">${hora(x.hora_inicio)}</div>
@@ -326,8 +353,7 @@ function aulaHtml(x, comAcoes = false) {
       <b>${esc(x.aluno_nome)}</b>
       <small>👨‍🏫 ${esc(x.instrutor_nome)} · 🚗 ${esc(x.veiculo_nome)} ${esc(x.veiculo_placa || '')}</small>
       <small>📍 ${esc(x.local_nome)} · ${statusLabel(x.status)}${unidadeTxt}</small>
-      ${plano}
-      ${badgeReposicao}
+      <div class="lesson-badges">${plano}${badgeReposicao}${confirmacao}</div>
     </div>
     ${comAcoes ? `<div class="actions-row lesson-actions">
       ${reposicao}
@@ -506,6 +532,7 @@ function aulaSemanaHtml(a) {
     <small>🚗 ${esc(a.veiculo_nome)}${a.veiculo_placa ? ' · ' + esc(a.veiculo_placa) : ''}</small>
     <small>📍 ${esc(a.local_nome || 'Local não informado')}</small>
     <small>${statusLabel(a.status)}</small>
+    ${confirmacaoHtmlAula(a)}
   </div>`;
 }
 
@@ -872,6 +899,7 @@ function historicoAulaHtml(a) {
     : '';
   const plano = a.plan_id ? `<span class="plan-badge">🔁 Plano ${a.numero_plano || ''}${a.excecao_plano ? ' · alterada' : ''}</span>` : '';
   const arquivada = a.arquivada ? `<span class="history-archived">🗃️ Arquivada</span>` : '';
+  const confirmacao = confirmacaoHtmlAula(a, true);
   return `<div class="history-event ${String(a.status || '').toLowerCase()} ${a.arquivada ? 'archived' : ''}">
     <div class="history-date">
       <b>${esc(fmtData(a.data_aula))}</b>
@@ -884,7 +912,7 @@ function historicoAulaHtml(a) {
       </div>
       <small>👨‍🏫 ${esc(a.instrutor_nome)} · 🚗 ${esc(a.veiculo_nome)} ${esc(a.veiculo_placa || '')}</small>
       <small>📍 ${esc(a.local_nome)}</small>
-      <div class="history-badges">${plano}${origem}${gerou}${arquivada}</div>
+      <div class="history-badges">${plano}${origem}${gerou}${confirmacao}${arquivada}</div>
       ${a.observacoes ? `<div class="history-note">📝 ${esc(a.observacoes).replace(/\n/g, '<br>')}</div>` : ''}
       ${podeEnviarWhatsAppAula(a) ? `<div class="actions-row">${whatsappHtmlAula(a, '📲 Enviar WhatsApp')}</div>` : ''}
     </div>
@@ -1070,6 +1098,8 @@ function novaAula(prefill = null) {
   $('#aDur').value = String(prefill?.duracao || Number(configFuncionamento.duracao_padrao_minutos || 50));
   $('#aUnidades').value = String(prefill?.unidades || 1);
   $('#aStatus').value = 'AGENDADA';
+  $('#aConfirmacao').value = 'AGUARDANDO';
+  atualizarAjudaConfirmacao();
   $('#tituloAula').textContent = prefill?.reposicao ? '↪️ Agendar reposição' : 'Nova aula';
   $('#salvarAula').textContent = prefill?.reposicao ? 'Agendar reposição' : 'Agendar aula';
   $('#reposicaoBox').classList.toggle('hide', !prefill?.reposicao);
@@ -1109,7 +1139,9 @@ async function editarAula(id) {
     $('#aHora').value = hora(a.hora_inicio);
     $('#aDur').value = String(a.duracao_minutos || 50);
     $('#aUnidades').value = String(a.aulas_unidades || 1);
-    $('#aStatus').value = a.status || 'AGENDADA';
+    $('#aStatus').value = String(a.status || 'AGENDADA').toUpperCase() === 'CONFIRMADA' ? 'AGENDADA' : (a.status || 'AGENDADA');
+    $('#aConfirmacao').value = confirmacaoStatusAula(a);
+    atualizarAjudaConfirmacao();
     $('#aObs').value = a.observacoes || '';
     $('#tituloAula').textContent = a.reposicao_de_id ? 'Alterar reposição' : 'Alterar aula';
     $('#salvarAula').textContent = 'Salvar alterações';
@@ -1166,6 +1198,9 @@ $('#whatsappAula').onclick = () => {
   if (id) abrirWhatsAppAula(id);
 };
 
+$('#aStatus').addEventListener('change', atualizarAjudaConfirmacao);
+$('#aConfirmacao').addEventListener('change', atualizarAjudaConfirmacao);
+
 document.addEventListener('click', e => {
   const b = e.target.closest('[data-whatsapp-aula]');
   if (!b) return;
@@ -1189,6 +1224,7 @@ $('#fAula').onsubmit = async e => {
     duracao_minutos: Number($('#aDur').value),
     aulas_unidades: Number($('#aUnidades').value),
     status: $('#aStatus').value,
+    confirmacao_status: $('#aConfirmacao').value,
     observacoes: $('#aObs').value
   };
 

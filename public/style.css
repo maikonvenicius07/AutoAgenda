@@ -257,3 +257,16 @@ html[data-theme="dark"] .toast{background:#090909;color:#fff}
   .theme-toggle{order:3;flex-basis:100%}
 }
 
+
+
+/* ========================= V2.4 — CONFIRMAÇÃO DA AULA ========================= */
+.lesson-badges{display:flex;gap:5px;flex-wrap:wrap;align-items:center}
+.confirmation-badge{display:inline-block;width:max-content;border-radius:999px;padding:4px 8px;font-size:11px;font-weight:800;border:1px solid transparent}
+.confirmation-badge.aguardando{background:#fff4cc;color:#6b5200;border-color:#ead575}
+.confirmation-badge.confirmada{background:#def3e5;color:#145c31;border-color:#a8d7b7}
+.confirmation-badge.pediu_reagendamento{background:#ffe8cf;color:#7c4300;border-color:#efc58e}
+.confirmation-help{background:#f6f6f4;border:1px solid #deded9;border-left:4px solid var(--yellow);border-radius:9px;padding:9px 11px;color:#666;font-size:12px;line-height:1.35}
+html[data-theme="dark"] .confirmation-badge.aguardando{background:#4a3d12;color:#ffe68b;border-color:#74631f}
+html[data-theme="dark"] .confirmation-badge.confirmada{background:#173222;color:#8fe0aa;border-color:#315c40}
+html[data-theme="dark"] .confirmation-badge.pediu_reagendamento{background:#4b2e14;color:#ffc989;border-color:#76502a}
+html[data-theme="dark"] .confirmation-help{background:#252525;color:#c8c8c8;border-color:#414141;border-left-color:var(--yellow)}

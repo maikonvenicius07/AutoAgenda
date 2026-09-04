@@ -1,4 +1,4 @@
-# AutoAgenda V2.3.1
+# AutoAgenda V2.4.0
 
 Sistema de organização de aulas práticas para autoescola, com backend Node/Express, PostgreSQL e deploy no Render.
 
@@ -38,3 +38,12 @@ O servidor cria e migra automaticamente o schema `autoagenda`. A V2.3.1 inclui a
 ## Próxima etapa
 
 ETAPA 10 — Confirmação da aula: aguardando confirmação, confirmada e pediu reagendamento.
+
+
+## V2.4.0 — Confirmação da aula
+- Confirmação separada da situação operacional da aula.
+- Estados: Aguardando confirmação, Confirmada e Pediu reagendamento.
+- Badge de confirmação na Agenda e no Histórico.
+- Alteração manual pelo formulário da aula.
+- Banco preparado com origem e data/hora da confirmação para futura automação via WhatsApp.
+- Compatibilidade com registros antigos em que `status = CONFIRMADA`.
