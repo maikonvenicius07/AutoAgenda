@@ -102,25 +102,37 @@ function mensagemWhatsAppAula(aula, aluno) {
 Até lá!`;
 }
 
-function abrirWhatsAppAula(id) {
-  const aula = localizarAulaParaWhatsApp(id);
-  if (!aula) return toast('Não foi possível localizar esta aula para enviar o WhatsApp.');
-  if (!podeEnviarWhatsAppAula(aula)) return toast('O WhatsApp de lembrete só está disponível para aulas agendadas ou confirmadas.');
-
+function linkWhatsAppAula(aula) {
+  if (!aula || !podeEnviarWhatsAppAula(aula)) return '';
   const aluno = localizarAlunoDaAula(aula);
   const telefone = numeroWhatsApp(aula.aluno_whatsapp || aluno?.whatsapp || '');
-  if (!telefone) {
-    return toast('WhatsApp inválido. Cadastre o número do aluno com DDD, por exemplo: (69) 99999-9999.');
+  if (!telefone) return '';
+  const texto = mensagemWhatsAppAula(aula, aluno);
+  return `https://wa.me/${telefone}?text=${encodeURIComponent(texto)}`;
+}
+
+function whatsappHtmlAula(aula, textoBotao = '📲 WhatsApp') {
+  if (!podeEnviarWhatsAppAula(aula)) return '';
+  const url = linkWhatsAppAula(aula);
+  if (!url) {
+    return `<button type="button" class="mini secondary" data-whatsapp-aula="${aula.id}" title="Cadastre o WhatsApp do aluno">📵 Sem WhatsApp</button>`;
+  }
+  // Link nativo: evita bloqueio de popup e funciona sem depender de window.open().
+  return `<a class="mini secondary" href="${esc(url)}" target="_blank" rel="noopener noreferrer" style="text-decoration:none;display:inline-flex;align-items:center;justify-content:center;font-weight:800">${textoBotao}</a>`;
+}
+
+function abrirWhatsAppAula(id) {
+  const aula = localizarAulaParaWhatsApp(id);
+  if (!aula) return alert('Não foi possível localizar esta aula para enviar o WhatsApp.');
+  if (!podeEnviarWhatsAppAula(aula)) return alert('O WhatsApp de lembrete só está disponível para aulas agendadas ou confirmadas.');
+
+  const url = linkWhatsAppAula(aula);
+  if (!url) {
+    return alert('Este aluno não possui um WhatsApp válido cadastrado. Edite o aluno e informe o número com DDD, por exemplo: (69) 99999-9999.');
   }
 
-  const texto = mensagemWhatsAppAula(aula, aluno);
-  const url = `https://wa.me/${telefone}?text=${encodeURIComponent(texto)}`;
-
-  // Sem parâmetros de popup: abre como aba normal na maioria dos navegadores.
-  // Se o navegador bloquear a nova aba, usa a própria aba como fallback.
-  toast('📲 Abrindo WhatsApp...');
-  const novaAba = window.open(url, '_blank');
-  if (!novaAba) window.location.assign(url);
+  // No botão do modal usamos navegação direta. Nos cartões da agenda usamos <a href> nativo.
+  window.location.href = url;
 }
 const minHora = h => {
   const [hh, mm] = hora(h).split(':').map(Number);
@@ -279,9 +291,7 @@ function aulaHtml(x, comAcoes = false) {
     ? `<span class="plan-badge replacement-badge">↪️ Reposição${x.reposicao_data_original ? ` da aula de ${fmtData(x.reposicao_data_original)}` : ''}</span>`
     : '';
   const podeArquivar = comAcoes && !['REALIZADA','FALTOU'].includes(x.status);
-  const whatsapp = podeEnviarWhatsAppAula(x)
-    ? `<button type="button" class="mini secondary" data-whatsapp-aula="${x.id}">📲 WhatsApp</button>`
-    : '';
+  const whatsapp = whatsappHtmlAula(x);
 
   return `<div class="lesson ${String(x.status || '').toLowerCase()}">
     <div class="lesson-time">${hora(x.hora_inicio)}</div>
@@ -846,7 +856,7 @@ function historicoAulaHtml(a) {
       <small>📍 ${esc(a.local_nome)}</small>
       <div class="history-badges">${plano}${origem}${gerou}${arquivada}</div>
       ${a.observacoes ? `<div class="history-note">📝 ${esc(a.observacoes).replace(/\n/g, '<br>')}</div>` : ''}
-      ${podeEnviarWhatsAppAula(a) ? `<div class="actions-row"><button type="button" class="mini secondary" data-whatsapp-aula="${a.id}">📲 Enviar WhatsApp</button></div>` : ''}
+      ${podeEnviarWhatsAppAula(a) ? `<div class="actions-row">${whatsappHtmlAula(a, '📲 Enviar WhatsApp')}</div>` : ''}
     </div>
   </div>`;
 }
