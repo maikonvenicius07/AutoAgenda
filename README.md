@@ -1,4 +1,4 @@
-# AutoAgenda V2.6.0
+# AutoAgenda V2.7.0
 
 Sistema de organização de aulas práticas para autoescola, com backend Node/Express, PostgreSQL e deploy no Render.
 
@@ -16,43 +16,42 @@ Sistema de organização de aulas práticas para autoescola, com backend Node/Ex
 - WhatsApp da aula e envio do plano completo;
 - confirmação da aula: aguardando, confirmada ou pediu reagendamento;
 - lembretes no dia anterior e algumas horas antes;
-- controle manual de lembrete enviado, preparado para futura automação;
 - Dashboard com indicadores e gráficos simples;
+- relatórios por período;
 - modo claro/escuro;
 - controle de saldo e preservação do histórico.
 
-## V2.6.0 — Dashboard
+## V2.7.0 — Relatórios
 
-A ETAPA 12 amplia o **🏠 Painel** para funcionar como um Dashboard leve do AutoAgenda.
+A ETAPA 13 adiciona a aba **📑 Relatórios** com seleção de data inicial e final.
 
-Indicadores exibidos:
+O relatório apresenta:
+- aulas realizadas;
+- faltas;
+- cancelamentos;
+- reposições;
 - alunos ativos;
-- aulas de hoje;
-- aulas da semana;
-- aulas realizadas no mês;
-- faltas no mês;
-- cancelamentos no mês;
-- reposições no mês;
-- taxa estimada de ocupação da semana;
-- horários livres estimados para o restante da semana;
-- aulas futuras agendadas;
-- planos ativos;
-- alunos com até 5 aulas restantes para concluir o pacote.
+- alunos com movimentação no período;
+- aulas por instrutor;
+- aulas por veículo;
+- horários mais utilizados;
+- taxa estimada de ocupação;
+- capacidade estimada do período.
 
-Também foram adicionados dois gráficos simples em CSS/HTML, sem bibliotecas externas:
-- movimento da semana por dia;
-- resultado do mês por situação.
+Os dados são calculados no PostgreSQL e enviados ao navegador já agregados, evitando carregar todo o histórico de aulas.
 
 ### Taxa de ocupação
 
-A taxa de ocupação é uma **estimativa operacional** calculada a partir do horário de funcionamento, duração padrão, intervalo e quantidade global de instrutores ativos e veículos disponíveis. Ela não substitui a validação individual de disponibilidade do instrutor, veículo, folgas ou manutenções, que continua sendo feita no momento do agendamento.
+A taxa de ocupação é uma **estimativa operacional**. Considera o horário de funcionamento, duração padrão, intervalo e a quantidade global de instrutores ativos e veículos disponíveis durante o cálculo. Folgas, indisponibilidades específicas e manutenções continuam sendo validadas normalmente no agendamento.
 
-A implementação foi mantida leve: o navegador recebe apenas dados agregados do PostgreSQL; não é necessário carregar todo o histórico de aulas para montar o Dashboard.
+### Preparação para Excel
+
+A resposta do backend já é organizada em blocos de resumo, instrutores, veículos e horários. Isso facilita adicionar exportação em Excel futuramente, sem misturar a ETAPA 13 com a ETAPA 15 — Backup/Exportação.
 
 ## Banco
 
-A V2.6.0 não cria novas tabelas ou colunas. Nenhuma migração manual é necessária.
+A V2.7.0 não cria novas tabelas ou colunas. Nenhuma migração manual é necessária.
 
 ## Próxima etapa
 
-**ETAPA 13 — Relatórios**: permitir selecionar período e visualizar aulas realizadas, cancelamentos, faltas, reposições, aulas por instrutor, aulas por veículo, alunos ativos, horários mais utilizados e taxa de ocupação, preparando futura exportação para Excel.
+**ETAPA 14 — Financeiro simples**: registrar pacote, valor do pacote, quantidade de aulas, valor pago, saldo financeiro, data do pagamento, vencimento, forma de pagamento e observações, mantendo o financeiro separado da lógica principal da agenda.

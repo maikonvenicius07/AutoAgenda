@@ -14,7 +14,7 @@
       document.documentElement.dataset.theme = 'light';
     }
   </script>
-  <link rel="stylesheet" href="style.css?v=2.6.0">
+  <link rel="stylesheet" href="style.css?v=2.7.0">
 </head>
 <body>
 <header>
@@ -38,6 +38,7 @@
     <button class="tab" data-tab="semana">🗓️ Agenda semanal</button>
     <button class="tab" data-tab="planos">🔁 Planos</button>
     <button class="tab" data-tab="lembretes">🔔 Lembretes</button>
+    <button class="tab" data-tab="relatorios">📑 Relatórios</button>
     <button class="tab" data-tab="configuracoes">⚙️ Configurações</button>
   </nav>
 
@@ -207,6 +208,68 @@
     </div>
     <div class="reminder-note">📲 Ao enviar pelo WhatsApp, volte ao AutoAgenda e clique em <b>Marcar como enviado</b>. A automação de envio ficará para uma etapa futura.</div>
     <div id="listaLembretes" class="reminder-list"></div>
+  </section>
+
+  <section id="relatorios" class="panel">
+    <div class="head reports-head">
+      <div>
+        <h2>📑 Relatórios</h2>
+        <p>Selecione um período para analisar aulas, instrutores, veículos e horários mais utilizados.</p>
+      </div>
+      <span id="relPeriodoResumo" class="reports-period-badge">Aguardando consulta</span>
+    </div>
+
+    <div class="card reports-filter-card">
+      <div class="reports-filters">
+        <label>Data inicial<input id="relDataInicio" type="date"></label>
+        <label>Data final<input id="relDataFim" type="date"></label>
+        <button type="button" class="secondary" id="relMesAtual">Mês atual</button>
+        <button type="button" id="gerarRelatorio">📊 Gerar relatório</button>
+      </div>
+      <div class="reports-note">📥 A estrutura desta tela já separa os dados por período, instrutor, veículo e horário para facilitar a futura exportação em Excel, prevista para uma etapa posterior.</div>
+    </div>
+
+    <div class="stats stats4 reports-kpis">
+      <div><span>Realizadas</span><strong id="relRealizadas">0</strong><small>aulas concluídas</small></div>
+      <div><span>Faltas</span><strong id="relFaltas">0</strong><small>aulas perdidas</small></div>
+      <div><span>Cancelamentos</span><strong id="relCancelamentos">0</strong><small>aulas canceladas</small></div>
+      <div><span>Reposições</span><strong id="relReposicoes">0</strong><small>aulas vinculadas a reposição</small></div>
+    </div>
+
+    <div class="stats stats4 reports-kpis reports-kpis-secondary">
+      <div><span>Alunos ativos</span><strong id="relAlunosAtivos">0</strong><small>cadastros ativos</small></div>
+      <div><span>Alunos no período</span><strong id="relAlunosMovimentados">0</strong><small>com aula registrada</small></div>
+      <div><span>Taxa de ocupação</span><strong id="relOcupacao">0%</strong><small>estimativa do período</small></div>
+      <div><span>Capacidade estimada</span><strong id="relCapacidade">0</strong><small>aulas no período</small></div>
+    </div>
+
+    <div class="reports-grid">
+      <article class="card report-card">
+        <div class="head compact"><div><h3>👨‍🏫 Aulas por instrutor</h3><p>Volume de aulas no período selecionado.</p></div></div>
+        <div id="relPorInstrutor" class="report-ranking"></div>
+      </article>
+
+      <article class="card report-card">
+        <div class="head compact"><div><h3>🚗 Aulas por veículo</h3><p>Utilização dos veículos no período.</p></div></div>
+        <div id="relPorVeiculo" class="report-ranking"></div>
+      </article>
+
+      <article class="card report-card">
+        <div class="head compact"><div><h3>🕐 Horários mais utilizados</h3><p>Horários com maior concentração de aulas.</p></div></div>
+        <div id="relHorarios" class="report-ranking"></div>
+      </article>
+
+      <article class="card report-card">
+        <div class="head compact"><div><h3>📊 Ocupação estimada</h3><p>Comparação entre aulas ocupadas e capacidade teórica do período.</p></div></div>
+        <div class="report-occupancy">
+          <div class="report-occupancy-line"><span>Aulas que ocuparam horário</span><b id="relOcupadas">0</b></div>
+          <div class="report-occupancy-line"><span>Dias de funcionamento</span><b id="relDiasAbertos">0</b></div>
+          <div class="report-occupancy-line"><span>Atendimentos simultâneos</span><b id="relRecursos">0</b></div>
+          <div class="dashboard-progress report-progress"><div id="relOcupacaoBar"></div></div>
+          <small id="relOcupacaoNota" class="dashboard-note">A taxa é uma estimativa operacional e não substitui as validações individuais de disponibilidade.</small>
+        </div>
+      </article>
+    </div>
   </section>
 
   <section id="configuracoes" class="panel">
@@ -633,6 +696,6 @@
 </div>
 
 <div id="toast" class="toast hide"></div>
-<script src="app.js?v=2.6.0"></script>
+<script src="app.js?v=2.7.0"></script>
 </body>
 </html>

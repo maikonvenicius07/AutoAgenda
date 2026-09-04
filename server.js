@@ -7,7 +7,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '2.6.0';
+const APP_VERSION = '2.7.0';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -3156,6 +3156,164 @@ app.get('/api/dashboard/resumo', async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao carregar dashboard.' });
+  } finally {
+    client.release();
+  }
+});
+
+
+// ========================= V2.7 — RELATÓRIOS =========================
+// Relatórios sob demanda: o navegador informa o período e recebe apenas dados agregados.
+// A estrutura já separa resumo, instrutores, veículos e horários para facilitar futura exportação.
+app.get('/api/relatorios/resumo', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const hoje = hojeApp();
+    const inicioMesAtual = `${hoje.slice(0, 7)}-01`;
+    const dataInicio = String(req.query.data_inicio || inicioMesAtual).slice(0, 10);
+    const dataFim = String(req.query.data_fim || hoje).slice(0, 10);
+    const reData = /^\d{4}-\d{2}-\d{2}$/;
+
+    if (!reData.test(dataInicio) || !reData.test(dataFim)) {
+      return res.status(400).json({ error: 'Informe um período válido para o relatório.' });
+    }
+
+    let inicio;
+    let fim;
+    try {
+      inicio = dateOnlyUTC(dataInicio);
+      fim = dateOnlyUTC(dataFim);
+      if (isoDateUTC(inicio) !== dataInicio || isoDateUTC(fim) !== dataFim) {
+        return res.status(400).json({ error: 'Informe um período válido para o relatório.' });
+      }
+    } catch (_) {
+      return res.status(400).json({ error: 'Informe um período válido para o relatório.' });
+    }
+
+    if (fim < inicio) {
+      return res.status(400).json({ error: 'A data final não pode ser anterior à data inicial.' });
+    }
+
+    const diasPeriodo = Math.round((fim.getTime() - inicio.getTime()) / 86400000) + 1;
+    if (diasPeriodo > 366) {
+      return res.status(400).json({ error: 'Selecione um período de até 366 dias por relatório.' });
+    }
+
+    const config = await obterConfigFuncionamento(client);
+
+    const [resumoQ, instrutoresQ, veiculosQ, horariosQ, recursosQ] = await Promise.all([
+      client.query(`
+        SELECT
+          COALESCE(SUM(a.aulas_unidades),0)::int AS total_unidades,
+          COUNT(a.id)::int AS total_registros,
+          COALESCE(SUM(CASE WHEN a.status='REALIZADA' THEN a.aulas_unidades ELSE 0 END),0)::int AS realizadas,
+          COALESCE(SUM(CASE WHEN a.status='CANCELADA' THEN a.aulas_unidades ELSE 0 END),0)::int AS cancelamentos,
+          COALESCE(SUM(CASE WHEN a.status='FALTOU' THEN a.aulas_unidades ELSE 0 END),0)::int AS faltas,
+          COALESCE(SUM(CASE WHEN a.reposicao_de_id IS NOT NULL THEN a.aulas_unidades ELSE 0 END),0)::int AS reposicoes,
+          COALESCE(SUM(CASE WHEN a.status IN ('AGENDADA','CONFIRMADA','REALIZADA','FALTOU') THEN a.aulas_unidades ELSE 0 END),0)::int AS ocupadas,
+          COUNT(DISTINCT a.aluno_id)::int AS alunos_movimentados,
+          (SELECT COUNT(*)::int FROM autoagenda.alunos WHERE ativo=TRUE) AS alunos_ativos
+        FROM autoagenda.aulas a
+        WHERE a.data_aula BETWEEN $1::date AND $2::date
+          AND a.arquivada=FALSE
+      `, [dataInicio, dataFim]),
+
+      client.query(`
+        SELECT i.id, i.nome,
+          COALESCE(SUM(a.aulas_unidades),0)::int AS total_unidades,
+          COALESCE(SUM(CASE WHEN a.status='REALIZADA' THEN a.aulas_unidades ELSE 0 END),0)::int AS realizadas,
+          COALESCE(SUM(CASE WHEN a.status='FALTOU' THEN a.aulas_unidades ELSE 0 END),0)::int AS faltas,
+          COALESCE(SUM(CASE WHEN a.status='CANCELADA' THEN a.aulas_unidades ELSE 0 END),0)::int AS cancelamentos,
+          COALESCE(SUM(CASE WHEN a.reposicao_de_id IS NOT NULL THEN a.aulas_unidades ELSE 0 END),0)::int AS reposicoes
+        FROM autoagenda.aulas a
+        JOIN autoagenda.instrutores i ON i.id=a.instrutor_id
+        WHERE a.data_aula BETWEEN $1::date AND $2::date
+          AND a.arquivada=FALSE
+        GROUP BY i.id, i.nome
+        ORDER BY total_unidades DESC, i.nome ASC
+      `, [dataInicio, dataFim]),
+
+      client.query(`
+        SELECT v.id, v.nome, v.placa,
+          COALESCE(SUM(a.aulas_unidades),0)::int AS total_unidades,
+          COALESCE(SUM(CASE WHEN a.status='REALIZADA' THEN a.aulas_unidades ELSE 0 END),0)::int AS realizadas,
+          COALESCE(SUM(CASE WHEN a.status='FALTOU' THEN a.aulas_unidades ELSE 0 END),0)::int AS faltas,
+          COALESCE(SUM(CASE WHEN a.status='CANCELADA' THEN a.aulas_unidades ELSE 0 END),0)::int AS cancelamentos,
+          COALESCE(SUM(CASE WHEN a.reposicao_de_id IS NOT NULL THEN a.aulas_unidades ELSE 0 END),0)::int AS reposicoes
+        FROM autoagenda.aulas a
+        JOIN autoagenda.veiculos v ON v.id=a.veiculo_id
+        WHERE a.data_aula BETWEEN $1::date AND $2::date
+          AND a.arquivada=FALSE
+        GROUP BY v.id, v.nome, v.placa
+        ORDER BY total_unidades DESC, v.nome ASC
+      `, [dataInicio, dataFim]),
+
+      client.query(`
+        SELECT TO_CHAR(a.hora_inicio, 'HH24:MI') AS horario,
+          COALESCE(SUM(a.aulas_unidades),0)::int AS total_unidades,
+          COUNT(a.id)::int AS encontros
+        FROM autoagenda.aulas a
+        WHERE a.data_aula BETWEEN $1::date AND $2::date
+          AND a.arquivada=FALSE
+          AND a.status IN ('AGENDADA','CONFIRMADA','REALIZADA','FALTOU')
+        GROUP BY TO_CHAR(a.hora_inicio, 'HH24:MI')
+        ORDER BY total_unidades DESC, horario ASC
+        LIMIT 12
+      `, [dataInicio, dataFim]),
+
+      client.query(`
+        SELECT
+          (SELECT COUNT(*)::int FROM autoagenda.instrutores WHERE ativo=TRUE) AS instrutores_ativos,
+          (SELECT COUNT(*)::int FROM autoagenda.veiculos
+             WHERE ativo=TRUE AND COALESCE(situacao,'DISPONIVEL')='DISPONIVEL') AS veiculos_disponiveis
+      `)
+    ]);
+
+    const resumo = resumoQ.rows[0] || {};
+    const recursos = recursosQ.rows[0] || {};
+    const instrutoresAtivos = Number(recursos.instrutores_ativos || 0);
+    const veiculosDisponiveis = Number(recursos.veiculos_disponiveis || 0);
+    const recursosSimultaneos = Math.min(instrutoresAtivos, veiculosDisponiveis);
+
+    const abertura = minutosDoHorario(config.hora_abertura);
+    const encerramento = minutosDoHorario(config.hora_encerramento);
+    const duracao = Math.max(1, Number(config.duracao_padrao_minutos || 50));
+    const intervalo = Math.max(0, Number(config.intervalo_minutos || 0));
+    const passo = duracao + intervalo;
+    const janela = Math.max(0, encerramento - abertura);
+    const slotsDiaPorRecurso = passo > 0 ? Math.max(0, Math.floor((janela + intervalo) / passo)) : 0;
+    const diasFuncionamento = new Set((config.dias_funcionamento || []).map(Number));
+
+    let diasAbertos = 0;
+    for (let cursor = new Date(inicio.getTime()); cursor <= fim; cursor.setUTCDate(cursor.getUTCDate() + 1)) {
+      if (diasFuncionamento.has(cursor.getUTCDay())) diasAbertos += 1;
+    }
+
+    const capacidadePeriodo = slotsDiaPorRecurso * diasAbertos * recursosSimultaneos;
+    const ocupadas = Number(resumo.ocupadas || 0);
+    const taxaOcupacao = capacidadePeriodo > 0
+      ? Math.max(0, Math.min(100, Math.round((ocupadas / capacidadePeriodo) * 100)))
+      : 0;
+
+    res.json({
+      periodo: { data_inicio: dataInicio, data_fim: dataFim, dias: diasPeriodo },
+      resumo: {
+        ...resumo,
+        taxa_ocupacao: taxaOcupacao,
+        capacidade_estimada: capacidadePeriodo,
+        dias_funcionamento_periodo: diasAbertos,
+        recursos_simultaneos: recursosSimultaneos,
+        instrutores_ativos: instrutoresAtivos,
+        veiculos_disponiveis: veiculosDisponiveis,
+        estimativa_ocupacao: true
+      },
+      aulas_por_instrutor: instrutoresQ.rows,
+      aulas_por_veiculo: veiculosQ.rows,
+      horarios_mais_utilizados: horariosQ.rows
+    });
+  } catch (error) {
+    console.error('Erro ao gerar relatório:', error);
+    res.status(500).json({ error: 'Erro ao gerar relatório.' });
   } finally {
     client.release();
   }

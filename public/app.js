@@ -32,6 +32,8 @@ function alternarTema() {
 
 let alunos = [], alunosTodos = [], instrutores = [], veiculos = [], locais = [], aulas = [], aulasHoje = [], aulasSemana = [], planos = [];
 let resumoDashboard = {};
+let relatorioData = {};
+let relatorioCarregado = false;
 let configInstrutores = [], configVeiculos = [], configLocais = [];
 let configFuncionamento = {
   dias_funcionamento: [0,1,2,3,4,5,6],
@@ -241,6 +243,7 @@ function abrirTab(id) {
   $$('.panel').forEach(p => p.classList.toggle('active', p.id === id));
   if (id === 'semana') carregarAulasSemana();
   if (id === 'lembretes') carregarLembretes();
+  if (id === 'relatorios') carregarRelatorios();
 }
 $$('.tab').forEach(b => b.onclick = () => abrirTab(b.dataset.tab));
 $$('[data-close]').forEach(b => b.onclick = () => close(b.dataset.close));
@@ -808,6 +811,101 @@ function renderDashboard() {
   }
 }
 
+
+// ========================= V2.7 — RELATÓRIOS =========================
+function inicioMesISO(data = iso()) {
+  const d = dataISO(data);
+  return /^\d{4}-\d{2}-\d{2}$/.test(d) ? `${d.slice(0,7)}-01` : `${iso().slice(0,7)}-01`;
+}
+
+function relatorioRankingHtml(linhas, tipo) {
+  if (!Array.isArray(linhas) || !linhas.length) return '<div class="empty small-empty">Sem dados no período selecionado.</div>';
+  const max = Math.max(1, ...linhas.map(x => Number(x.total_unidades || 0)));
+  return linhas.map((x, i) => {
+    const total = Number(x.total_unidades || 0);
+    const pct = Math.round((total / max) * 100);
+    let titulo = x.nome || x.horario || '—';
+    let detalhe = '';
+    if (tipo === 'instrutor') {
+      detalhe = `🏁 ${Number(x.realizadas || 0)} realizadas · 🚫 ${Number(x.faltas || 0)} faltas · ❌ ${Number(x.cancelamentos || 0)} canceladas`;
+    } else if (tipo === 'veiculo') {
+      titulo = `${x.nome || 'Veículo'}${x.placa ? ` · ${x.placa}` : ''}`;
+      detalhe = `🏁 ${Number(x.realizadas || 0)} realizadas · 🚫 ${Number(x.faltas || 0)} faltas · 🔄 ${Number(x.reposicoes || 0)} reposições`;
+    } else {
+      detalhe = `${Number(x.encontros || 0)} encontro(s)`;
+    }
+    return `<div class="report-rank-row">
+      <div class="report-rank-order">${i + 1}</div>
+      <div class="report-rank-main">
+        <div class="report-rank-title"><b>${esc(titulo)}</b><strong>${total}</strong></div>
+        <div class="report-rank-track"><i style="width:${pct}%"></i></div>
+        <small>${esc(detalhe)}</small>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderRelatorios() {
+  const d = relatorioData || {};
+  const r = d.resumo || {};
+  const periodo = d.periodo || {};
+  const setText = (id, valor) => { const el = $(id); if (el) el.textContent = String(valor ?? 0); };
+
+  setText('#relRealizadas', Number(r.realizadas || 0));
+  setText('#relFaltas', Number(r.faltas || 0));
+  setText('#relCancelamentos', Number(r.cancelamentos || 0));
+  setText('#relReposicoes', Number(r.reposicoes || 0));
+  setText('#relAlunosAtivos', Number(r.alunos_ativos || 0));
+  setText('#relAlunosMovimentados', Number(r.alunos_movimentados || 0));
+  setText('#relOcupacao', `${Number(r.taxa_ocupacao || 0)}%`);
+  setText('#relCapacidade', Number(r.capacidade_estimada || 0));
+  setText('#relOcupadas', Number(r.ocupadas || 0));
+  setText('#relDiasAbertos', Number(r.dias_funcionamento_periodo || 0));
+  setText('#relRecursos', Number(r.recursos_simultaneos || 0));
+
+  const badge = $('#relPeriodoResumo');
+  if (badge) {
+    const de = dataISO(periodo.data_inicio);
+    const ate = dataISO(periodo.data_fim);
+    badge.textContent = de && ate ? `${fmtData(de)} a ${fmtData(ate)} · ${Number(periodo.dias || 0)} dia(s)` : 'Aguardando consulta';
+  }
+
+  const inst = $('#relPorInstrutor');
+  if (inst) inst.innerHTML = relatorioRankingHtml(d.aulas_por_instrutor, 'instrutor');
+  const vei = $('#relPorVeiculo');
+  if (vei) vei.innerHTML = relatorioRankingHtml(d.aulas_por_veiculo, 'veiculo');
+  const hor = $('#relHorarios');
+  if (hor) hor.innerHTML = relatorioRankingHtml(d.horarios_mais_utilizados, 'horario');
+
+  const taxa = Math.max(0, Math.min(100, Number(r.taxa_ocupacao || 0)));
+  const bar = $('#relOcupacaoBar');
+  if (bar) bar.style.width = `${taxa}%`;
+  const nota = $('#relOcupacaoNota');
+  if (nota) {
+    nota.textContent = `Estimativa baseada no horário de funcionamento, duração padrão, intervalo e ${Number(r.recursos_simultaneos || 0)} atendimento(s) simultâneo(s). Folgas e indisponibilidades específicas continuam sendo validadas na agenda.`;
+  }
+}
+
+async function carregarRelatorios(forcar = false) {
+  if (relatorioCarregado && !forcar) return renderRelatorios();
+  const dataInicio = $('#relDataInicio')?.value || inicioMesISO();
+  const dataFim = $('#relDataFim')?.value || iso();
+  if (!dataInicio || !dataFim) return toast('Informe a data inicial e final do relatório.');
+  if (dataFim < dataInicio) return toast('A data final não pode ser anterior à data inicial.');
+
+  const botao = $('#gerarRelatorio');
+  try {
+    if (botao) { botao.disabled = true; botao.textContent = 'Gerando...'; }
+    relatorioData = await api(`/api/relatorios/resumo?data_inicio=${encodeURIComponent(dataInicio)}&data_fim=${encodeURIComponent(dataFim)}`);
+    relatorioCarregado = true;
+    renderRelatorios();
+  } catch (e) {
+    toast(e.message || 'Erro ao gerar relatório.');
+  } finally {
+    if (botao) { botao.disabled = false; botao.textContent = '📊 Gerar relatório'; }
+  }
+}
+
 function render() {
   renderDashboard();
 
@@ -923,7 +1021,7 @@ async function health() {
   try {
     const h = await api('/api/health');
     const seguranca = h.security_ready ? ' · 🔒 acesso protegido' : ' · ⛔ proteção precisa ser configurada';
-    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '2.6.0'}${seguranca}.`;
+    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '2.7.0'}${seguranca}.`;
     $('#db').className = h.security_ready ? 'db ok' : 'db fail';
   } catch {
     $('#db').textContent = '🔴 Banco não conectado. Verifique DATABASE_URL no Render.';
@@ -2086,6 +2184,17 @@ function pedirEncerrarPlano(id, cancelarFuturas = false) {
 }
 
 // ========================= NAVEGAÇÃO / INICIALIZAÇÃO =========================
+$('#relDataInicio').value = inicioMesISO();
+$('#relDataFim').value = iso();
+$('#gerarRelatorio').onclick = () => carregarRelatorios(true);
+$('#relMesAtual').onclick = () => {
+  $('#relDataInicio').value = inicioMesISO();
+  $('#relDataFim').value = iso();
+  carregarRelatorios(true);
+};
+$('#relDataInicio').onchange = () => { relatorioCarregado = false; };
+$('#relDataFim').onchange = () => { relatorioCarregado = false; };
+
 $('#filtroData').value = iso();
 $('#filtroData').onchange = async () => {
   try {
