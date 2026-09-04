@@ -7,7 +7,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '2.3.3';
+const APP_VERSION = '2.3.4';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -518,7 +518,10 @@ function normalizarDias(dias, dataInicio) {
 
 function statusContaSaldo(status, dataAula) {
   const st = String(status || '').toUpperCase();
-  if (st === 'REALIZADA') return true;
+  // REALIZADA e FALTOU consomem o saldo do pacote.
+  // FALTOU representa falta sem justificativa: permanece registrada como falta no histórico,
+  // mas para o saldo equivale a uma aula consumida.
+  if (['REALIZADA','FALTOU'].includes(st)) return true;
   if (['AGENDADA','CONFIRMADA'].includes(st)) return String(dataAula || '').slice(0,10) >= hojeApp();
   return false;
 }
@@ -533,7 +536,7 @@ async function saldoAluno(client, alunoId, excluirAulaIds = []) {
                SELECT SUM(au.aulas_unidades)
                FROM autoagenda.aulas au
                WHERE au.aluno_id = a.id
-                 AND au.status = 'REALIZADA'
+                 AND au.status IN ('REALIZADA','FALTOU')
                  AND au.arquivada = FALSE
                  AND (cardinality($3::int[]) = 0 OR NOT (au.id = ANY($3::int[])))
              ), 0)
@@ -1233,6 +1236,11 @@ app.get('/api/alunos', async (req, res) => {
              COALESCE((
                SELECT SUM(au.aulas_unidades)
                FROM autoagenda.aulas au
+               WHERE au.aluno_id = a.id AND au.status = 'FALTOU' AND au.arquivada = FALSE
+             ), 0)::int AS faltas_unidades,
+             COALESCE((
+               SELECT SUM(au.aulas_unidades)
+               FROM autoagenda.aulas au
                WHERE au.aluno_id = a.id
                  AND au.data_aula >= $1::date
                  AND au.status IN ('AGENDADA','CONFIRMADA')
@@ -1299,6 +1307,7 @@ app.get('/api/alunos/:id/historico', async (req, res) => {
              AND status IN ('AGENDADA','CONFIRMADA')
              AND arquivada=FALSE THEN aulas_unidades ELSE 0 END),0)::int AS futuras_unidades,
           COUNT(*) FILTER (WHERE status='FALTOU')::int AS faltas,
+          COALESCE(SUM(CASE WHEN status='FALTOU' AND arquivada=FALSE THEN aulas_unidades ELSE 0 END),0)::int AS faltas_unidades,
           COUNT(*) FILTER (WHERE status='CANCELADA')::int AS cancelamentos,
           COUNT(*) FILTER (WHERE reposicao_de_id IS NOT NULL)::int AS reposicoes,
           COUNT(*)::int AS total_registros,
@@ -1354,18 +1363,22 @@ app.get('/api/alunos/:id/historico', async (req, res) => {
     const anteriores = Number(aluno.aulas_realizadas_anteriores ?? aluno.aulas_realizadas ?? 0);
     const realizadasSistema = Number(m.realizadas_sistema || 0);
     const realizadas = Math.max(0, anteriores) + Math.max(0, realizadasSistema);
+    const faltasUnidades = Math.max(0, Number(m.faltas_unidades || 0));
+    const consumidas = realizadas + faltasUnidades;
     const futuras = Math.max(0, Number(m.futuras_unidades || 0));
 
-    // Mesma lógica já adotada nos cartões e na validação do saldo:
-    // "restantes" = contratado - realizado; "a_programar" desconta também as aulas futuras.
+    // FALTOU = falta sem justificativa: a aula continua aparecendo como falta no histórico,
+    // mas é descontada do pacote como aula consumida.
     const resumo = {
       contratadas,
       realizadas_anteriores: anteriores,
       realizadas_sistema: realizadasSistema,
       realizadas,
+      faltas_unidades: faltasUnidades,
+      consumidas,
       futuras,
-      restantes: Math.max(0, contratadas - realizadas),
-      a_programar: Math.max(0, contratadas - realizadas - futuras),
+      restantes: Math.max(0, contratadas - consumidas),
+      a_programar: Math.max(0, contratadas - consumidas - futuras),
       faltas: Number(m.faltas || 0),
       cancelamentos: Number(m.cancelamentos || 0),
       reposicoes: Number(m.reposicoes || 0),
@@ -1453,12 +1466,12 @@ app.put('/api/alunos/:id', async (req, res) => {
     const anterioresFinal = validarInteiroNaoNegativo(aulas_realizadas_anteriores, 0, 500);
     const consumoQ = await query(`
       SELECT
-        COALESCE(SUM(CASE WHEN status='REALIZADA' AND arquivada=FALSE THEN aulas_unidades ELSE 0 END),0)::int AS realizadas_sistema,
+        COALESCE(SUM(CASE WHEN status IN ('REALIZADA','FALTOU') AND arquivada=FALSE THEN aulas_unidades ELSE 0 END),0)::int AS aulas_consumidas_sistema,
         COALESCE(SUM(CASE WHEN data_aula >= $2::date AND status IN ('AGENDADA','CONFIRMADA') AND arquivada=FALSE THEN aulas_unidades ELSE 0 END),0)::int AS agendadas
       FROM autoagenda.aulas
       WHERE aluno_id=$1
     `, [id, hojeApp()]);
-    const comprometidas = anterioresFinal + Number(consumoQ.rows[0]?.realizadas_sistema || 0) + Number(consumoQ.rows[0]?.agendadas || 0);
+    const comprometidas = anterioresFinal + Number(consumoQ.rows[0]?.aulas_consumidas_sistema || 0) + Number(consumoQ.rows[0]?.agendadas || 0);
     if (contratadasFinal < comprometidas) {
       return res.status(409).json({ error: `O aluno já possui ${comprometidas} aula(s) realizadas/agendadas. O total contratado não pode ser reduzido para ${contratadasFinal}.` });
     }
@@ -2718,10 +2731,10 @@ app.get('/api/dashboard/resumo', async (req, res) => {
   }
 });
 
-// ========================= V2.3.2 — WHATSAPP POR REDIRECIONAMENTO NO SERVIDOR =========================
-// O clique vai primeiro para uma rota do próprio AutoAgenda e só então o servidor
-// redireciona para wa.me. Isso elimina dependência de popup/window.open e garante
-// que o telefone utilizado seja sempre o valor atual salvo no PostgreSQL.
+// ========================= V2.3.4 — WHATSAPP: PLANO COMPLETO + REGRA DE FALTA =========================
+// Se a aula pertence a um plano, o WhatsApp recebe o cronograma completo do plano.
+// Se for uma aula avulsa, envia apenas os dados daquela aula.
+// Em ambos os casos a mensagem informa claramente a regra de falta sem justificativa.
 app.get('/whatsapp/aula/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -2730,16 +2743,18 @@ app.get('/whatsapp/aula/:id', async (req, res) => {
     }
 
     const result = await query(`
-      SELECT a.id,
+      SELECT a.id, a.plan_id, a.numero_plano,
              TO_CHAR(a.data_aula, 'DD/MM/YYYY') AS data_br,
              TO_CHAR(a.hora_inicio, 'HH24:MI') AS hora_inicio,
-             a.status, a.arquivada,
-             al.nome AS aluno_nome, al.whatsapp AS aluno_whatsapp,
+             a.status, a.arquivada, a.aulas_unidades,
+             al.nome AS aluno_nome, al.whatsapp AS aluno_whatsapp, al.categoria AS aluno_categoria,
              i.nome AS instrutor_nome,
+             v.nome AS veiculo_nome, v.placa AS veiculo_placa,
              l.nome AS local_nome
       FROM autoagenda.aulas a
       JOIN autoagenda.alunos al ON al.id = a.aluno_id
       LEFT JOIN autoagenda.instrutores i ON i.id = a.instrutor_id
+      LEFT JOIN autoagenda.veiculos v ON v.id = a.veiculo_id
       LEFT JOIN autoagenda.locais l ON l.id = a.local_id
       WHERE a.id = $1
     `, [id]);
@@ -2751,7 +2766,7 @@ app.get('/whatsapp/aula/:id', async (req, res) => {
     const aula = result.rows[0];
     if (aula.arquivada || !['AGENDADA', 'CONFIRMADA'].includes(String(aula.status || '').toUpperCase())) {
       return res.status(400).type('text/plain; charset=utf-8')
-        .send('O WhatsApp de lembrete só está disponível para aulas agendadas ou confirmadas.');
+        .send('O WhatsApp só está disponível para aulas agendadas ou confirmadas.');
     }
 
     const telefone = normalizarWhatsAppParaLink(aula.aluno_whatsapp);
@@ -2760,16 +2775,83 @@ app.get('/whatsapp/aula/:id', async (req, res) => {
         .send('Este aluno não possui um WhatsApp válido cadastrado. Edite o aluno e informe o número com DDD, por exemplo: (69) 99999-9999.');
     }
 
-    // PostgreSQL já devolve a data pronta para exibição. Evitamos converter DATE para
-    // JavaScript Date aqui, pois o driver pg pode entregar a coluna DATE como objeto Date,
-    // e String(date).slice(0, 10) não produz YYYY-MM-DD, causando "Invalid time value".
-    const dataBr = String(aula.data_br || '').trim();
-    const texto = `Olá, ${aula.aluno_nome}! Seguem os dados da sua aula prática:\n\n` +
-      `📅 Data: ${dataBr}\n` +
-      `🕐 Horário: ${String(aula.hora_inicio || '').slice(0, 5)}\n` +
-      `👨‍🏫 Instrutor: ${aula.instrutor_nome || 'a definir'}\n` +
-      `📍 Local: ${aula.local_nome || 'a definir'}\n\n` +
-      'Até lá!';
+    const rotuloStatus = status => ({
+      AGENDADA: '⏳ Agendada',
+      CONFIRMADA: '✅ Confirmada',
+      REALIZADA: '🏁 Realizada',
+      REMARCADA: '🔄 Remarcada',
+      CANCELADA: '❌ Cancelada',
+      FALTOU: '🚫 Faltou — aula descontada'
+    })[String(status || '').toUpperCase()] || String(status || '');
+
+    const avisoFalta =
+      '⚠️ *IMPORTANTE:* Se o aluno faltar sem justificativa, a aula será contabilizada como realizada para fins de saldo e será descontada do pacote. Portanto, o aluno perderá essa aula.';
+
+    let texto = '';
+
+    if (aula.plan_id) {
+      const planoQ = await query(`
+        SELECT p.id, p.total_aulas, p.aulas_por_encontro,
+               i.nome AS instrutor_nome,
+               v.nome AS veiculo_nome, v.placa AS veiculo_placa,
+               l.nome AS local_nome
+        FROM autoagenda.planos_aula p
+        LEFT JOIN autoagenda.instrutores i ON i.id = p.instrutor_id
+        LEFT JOIN autoagenda.veiculos v ON v.id = p.veiculo_id
+        LEFT JOIN autoagenda.locais l ON l.id = p.local_id
+        WHERE p.id = $1
+      `, [aula.plan_id]);
+
+      const cronogramaQ = await query(`
+        SELECT a.id, a.plan_id, a.numero_plano, a.reposicao_de_id, a.excecao_plano,
+               TO_CHAR(a.data_aula, 'DD/MM/YYYY') AS data_br,
+               TO_CHAR(a.hora_inicio, 'HH24:MI') AS hora_inicio,
+               a.status, a.aulas_unidades,
+               i.nome AS instrutor_nome,
+               v.nome AS veiculo_nome, v.placa AS veiculo_placa,
+               l.nome AS local_nome
+        FROM autoagenda.aulas a
+        LEFT JOIN autoagenda.instrutores i ON i.id = a.instrutor_id
+        LEFT JOIN autoagenda.veiculos v ON v.id = a.veiculo_id
+        LEFT JOIN autoagenda.locais l ON l.id = a.local_id
+        WHERE a.arquivada = FALSE
+          AND (
+            a.plan_id = $1
+            OR a.reposicao_de_id IN (
+              SELECT origem.id
+              FROM autoagenda.aulas origem
+              WHERE origem.plan_id = $1
+            )
+          )
+        ORDER BY a.data_aula, a.hora_inicio, a.id
+      `, [aula.plan_id]);
+
+      const plano = planoQ.rows[0] || {};
+      const cronograma = cronogramaQ.rows;
+      const linhas = cronograma.map((x, idx) => {
+        const unidades = Math.max(1, Number(x.aulas_unidades || 1));
+        const detalheUnidades = unidades > 1 ? ` — ${unidades} aulas` : '';
+        const especial = x.reposicao_de_id ? ' ↪️ Reposição' : (x.excecao_plano ? ' • horário alterado' : '');
+        return `${idx + 1}. ${x.data_br} às ${String(x.hora_inicio || '').slice(0,5)}${detalheUnidades} — ${rotuloStatus(x.status)}${especial}`;
+      }).join('\n');
+
+      texto = `Olá, ${aula.aluno_nome}! Segue seu *plano completo de aulas práticas*:\n\n` +
+        `🚘 Categoria: ${aula.aluno_categoria || 'a definir'}\n` +
+        `📚 Total do plano: ${Number(plano.total_aulas || 0)} aula(s)\n` +
+        `👨‍🏫 Instrutor: ${plano.instrutor_nome || aula.instrutor_nome || 'a definir'}\n` +
+        `🚗 Veículo: ${plano.veiculo_nome || aula.veiculo_nome || 'a definir'}${plano.veiculo_placa || aula.veiculo_placa ? ` (${plano.veiculo_placa || aula.veiculo_placa})` : ''}\n` +
+        `📍 Local: ${plano.local_nome || aula.local_nome || 'a definir'}\n\n` +
+        `📅 *CRONOGRAMA COMPLETO*\n${linhas || `${aula.data_br} às ${aula.hora_inicio}`}\n\n` +
+        `${avisoFalta}`;
+    } else {
+      texto = `Olá, ${aula.aluno_nome}! Seguem os dados da sua aula prática:\n\n` +
+        `📅 Data: ${String(aula.data_br || '').trim()}\n` +
+        `🕐 Horário: ${String(aula.hora_inicio || '').slice(0,5)}\n` +
+        `👨‍🏫 Instrutor: ${aula.instrutor_nome || 'a definir'}\n` +
+        `🚗 Veículo: ${aula.veiculo_nome || 'a definir'}${aula.veiculo_placa ? ` (${aula.veiculo_placa})` : ''}\n` +
+        `📍 Local: ${aula.local_nome || 'a definir'}\n\n` +
+        `${avisoFalta}`;
+    }
 
     const destino = `https://wa.me/${telefone}?text=${encodeURIComponent(texto)}`;
     res.setHeader('Cache-Control', 'no-store');
@@ -2931,8 +3013,8 @@ app.post('/api/aulas/:id/reposicao', async (req, res) => {
     const origemQ = await client.query('SELECT * FROM autoagenda.aulas WHERE id=$1 FOR UPDATE', [origemId]);
     if (!origemQ.rowCount) throw erroHttp(404, 'Aula original não encontrada.');
     const origem = origemQ.rows[0];
-    if (!['CANCELADA','FALTOU'].includes(String(origem.status || '').toUpperCase())) {
-      throw erroHttp(409, 'A reposição só pode ser criada para uma aula CANCELADA ou FALTOU.');
+    if (String(origem.status || '').toUpperCase() !== 'CANCELADA') {
+      throw erroHttp(409, 'A reposição sem perda da aula só pode ser criada para uma aula CANCELADA. FALTOU representa falta sem justificativa e a aula é descontada do pacote.');
     }
 
     const reposicaoExistente = await client.query(`

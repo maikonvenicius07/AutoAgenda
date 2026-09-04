@@ -327,7 +327,7 @@
       <label>Duração (minutos)<input id="aDur" type="number" min="10" max="240" step="5" value="50" required></label>
       <label>Aulas consumidas<select id="aUnidades"><option value="1">1 aula</option><option value="2">2 aulas</option><option value="3">3 aulas</option><option value="4">4 aulas</option></select></label>
     </div>
-    <label>Status<select id="aStatus"><option value="AGENDADA">Agendada</option><option value="CONFIRMADA">Confirmada</option><option value="REALIZADA">Realizada</option><option value="CANCELADA">Cancelada</option><option value="FALTOU">Faltou</option></select></label>
+    <label>Status<select id="aStatus"><option value="AGENDADA">Agendada</option><option value="CONFIRMADA">Confirmada</option><option value="REALIZADA">Realizada</option><option value="CANCELADA">Cancelada</option><option value="FALTOU">Faltou — desconta a aula</option></select></label>
     <label>Observações<textarea id="aObs" placeholder="Observações da aula"></textarea></label>
 
     <div id="serieBox" class="series-box hide">
@@ -529,6 +529,6 @@
 </div>
 
 <div id="toast" class="toast hide"></div>
-<script src="app.js?v=2.3.2-whatsapp-final"></script>
+<script src="app.js?v=2.3.4-plano-completo-falta"></script>
 </body>
 </html>

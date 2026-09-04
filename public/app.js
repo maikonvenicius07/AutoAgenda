@@ -215,7 +215,7 @@ function statusLabel(s) {
     REALIZADA: '🏁 Realizada',
     REMARCADA: '🔄 Remarcada',
     CANCELADA: '❌ Cancelada',
-    FALTOU: '🚫 Faltou'
+    FALTOU: '🚫 Faltou — aula perdida'
   })[s] || s;
 }
 
@@ -230,10 +230,12 @@ function realizadasAluno(a) {
 function studentHtml(a) {
   const contratadas = Number(a.aulas_contratadas || 0);
   const realizadas = realizadasAluno(a);
+  const faltasPerdidas = Math.max(0, Number(a.faltas_unidades || 0));
+  const consumidas = realizadas + faltasPerdidas;
   const agendadas = Number(a.aulas_agendadas || 0);
-  const aindaProgramar = Math.max(0, contratadas - realizadas - agendadas);
-  const restantes = Math.max(0, contratadas - realizadas);
-  const pct = contratadas ? Math.min(100, Math.round(realizadas / contratadas * 100)) : 0;
+  const aindaProgramar = Math.max(0, contratadas - consumidas - agendadas);
+  const restantes = Math.max(0, contratadas - consumidas);
+  const pct = contratadas ? Math.min(100, Math.round(consumidas / contratadas * 100)) : 0;
   const ativo = a.ativo !== false;
   const cpfExibicao = a.cpf_mascarado || cpfMascarado(a.cpf);
 
@@ -256,7 +258,7 @@ function studentHtml(a) {
       <div><span>A programar</span><b>${aindaProgramar}</b></div>
     </div>
     <div class="progress"><div style="width:${pct}%"></div></div>
-    <small class="progress-text">${realizadas} de ${contratadas} aulas realizadas</small>
+    <small class="progress-text">${realizadas} realizada(s)${faltasPerdidas ? ` · ${faltasPerdidas} perdida(s) por falta sem justificativa` : ''} · ${contratadas} contratada(s)</small>
 
     <div class="actions-row">
       ${ativo ? `
@@ -278,7 +280,7 @@ function aulaHtml(x, comAcoes = false) {
   const unidades = Number(x.aulas_unidades || 1);
   const unidadeTxt = unidades > 1 ? ` · ${unidades} aulas consecutivas` : '';
   const jaTemReposicao = Number(x.reposicao_id_ativa || 0) > 0;
-  const reposicao = comAcoes && ['CANCELADA','FALTOU'].includes(x.status)
+  const reposicao = comAcoes && x.status === 'CANCELADA'
     ? (jaTemReposicao
       ? `<span class="plan-badge">↪️ Reposição agendada</span>`
       : `<button type="button" class="mini plan" data-repor-aula="${x.id}">↪️ Repor</button>`)
@@ -891,9 +893,9 @@ async function abrirHistoricoAluno(id) {
       historicoMetricHtml('Contratadas', Number(r.contratadas || 0)),
       historicoMetricHtml('Realizadas', Number(r.realizadas || 0), Number(r.realizadas_anteriores || 0) ? `${Number(r.realizadas_anteriores)} anteriores ao AutoAgenda` : ''),
       historicoMetricHtml('Aulas futuras', Number(r.futuras || 0)),
-      historicoMetricHtml('Saldo restante', Number(r.restantes || 0), 'contratadas menos realizadas'),
-      historicoMetricHtml('A programar', Number(r.a_programar || 0), 'descontando aulas futuras'),
-      historicoMetricHtml('Faltas', Number(r.faltas || 0)),
+      historicoMetricHtml('Saldo restante', Number(r.restantes || 0), 'desconta realizadas e faltas sem justificativa'),
+      historicoMetricHtml('A programar', Number(r.a_programar || 0), 'descontando também as aulas futuras'),
+      historicoMetricHtml('Faltas / aulas perdidas', Number(r.faltas_unidades ?? r.faltas ?? 0), `${Number(r.faltas || 0)} ocorrência(s) registrada(s)`),
       historicoMetricHtml('Cancelamentos', Number(r.cancelamentos || 0)),
       historicoMetricHtml('Reposições', Number(r.reposicoes || 0)),
       historicoMetricHtml('Planos', Number(r.planos_total || 0), `${Number(r.planos_ativos || 0)} ativo(s)`),
@@ -1172,8 +1174,8 @@ $('#fAula').onsubmit = async e => {
     }
     const dataEscolhida = $('#aData').value;
     const oferecerReposicao = id > 0
-      && !['CANCELADA','FALTOU'].includes(String(statusOriginal).toUpperCase())
-      && ['CANCELADA','FALTOU'].includes(String(payload.status).toUpperCase());
+      && String(statusOriginal).toUpperCase() !== 'CANCELADA'
+      && String(payload.status).toUpperCase() === 'CANCELADA';
     close('mAula');
     $('#aAluno').disabled = false;
     $('#filtroData').value = dataEscolhida;
