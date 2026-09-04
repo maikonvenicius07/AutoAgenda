@@ -1,4 +1,4 @@
-# AutoAgenda V2.5.0
+# AutoAgenda V2.6.0
 
 Sistema de organização de aulas práticas para autoescola, com backend Node/Express, PostgreSQL e deploy no Render.
 
@@ -10,35 +10,49 @@ Sistema de organização de aulas práticas para autoescola, com backend Node/Ex
 - horário de funcionamento;
 - disponibilidade e folgas dos instrutores;
 - situação, manutenção e indisponibilidade dos veículos;
-- busca dos 5 próximos horários livres;
+- busca dos próximos horários livres;
 - reagendamento inteligente com vínculo entre aula original e reposição;
 - histórico completo do aluno;
 - WhatsApp da aula e envio do plano completo;
 - confirmação da aula: aguardando, confirmada ou pediu reagendamento;
 - lembretes no dia anterior e algumas horas antes;
-- painel de lembretes pendentes/atrasados;
 - controle manual de lembrete enviado, preparado para futura automação;
+- Dashboard com indicadores e gráficos simples;
 - modo claro/escuro;
 - controle de saldo e preservação do histórico.
 
-## V2.5.0 — Lembretes
+## V2.6.0 — Dashboard
 
-A ETAPA 11 adiciona uma área **🔔 Lembretes** e configuração em **⚙️ Configurações**.
+A ETAPA 12 amplia o **🏠 Painel** para funcionar como um Dashboard leve do AutoAgenda.
 
-É possível definir:
-- se haverá lembrete no dia anterior;
-- o horário do lembrete no dia anterior;
-- se haverá lembrete algumas horas antes;
-- quantas horas antes.
+Indicadores exibidos:
+- alunos ativos;
+- aulas de hoje;
+- aulas da semana;
+- aulas realizadas no mês;
+- faltas no mês;
+- cancelamentos no mês;
+- reposições no mês;
+- taxa estimada de ocupação da semana;
+- horários livres estimados para o restante da semana;
+- aulas futuras agendadas;
+- planos ativos;
+- alunos com até 5 aulas restantes para concluir o pacote.
 
-Cada aula futura agendada/confirmada recebe os horários previstos dos lembretes. A tela mostra pendentes, atrasados e os próximos 7 dias. O envio continua manual pelo WhatsApp nesta versão; após enviar, o usuário pode marcar o lembrete como enviado.
+Também foram adicionados dois gráficos simples em CSS/HTML, sem bibliotecas externas:
+- movimento da semana por dia;
+- resultado do mês por situação.
 
-Se uma aula for reagendada para outra data/horário, os controles de envio dos lembretes são reiniciados para a nova marcação.
+### Taxa de ocupação
+
+A taxa de ocupação é uma **estimativa operacional** calculada a partir do horário de funcionamento, duração padrão, intervalo e quantidade global de instrutores ativos e veículos disponíveis. Ela não substitui a validação individual de disponibilidade do instrutor, veículo, folgas ou manutenções, que continua sendo feita no momento do agendamento.
+
+A implementação foi mantida leve: o navegador recebe apenas dados agregados do PostgreSQL; não é necessário carregar todo o histórico de aulas para montar o Dashboard.
 
 ## Banco
 
-A migração é automática. Não execute SQL manualmente no Render.
+A V2.6.0 não cria novas tabelas ou colunas. Nenhuma migração manual é necessária.
 
 ## Próxima etapa
 
-**ETAPA 12 — Dashboard**: ampliar o painel com aulas da semana, realizadas no mês, faltas, cancelamentos, reposições, taxa de ocupação, horários livres e alunos próximos de concluir o pacote.
+**ETAPA 13 — Relatórios**: permitir selecionar período e visualizar aulas realizadas, cancelamentos, faltas, reposições, aulas por instrutor, aulas por veículo, alunos ativos, horários mais utilizados e taxa de ocupação, preparando futura exportação para Excel.

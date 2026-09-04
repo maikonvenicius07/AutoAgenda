@@ -14,7 +14,7 @@
       document.documentElement.dataset.theme = 'light';
     }
   </script>
-  <link rel="stylesheet" href="style.css?v=2.5.0">
+  <link rel="stylesheet" href="style.css?v=2.6.0">
 </head>
 <body>
 <header>
@@ -51,14 +51,66 @@
       <img class="hero-car" src="assets/carro-autoescola.png" alt="Veículo de autoescola">
     </div>
 
-    <div class="stats stats4">
-      <div><span>Alunos</span><strong id="sAlunos">0</strong></div>
-      <div><span>Aulas hoje</span><strong id="sHoje">0</strong></div>
-      <div><span>Aulas agendadas</span><strong id="sAgendadas">0</strong></div>
-      <div><span>Planos ativos</span><strong id="sPlanos">0</strong></div>
+    <div class="dashboard-title-row">
+      <div>
+        <h2>Dashboard</h2>
+        <p>Visão rápida da agenda, do mês e da capacidade da semana.</p>
+      </div>
+      <span class="dashboard-period" id="dashPeriodo">Carregando período...</span>
     </div>
 
-    <div class="card">
+    <div class="stats stats4 dashboard-kpis">
+      <div><span>Alunos ativos</span><strong id="sAlunos">0</strong><small>cadastros ativos</small></div>
+      <div><span>Aulas hoje</span><strong id="sHoje">0</strong><small>unidades do dia</small></div>
+      <div><span>Aulas na semana</span><strong id="sSemana">0</strong><small>ocupação semanal</small></div>
+      <div><span>Realizadas no mês</span><strong id="sRealizadasMes">0</strong><small>aulas concluídas</small></div>
+    </div>
+
+    <div class="stats stats4 dashboard-kpis dashboard-kpis-secondary">
+      <div><span>Faltas no mês</span><strong id="sFaltasMes">0</strong><small>aulas descontadas</small></div>
+      <div><span>Cancelamentos no mês</span><strong id="sCancelamentosMes">0</strong><small>aulas canceladas</small></div>
+      <div><span>Reposições no mês</span><strong id="sReposicoesMes">0</strong><small>novas aulas de reposição</small></div>
+      <div><span>Taxa de ocupação</span><strong id="sOcupacao">0%</strong><small>estimativa da semana</small></div>
+    </div>
+
+    <div class="dashboard-grid">
+      <div class="card dashboard-card">
+        <div class="head compact">
+          <div><h3>📊 Movimento da semana</h3><p>Quantidade de aulas por dia.</p></div>
+        </div>
+        <div id="dashSemanaChart" class="dashboard-bars"></div>
+      </div>
+
+      <div class="card dashboard-card">
+        <div class="head compact">
+          <div><h3>📈 Resultado do mês</h3><p>Realizadas, faltas, cancelamentos e reposições.</p></div>
+        </div>
+        <div id="dashMesChart" class="dashboard-status-bars"></div>
+      </div>
+
+      <div class="card dashboard-card">
+        <div class="head compact">
+          <div><h3>🕐 Capacidade da semana</h3><p>Estimativa simples com base no funcionamento e recursos ativos.</p></div>
+        </div>
+        <div class="dashboard-capacity">
+          <div><span>Aulas futuras agendadas</span><b id="sAgendadas">0</b></div>
+          <div><span>Planos ativos</span><b id="sPlanos">0</b></div>
+          <div><span>Horários livres estimados</span><b id="sHorariosLivres">0</b></div>
+          <div><span>Capacidade estimada</span><b id="sCapacidadeSemana">0</b></div>
+        </div>
+        <div class="dashboard-progress"><div id="dashOcupacaoBar"></div></div>
+        <small id="dashCapacidadeNota" class="dashboard-note">A disponibilidade individual continua sendo validada no momento do agendamento.</small>
+      </div>
+
+      <div class="card dashboard-card">
+        <div class="head compact">
+          <div><h3>🎯 Próximos de terminar o pacote</h3><p>Alunos com até 5 aulas restantes para concluir.</p></div>
+        </div>
+        <div id="dashProximosConcluir" class="dashboard-finish-list"></div>
+      </div>
+    </div>
+
+    <div class="card dashboard-today-card">
       <div class="head compact">
         <div><h3>Agenda de hoje</h3><p>Visão rápida das aulas do dia.</p></div>
         <button type="button" class="secondary mini" id="irAgenda">Ver agenda</button>
@@ -581,6 +633,6 @@
 </div>
 
 <div id="toast" class="toast hide"></div>
-<script src="app.js?v=2.5.0"></script>
+<script src="app.js?v=2.6.0"></script>
 </body>
 </html>

@@ -7,7 +7,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '2.5.0';
+const APP_VERSION = '2.6.0';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -2973,22 +2973,191 @@ app.patch('/api/planos/:id/encerrar', async (req, res) => {
   }
 });
 
-// Resumo leve para o painel; evita carregar todas as aulas do histórico no navegador.
+// ========================= V2.6 — DASHBOARD =========================
+// Mantém o painel leve: todos os indicadores são calculados no PostgreSQL em poucas consultas
+// agregadas. A taxa de ocupação e os horários livres são estimativas baseadas no horário de
+// funcionamento e na quantidade global de instrutores/veículos disponíveis. As validações
+// individuais de disponibilidade continuam sendo feitas normalmente ao criar/reagendar aulas.
 app.get('/api/dashboard/resumo', async (req, res) => {
+  const client = await pool.connect();
   try {
-    const r = await query(`
-      SELECT
-        (SELECT COUNT(*)::int FROM autoagenda.alunos WHERE ativo=TRUE) AS alunos_ativos,
-        (SELECT COUNT(*)::int FROM autoagenda.planos_aula WHERE ativo=TRUE) AS planos_ativos,
-        (SELECT COUNT(*)::int FROM autoagenda.aulas
-          WHERE data_aula=$1::date AND status <> 'CANCELADA' AND arquivada=FALSE) AS aulas_hoje,
-        (SELECT COALESCE(SUM(aulas_unidades),0)::int FROM autoagenda.aulas
-          WHERE data_aula >= $1::date AND status IN ('AGENDADA','CONFIRMADA') AND arquivada=FALSE) AS aulas_agendadas
-    `, [hojeApp()]);
-    res.json(r.rows[0]);
+    const hoje = hojeApp();
+    const agora = agoraApp();
+    const config = await obterConfigFuncionamento(client);
+
+    const [resumoQ, serieQ, recursosQ, proximosQ] = await Promise.all([
+      client.query(`
+        WITH datas AS (
+          SELECT $1::date AS hoje,
+                 date_trunc('week', $1::date)::date AS inicio_semana,
+                 (date_trunc('week', $1::date) + INTERVAL '6 day')::date AS fim_semana,
+                 date_trunc('month', $1::date)::date AS inicio_mes,
+                 (date_trunc('month', $1::date) + INTERVAL '1 month' - INTERVAL '1 day')::date AS fim_mes
+        )
+        SELECT
+          TO_CHAR(d.inicio_semana, 'YYYY-MM-DD') AS inicio_semana,
+          TO_CHAR(d.fim_semana, 'YYYY-MM-DD') AS fim_semana,
+          TO_CHAR(d.inicio_mes, 'YYYY-MM-DD') AS inicio_mes,
+          TO_CHAR(d.fim_mes, 'YYYY-MM-DD') AS fim_mes,
+          (SELECT COUNT(*)::int FROM autoagenda.alunos WHERE ativo=TRUE) AS alunos_ativos,
+          (SELECT COUNT(*)::int FROM autoagenda.planos_aula WHERE ativo=TRUE) AS planos_ativos,
+          (SELECT COALESCE(SUM(aulas_unidades),0)::int FROM autoagenda.aulas
+             WHERE data_aula=d.hoje
+               AND status IN ('AGENDADA','CONFIRMADA','REALIZADA','FALTOU')
+               AND arquivada=FALSE) AS aulas_hoje,
+          (SELECT COALESCE(SUM(aulas_unidades),0)::int FROM autoagenda.aulas
+             WHERE data_aula BETWEEN d.inicio_semana AND d.fim_semana
+               AND status IN ('AGENDADA','CONFIRMADA','REALIZADA','FALTOU')
+               AND arquivada=FALSE) AS aulas_semana,
+          (SELECT COALESCE(SUM(aulas_unidades),0)::int FROM autoagenda.aulas
+             WHERE data_aula >= d.hoje
+               AND status IN ('AGENDADA','CONFIRMADA')
+               AND arquivada=FALSE) AS aulas_agendadas,
+          (SELECT COALESCE(SUM(aulas_unidades),0)::int FROM autoagenda.aulas
+             WHERE data_aula BETWEEN d.inicio_mes AND d.fim_mes
+               AND status='REALIZADA' AND arquivada=FALSE) AS realizadas_mes,
+          (SELECT COALESCE(SUM(aulas_unidades),0)::int FROM autoagenda.aulas
+             WHERE data_aula BETWEEN d.inicio_mes AND d.fim_mes
+               AND status='FALTOU' AND arquivada=FALSE) AS faltas_mes,
+          (SELECT COALESCE(SUM(aulas_unidades),0)::int FROM autoagenda.aulas
+             WHERE data_aula BETWEEN d.inicio_mes AND d.fim_mes
+               AND status='CANCELADA' AND arquivada=FALSE) AS cancelamentos_mes,
+          (SELECT COALESCE(SUM(aulas_unidades),0)::int FROM autoagenda.aulas
+             WHERE data_aula BETWEEN d.inicio_mes AND d.fim_mes
+               AND reposicao_de_id IS NOT NULL AND arquivada=FALSE) AS reposicoes_mes,
+          (SELECT COALESCE(SUM(aulas_unidades),0)::int FROM autoagenda.aulas
+             WHERE data_aula BETWEEN d.inicio_semana AND d.fim_semana
+               AND status IN ('AGENDADA','CONFIRMADA','REALIZADA','FALTOU')
+               AND arquivada=FALSE) AS ocupadas_semana,
+          (SELECT COALESCE(SUM(aulas_unidades),0)::int FROM autoagenda.aulas
+             WHERE data_aula BETWEEN d.hoje AND d.fim_semana
+               AND (data_aula > d.hoje OR hora_inicio >= $2::time)
+               AND status IN ('AGENDADA','CONFIRMADA')
+               AND arquivada=FALSE) AS ocupadas_restantes_semana
+        FROM datas d
+      `, [hoje, agora.hora]),
+
+      client.query(`
+        WITH datas AS (
+          SELECT date_trunc('week', $1::date)::date AS inicio_semana,
+                 (date_trunc('week', $1::date) + INTERVAL '6 day')::date AS fim_semana
+        ), dias AS (
+          SELECT generate_series(d.inicio_semana, d.fim_semana, INTERVAL '1 day')::date AS data
+          FROM datas d
+        )
+        SELECT TO_CHAR(di.data, 'YYYY-MM-DD') AS data,
+               COALESCE(SUM(CASE
+                 WHEN a.status IN ('AGENDADA','CONFIRMADA','REALIZADA','FALTOU') AND a.arquivada=FALSE
+                 THEN a.aulas_unidades ELSE 0 END),0)::int AS total,
+               COALESCE(SUM(CASE WHEN a.status='REALIZADA' AND a.arquivada=FALSE THEN a.aulas_unidades ELSE 0 END),0)::int AS realizadas,
+               COALESCE(SUM(CASE WHEN a.status='FALTOU' AND a.arquivada=FALSE THEN a.aulas_unidades ELSE 0 END),0)::int AS faltas,
+               COALESCE(SUM(CASE WHEN a.status='CANCELADA' AND a.arquivada=FALSE THEN a.aulas_unidades ELSE 0 END),0)::int AS canceladas
+        FROM dias di
+        LEFT JOIN autoagenda.aulas a ON a.data_aula=di.data
+        GROUP BY di.data
+        ORDER BY di.data
+      `, [hoje]),
+
+      client.query(`
+        SELECT
+          (SELECT COUNT(*)::int FROM autoagenda.instrutores WHERE ativo=TRUE) AS instrutores_ativos,
+          (SELECT COUNT(*)::int FROM autoagenda.veiculos
+             WHERE ativo=TRUE AND COALESCE(situacao,'DISPONIVEL')='DISPONIVEL') AS veiculos_disponiveis
+      `),
+
+      client.query(`
+        WITH consumo AS (
+          SELECT al.id, al.nome, al.aulas_contratadas,
+                 (
+                   COALESCE(al.aulas_realizadas_anteriores,0)
+                   + COALESCE(SUM(CASE
+                       WHEN au.status IN ('REALIZADA','FALTOU') AND au.arquivada=FALSE
+                       THEN au.aulas_unidades ELSE 0 END),0)
+                 )::int AS realizadas,
+                 COALESCE(SUM(CASE
+                   WHEN au.data_aula >= $1::date
+                    AND au.status IN ('AGENDADA','CONFIRMADA')
+                    AND au.arquivada=FALSE
+                   THEN au.aulas_unidades ELSE 0 END),0)::int AS agendadas
+          FROM autoagenda.alunos al
+          LEFT JOIN autoagenda.aulas au ON au.aluno_id=al.id
+          WHERE al.ativo=TRUE
+          GROUP BY al.id, al.nome, al.aulas_contratadas, al.aulas_realizadas_anteriores
+        )
+        SELECT id, nome, aulas_contratadas, realizadas, agendadas,
+               GREATEST(aulas_contratadas-realizadas,0)::int AS faltam_realizar
+        FROM consumo
+        WHERE GREATEST(aulas_contratadas-realizadas,0) BETWEEN 1 AND 5
+        ORDER BY faltam_realizar ASC, nome ASC
+        LIMIT 6
+      `, [hoje])
+    ]);
+
+    const resumo = resumoQ.rows[0] || {};
+    const recursos = recursosQ.rows[0] || {};
+    const instrutoresAtivos = Number(recursos.instrutores_ativos || 0);
+    const veiculosDisponiveis = Number(recursos.veiculos_disponiveis || 0);
+    const recursosSimultaneos = Math.min(instrutoresAtivos, veiculosDisponiveis);
+
+    const abertura = minutosDoHorario(config.hora_abertura);
+    const encerramento = minutosDoHorario(config.hora_encerramento);
+    const duracao = Math.max(1, Number(config.duracao_padrao_minutos || 50));
+    const intervalo = Math.max(0, Number(config.intervalo_minutos || 0));
+    const passo = duracao + intervalo;
+    const janela = Math.max(0, encerramento - abertura);
+    const slotsDiaPorRecurso = passo > 0 ? Math.max(0, Math.floor((janela + intervalo) / passo)) : 0;
+    const diasFuncionamento = new Set((config.dias_funcionamento || []).map(Number));
+
+    let diasSemanaAbertos = 0;
+    let slotsRestantesSemanaPorRecurso = 0;
+    const inicioSemana = String(resumo.inicio_semana || hoje).slice(0,10);
+    for (let i = 0; i < 7; i += 1) {
+      const dt = dateOnlyUTC(inicioSemana);
+      dt.setUTCDate(dt.getUTCDate() + i);
+      const data = isoDateUTC(dt);
+      const dia = dt.getUTCDay();
+      if (!diasFuncionamento.has(dia)) continue;
+      diasSemanaAbertos += 1;
+      if (data < hoje) continue;
+      if (data > hoje) {
+        slotsRestantesSemanaPorRecurso += slotsDiaPorRecurso;
+        continue;
+      }
+      const agoraMin = minutosDoHorario(agora.hora);
+      for (let min = abertura; min + duracao <= encerramento; min += passo) {
+        if (min >= agoraMin) slotsRestantesSemanaPorRecurso += 1;
+      }
+    }
+
+    const capacidadeSemana = slotsDiaPorRecurso * diasSemanaAbertos * recursosSimultaneos;
+    const ocupadasSemana = Number(resumo.ocupadas_semana || 0);
+    const taxaOcupacao = capacidadeSemana > 0
+      ? Math.max(0, Math.min(100, Math.round((ocupadasSemana / capacidadeSemana) * 100)))
+      : 0;
+
+    const capacidadeRestante = slotsRestantesSemanaPorRecurso * recursosSimultaneos;
+    const ocupadasRestantes = Number(resumo.ocupadas_restantes_semana || 0);
+    const horariosLivres = Math.max(0, capacidadeRestante - ocupadasRestantes);
+
+    res.json({
+      ...resumo,
+      taxa_ocupacao_semana: taxaOcupacao,
+      horarios_livres_semana: horariosLivres,
+      capacidade_semana: capacidadeSemana,
+      ocupadas_semana: ocupadasSemana,
+      recursos_simultaneos: recursosSimultaneos,
+      instrutores_ativos: instrutoresAtivos,
+      veiculos_disponiveis: veiculosDisponiveis,
+      slots_dia_por_recurso: slotsDiaPorRecurso,
+      serie_semana: serieQ.rows,
+      proximos_concluir: proximosQ.rows,
+      estimativa_ocupacao: true
+    });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao carregar resumo do painel.' });
+    res.status(500).json({ error: 'Erro ao carregar dashboard.' });
+  } finally {
+    client.release();
   }
 });
 

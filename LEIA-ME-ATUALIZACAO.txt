@@ -1,36 +1,44 @@
-AUTOAGENDA V2.5.0 — LEMBRETES DE AULA
+AUTOAGENDA V2.6.0 — DASHBOARD
 
-Esta versão implementa a ETAPA 11 do roteiro.
+Esta versão implementa a ETAPA 12 do roteiro.
 
-NOVO
-- Aba 🔔 Lembretes.
-- Contadores de lembretes pendentes, atrasados e próximos 7 dias.
-- Configuração de lembrete no dia anterior.
-- Horário configurável para o lembrete do dia anterior.
-- Configuração de lembrete algumas horas antes.
-- Quantidade de horas configurável (1 a 24).
-- Botão WhatsApp na fila de lembretes.
-- Botão para marcar o lembrete como enviado.
-- Registro no PostgreSQL do horário previsto, situação de envio e data/hora do envio.
-- Ao reagendar a data/horário da aula, os lembretes enviados são reiniciados para a nova marcação.
+NOVO NO PAINEL
+- Alunos ativos.
+- Aulas de hoje.
+- Aulas da semana.
+- Aulas realizadas no mês.
+- Faltas no mês.
+- Cancelamentos no mês.
+- Reposições no mês.
+- Taxa estimada de ocupação da semana.
+- Horários livres estimados para o restante da semana.
+- Capacidade estimada da semana.
+- Lista de alunos com até 5 aulas restantes para concluir o pacote.
+- Gráfico simples do movimento da semana.
+- Gráfico simples do resultado do mês.
 
-IMPORTANTE
-- Nesta versão o AutoAgenda NÃO envia WhatsApp sozinho.
-- O envio continua manual e sem API paga.
-- A estrutura fica pronta para automação futura.
-- Aulas canceladas, realizadas, com falta ou arquivadas não entram na fila de lembretes.
+DESEMPENHO
+- O Dashboard usa consultas agregadas no PostgreSQL.
+- Não carrega o histórico completo de aulas no navegador.
+- Não utiliza biblioteca de gráficos externa.
+- Se o resumo do Dashboard falhar, as demais telas do AutoAgenda continuam carregando.
+
+IMPORTANTE SOBRE OCUPAÇÃO
+- Taxa de ocupação e horários livres são estimativas operacionais.
+- Consideram horário de funcionamento, duração padrão, intervalo, instrutores ativos e veículos globalmente disponíveis.
+- Folgas individuais, horários específicos de instrutores e períodos de manutenção continuam sendo validados normalmente ao criar/reagendar cada aula.
 
 BANCO
-- Migração automática pelo server.js.
+- Nenhuma tabela ou coluna nova nesta versão.
 - Não é necessário executar SQL manualmente.
-- Nenhum dado antigo é apagado.
+- Nenhum dado existente é apagado ou alterado pela atualização.
 
 DEPLOY
 1. Use o ZIP "Somente_Arquivos_Para_Substituir" para atualizar o GitHub.
-2. Mantenha a mesma estrutura de pastas.
+2. Mantenha exatamente a mesma estrutura de pastas.
 3. Faça Commit changes.
 4. Aguarde o Render concluir o deploy.
 5. Pressione Ctrl+F5.
-6. Confirme no topo: AutoAgenda V2.5.0.
+6. Confirme no topo: AutoAgenda V2.6.0.
 
 Não altere DATABASE_URL, AUTOAGENDA_USER ou AUTOAGENDA_PASSWORD.

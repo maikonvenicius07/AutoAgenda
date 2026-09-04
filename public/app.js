@@ -710,11 +710,106 @@ async function marcarLembreteEnviado(aulaId, tipo) {
   } catch (e) { toast(e.message); }
 }
 
+// ========================= V2.6 — DASHBOARD =========================
+const DASH_DIAS = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+
+function dashDiaLabel(data) {
+  const [y,m,d] = dataISO(data).split('-').map(Number);
+  if (!y || !m || !d) return '';
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return `${DASH_DIAS[dt.getUTCDay()]} ${String(d).padStart(2,'0')}`;
+}
+
+function renderDashboard() {
+  const d = resumoDashboard || {};
+  const setText = (id, valor) => { const el = $(id); if (el) el.textContent = String(valor ?? 0); };
+
+  setText('#sAlunos', Number(d.alunos_ativos ?? alunos.length));
+  setText('#sHoje', Number(d.aulas_hoje ?? aulasHoje.length));
+  setText('#sSemana', Number(d.aulas_semana ?? 0));
+  setText('#sRealizadasMes', Number(d.realizadas_mes ?? 0));
+  setText('#sFaltasMes', Number(d.faltas_mes ?? 0));
+  setText('#sCancelamentosMes', Number(d.cancelamentos_mes ?? 0));
+  setText('#sReposicoesMes', Number(d.reposicoes_mes ?? 0));
+  setText('#sOcupacao', `${Number(d.taxa_ocupacao_semana ?? 0)}%`);
+  setText('#sAgendadas', Number(d.aulas_agendadas ?? 0));
+  setText('#sPlanos', Number(d.planos_ativos ?? planos.filter(p => p.ativo).length));
+  setText('#sHorariosLivres', Number(d.horarios_livres_semana ?? 0));
+  setText('#sCapacidadeSemana', Number(d.capacidade_semana ?? 0));
+
+  const periodo = $('#dashPeriodo');
+  if (periodo) {
+    const de = dataISO(d.inicio_semana);
+    const ate = dataISO(d.fim_semana);
+    periodo.textContent = de && ate ? `Semana ${fmtData(de)} a ${fmtData(ate)}` : 'Semana atual';
+  }
+
+  const serie = Array.isArray(d.serie_semana) ? d.serie_semana : [];
+  const maxSemana = Math.max(1, ...serie.map(x => Number(x.total || 0)));
+  const chartSemana = $('#dashSemanaChart');
+  if (chartSemana) {
+    chartSemana.innerHTML = serie.length ? serie.map(x => {
+      const total = Number(x.total || 0);
+      const pct = Math.round((total / maxSemana) * 100);
+      return `<div class="dashboard-bar-row">
+        <span>${esc(dashDiaLabel(x.data))}</span>
+        <div class="dashboard-bar-track"><i style="width:${pct}%"></i></div>
+        <b>${total}</b>
+      </div>`;
+    }).join('') : '<div class="empty small-empty">Sem dados para esta semana.</div>';
+  }
+
+  const statusMes = [
+    ['🏁 Realizadas', Number(d.realizadas_mes || 0), 'realizada'],
+    ['🚫 Faltas', Number(d.faltas_mes || 0), 'faltou'],
+    ['❌ Canceladas', Number(d.cancelamentos_mes || 0), 'cancelada'],
+    ['🔄 Reposições', Number(d.reposicoes_mes || 0), 'reposicao']
+  ];
+  const maxMes = Math.max(1, ...statusMes.map(x => x[1]));
+  const chartMes = $('#dashMesChart');
+  if (chartMes) {
+    chartMes.innerHTML = statusMes.map(([rotulo, valor, classe]) => {
+      const pct = Math.round((valor / maxMes) * 100);
+      return `<div class="dashboard-status-row ${classe}">
+        <span>${rotulo}</span>
+        <div class="dashboard-status-track"><i style="width:${pct}%"></i></div>
+        <b>${valor}</b>
+      </div>`;
+    }).join('');
+  }
+
+  const taxa = Math.max(0, Math.min(100, Number(d.taxa_ocupacao_semana || 0)));
+  const ocupacaoBar = $('#dashOcupacaoBar');
+  if (ocupacaoBar) ocupacaoBar.style.width = `${taxa}%`;
+
+  const nota = $('#dashCapacidadeNota');
+  if (nota) {
+    const recursos = Number(d.recursos_simultaneos || 0);
+    const instrutores = Number(d.instrutores_ativos || 0);
+    const veiculosDisp = Number(d.veiculos_disponiveis || 0);
+    nota.textContent = recursos
+      ? `Estimativa: ${recursos} atendimento(s) simultâneo(s), considerando ${instrutores} instrutor(es) ativo(s) e ${veiculosDisp} veículo(s) disponível(is). A disponibilidade individual é validada ao agendar.`
+      : 'Não foi possível estimar capacidade sem instrutor e veículo disponíveis. A disponibilidade individual continua sendo validada ao agendar.';
+  }
+
+  const proximos = Array.isArray(d.proximos_concluir) ? d.proximos_concluir : [];
+  const lista = $('#dashProximosConcluir');
+  if (lista) {
+    lista.innerHTML = proximos.length ? proximos.map(x => {
+      const faltam = Number(x.faltam_realizar || 0);
+      const realizadas = Number(x.realizadas || 0);
+      const contratadas = Number(x.aulas_contratadas || 0);
+      const agendadas = Number(x.agendadas || 0);
+      return `<div class="dashboard-finish-item">
+        <div><b>${esc(x.nome)}</b><small>${realizadas}/${contratadas} concluídas · ${agendadas} agendada(s)</small></div>
+        <span>${faltam} restante${faltam === 1 ? '' : 's'}</span>
+      </div>`;
+    }).join('') : '<div class="empty small-empty">Nenhum aluno com até 5 aulas restantes no momento.</div>';
+  }
+}
+
 function render() {
-  $('#sAlunos').textContent = Number(resumoDashboard.alunos_ativos ?? alunos.length);
-  $('#sHoje').textContent = Number(resumoDashboard.aulas_hoje ?? aulasHoje.length);
-  $('#sAgendadas').textContent = Number(resumoDashboard.aulas_agendadas ?? 0);
-  $('#sPlanos').textContent = Number(resumoDashboard.planos_ativos ?? planos.filter(p => p.ativo).length);
+  renderDashboard();
 
   const h = iso();
   const ah = aulasHoje.filter(a => dataISO(a.data_aula) === h && a.status !== 'CANCELADA');
@@ -813,7 +908,7 @@ async function load() {
       api('/api/configuracoes/funcionamento'),
       api('/api/configuracoes/lembretes'),
       api('/api/lembretes'),
-      api('/api/dashboard/resumo')
+      api('/api/dashboard/resumo').catch(e => { console.warn('Dashboard indisponível:', e); return {}; })
     ]);
     if (mostrarInativosAlunos) alunosTodos = await api('/api/alunos?incluir_inativos=1');
     render();
@@ -828,7 +923,7 @@ async function health() {
   try {
     const h = await api('/api/health');
     const seguranca = h.security_ready ? ' · 🔒 acesso protegido' : ' · ⛔ proteção precisa ser configurada';
-    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '2.5.0'}${seguranca}.`;
+    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '2.6.0'}${seguranca}.`;
     $('#db').className = h.security_ready ? 'db ok' : 'db fail';
   } catch {
     $('#db').textContent = '🔴 Banco não conectado. Verifique DATABASE_URL no Render.';

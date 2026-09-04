@@ -1,21 +1,28 @@
 # Próximas melhorias — AutoAgenda
 
-Versão atual consolidada: **V2.5.0**.
+Versão atual consolidada: **V2.6.0**.
 
-Concluído até aqui: **ETAPAS 1 a 11** do roteiro principal.
+Concluído até aqui: **ETAPAS 1 a 12** do roteiro principal.
 
 ## Próxima etapa
 
-**ETAPA 12 — Dashboard**
+**ETAPA 13 — Relatórios**
 
-Mostrar de forma leve e objetiva:
-- aulas de hoje e da semana;
+Criar uma área própria para relatórios, com seleção de período e visualização de:
+- aulas realizadas;
+- cancelamentos;
+- faltas;
+- reposições;
+- aulas por instrutor;
+- aulas por veículo;
 - alunos ativos;
-- aulas realizadas no mês;
-- faltas, cancelamentos e reposições;
-- taxa de ocupação;
-- horários livres;
-- alunos próximos de terminar o pacote;
-- gráficos simples, sem deixar o sistema pesado.
+- horários mais utilizados;
+- taxa de ocupação.
 
-Depois seguem: Relatórios, Financeiro simples, Backup/Exportação, Login individual e Permissões por usuário.
+A estrutura deve ficar preparada para futura exportação em Excel, mas sem misturar essa etapa com Backup/Exportação.
+
+Depois seguem:
+- ETAPA 14 — Financeiro simples;
+- ETAPA 15 — Backup/Exportação;
+- ETAPA 16 — Login individual;
+- ETAPA 17 — Permissões por usuário.
