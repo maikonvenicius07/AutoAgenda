@@ -15,6 +15,8 @@ let mostrarInativosConfig = false;
 let mostrarInativosAlunos = false;
 let confirmAction = null;
 let ultimoPreviewPlano = null;
+let aulaEdicaoAtual = null;
+let historicoWhatsAppPorAula = new Map();
 
 const iso = () => {
   const d = new Date(), o = d.getTimezoneOffset();
@@ -51,6 +53,60 @@ const cpfMascarado = v => {
   const d = soDigitos(v);
   return d.length === 11 ? `***.***.***-${d.slice(-2)}` : 'Não informado';
 };
+
+// ========================= V2.3 — WHATSAPP SIMPLES (wa.me) =========================
+function numeroWhatsApp(v) {
+  const d = soDigitos(v);
+  if (!d) return '';
+  if (d.startsWith('55') && (d.length === 12 || d.length === 13)) return d;
+  if (d.length === 10 || d.length === 11) return `55${d}`;
+  return d;
+}
+
+function localizarAulaParaWhatsApp(id) {
+  const n = Number(id);
+  if (aulaEdicaoAtual && Number(aulaEdicaoAtual.id) === n) return aulaEdicaoAtual;
+  if (historicoWhatsAppPorAula.has(n)) return historicoWhatsAppPorAula.get(n);
+  return [...aulas, ...aulasHoje, ...aulasSemana].find(x => Number(x.id) === n) || null;
+}
+
+function localizarAlunoDaAula(aula) {
+  const alunoId = Number(aula?.aluno_id || 0);
+  return alunosTodos.find(x => Number(x.id) === alunoId)
+    || alunos.find(x => Number(x.id) === alunoId)
+    || null;
+}
+
+function podeEnviarWhatsAppAula(aula) {
+  return ['AGENDADA', 'CONFIRMADA'].includes(String(aula?.status || '').toUpperCase()) && !aula?.arquivada;
+}
+
+function mensagemWhatsAppAula(aula, aluno) {
+  const nome = aula?.aluno_nome || aluno?.nome || 'aluno';
+  const data = fmtData(aula?.data_aula);
+  const horario = hora(aula?.hora_inicio);
+  const instrutor = aula?.instrutor_nome || 'a definir';
+  const local = aula?.local_nome || 'a definir';
+  return `Olá, ${nome}! Seguem os dados da sua aula prática:
+
+📅 Data: ${data}
+🕐 Horário: ${horario}
+👨‍🏫 Instrutor: ${instrutor}
+📍 Local: ${local}
+
+Até lá!`;
+}
+
+function abrirWhatsAppAula(id) {
+  const aula = localizarAulaParaWhatsApp(id);
+  if (!aula) return toast('Não foi possível localizar esta aula para enviar o WhatsApp.');
+  if (!podeEnviarWhatsAppAula(aula)) return toast('O WhatsApp de lembrete só está disponível para aulas agendadas ou confirmadas.');
+  const aluno = localizarAlunoDaAula(aula);
+  const telefone = numeroWhatsApp(aula.aluno_whatsapp || aluno?.whatsapp || '');
+  if (!telefone) return toast('Este aluno não possui WhatsApp cadastrado.');
+  const texto = mensagemWhatsAppAula(aula, aluno);
+  window.open(`https://wa.me/${telefone}?text=${encodeURIComponent(texto)}`, '_blank', 'noopener,noreferrer');
+}
 const minHora = h => {
   const [hh, mm] = hora(h).split(':').map(Number);
   return (Number.isFinite(hh) ? hh : 0) * 60 + (Number.isFinite(mm) ? mm : 0);
@@ -181,11 +237,15 @@ function studentHtml(a) {
 
     <div class="actions-row">
       ${ativo ? `
+        <button type="button" class="mini history-button" data-history-aluno="${a.id}">📚 Histórico</button>
         <button type="button" class="mini secondary" data-find-slot-aluno="${a.id}">🔎 Horário livre</button>
         <button type="button" class="mini plan" data-plan-aluno="${a.id}">📅 Montar agenda</button>
         <button type="button" class="mini edit" data-edit-aluno="${a.id}">✏️ Editar</button>
         <button type="button" class="mini delete" data-del-aluno="${a.id}">⏸️ Desativar</button>
-      ` : `<button type="button" class="mini plan" data-reactivate-aluno="${a.id}">▶️ Reativar aluno</button>`}
+      ` : `
+        <button type="button" class="mini history-button" data-history-aluno="${a.id}">📚 Histórico</button>
+        <button type="button" class="mini plan" data-reactivate-aluno="${a.id}">▶️ Reativar aluno</button>
+      `}
     </div>
   </article>`;
 }
@@ -194,9 +254,19 @@ function aulaHtml(x, comAcoes = false) {
   const plano = x.plan_id ? `<span class="plan-badge">🔁 Plano ${x.numero_plano || ''}${x.excecao_plano ? ' • alterada' : ''}</span>` : '';
   const unidades = Number(x.aulas_unidades || 1);
   const unidadeTxt = unidades > 1 ? ` · ${unidades} aulas consecutivas` : '';
+  const jaTemReposicao = Number(x.reposicao_id_ativa || 0) > 0;
   const reposicao = comAcoes && ['CANCELADA','FALTOU'].includes(x.status)
-    ? `<button type="button" class="mini plan" data-repor-aula="${x.id}">↪️ Repor</button>` : '';
+    ? (jaTemReposicao
+      ? `<span class="plan-badge">↪️ Reposição agendada</span>`
+      : `<button type="button" class="mini plan" data-repor-aula="${x.id}">↪️ Repor</button>`)
+    : '';
+  const badgeReposicao = x.reposicao_de_id
+    ? `<span class="plan-badge replacement-badge">↪️ Reposição${x.reposicao_data_original ? ` da aula de ${fmtData(x.reposicao_data_original)}` : ''}</span>`
+    : '';
   const podeArquivar = comAcoes && !['REALIZADA','FALTOU'].includes(x.status);
+  const whatsapp = podeEnviarWhatsAppAula(x)
+    ? `<button type="button" class="mini secondary" data-whatsapp-aula="${x.id}">📲 WhatsApp</button>`
+    : '';
 
   return `<div class="lesson ${String(x.status || '').toLowerCase()}">
     <div class="lesson-time">${hora(x.hora_inicio)}</div>
@@ -205,12 +275,14 @@ function aulaHtml(x, comAcoes = false) {
       <small>👨‍🏫 ${esc(x.instrutor_nome)} · 🚗 ${esc(x.veiculo_nome)} ${esc(x.veiculo_placa || '')}</small>
       <small>📍 ${esc(x.local_nome)} · ${statusLabel(x.status)}${unidadeTxt}</small>
       ${plano}
+      ${badgeReposicao}
     </div>
     ${comAcoes ? `<div class="actions-row lesson-actions">
       ${reposicao}
+      ${whatsapp}
       <button type="button" class="mini edit" data-edit-aula="${x.id}">✏️ Alterar</button>
       ${podeArquivar ? `<button type="button" class="mini delete" data-del-aula="${x.id}">🗃️ Arquivar</button>` : ''}
-    </div>` : ''}
+    </div>` : (whatsapp ? `<div class="actions-row lesson-actions">${whatsapp}</div>` : '')}
   </div>`;
 }
 
@@ -540,6 +612,7 @@ function preencherSelects() {
 
 function bindDynamic() {
   $$('[data-edit-aluno]').forEach(b => b.onclick = () => editarAluno(Number(b.dataset.editAluno)));
+  $$('[data-history-aluno]').forEach(b => b.onclick = () => abrirHistoricoAluno(Number(b.dataset.historyAluno)));
   $$('[data-del-aluno]').forEach(b => b.onclick = () => pedirExcluirAluno(Number(b.dataset.delAluno)));
   $$('[data-reactivate-aluno]').forEach(b => b.onclick = () => reativarAluno(Number(b.dataset.reactivateAluno)));
   $$('[data-plan-aluno]').forEach(b => b.onclick = () => abrirPlano(Number(b.dataset.planAluno)));
@@ -594,7 +667,7 @@ async function health() {
   try {
     const h = await api('/api/health');
     const seguranca = h.security_ready ? ' · 🔒 acesso protegido' : ' · ⛔ proteção precisa ser configurada';
-    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '1.8.1'}${seguranca}.`;
+    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '2.3.1'}${seguranca}.`;
     $('#db').className = h.security_ready ? 'db ok' : 'db fail';
   } catch {
     $('#db').textContent = '🔴 Banco não conectado. Verifique DATABASE_URL no Render.';
@@ -711,7 +784,122 @@ $('#fAluno').onsubmit = async e => {
 };
 
 
-// ========================= V2.0 — ENCONTRAR HORÁRIO LIVRE =========================
+
+// ========================= V2.2 — HISTÓRICO COMPLETO DO ALUNO =========================
+function historicoMetricHtml(rotulo, valor, detalhe = '') {
+  return `<div class="history-metric"><span>${esc(rotulo)}</span><b>${esc(valor)}</b>${detalhe ? `<small>${esc(detalhe)}</small>` : ''}</div>`;
+}
+
+function historicoPlanoHtml(p) {
+  const dias = (Array.isArray(p.dias_semana) ? p.dias_semana : [])
+    .map(d => nomesDias[Number(d)] || d).join(', ');
+  return `<div class="history-plan ${p.ativo ? '' : 'inactive'}">
+    <div>
+      <b>🔁 Plano #${p.id}</b>
+      <small>${esc(dias || 'Dia fixo')} às ${esc(hora(p.hora_inicio))} · início ${esc(fmtData(p.data_inicio))}</small>
+      <small>👨‍🏫 ${esc(p.instrutor_nome)} · 🚗 ${esc(p.veiculo_nome)} ${esc(p.veiculo_placa || '')} · 📍 ${esc(p.local_nome)}</small>
+      ${p.observacoes ? `<small>📝 ${esc(p.observacoes)}</small>` : ''}
+    </div>
+    <div class="history-plan-side">
+      <span class="resource-status ${p.ativo ? 'active' : 'inactive'}">${p.ativo ? 'Ativo' : 'Encerrado'}</span>
+      <small>${Number(p.aulas_geradas || 0)} aula(s) gerada(s)</small>
+    </div>
+  </div>`;
+}
+
+function historicoAulaHtml(a) {
+  const unidades = Number(a.aulas_unidades || 1);
+  const origem = a.reposicao_de_id
+    ? `<span class="plan-badge replacement-badge">↪️ Reposição da aula de ${esc(fmtData(a.reposicao_data_original))}${a.reposicao_hora_original ? ` às ${esc(hora(a.reposicao_hora_original))}` : ''}</span>`
+    : '';
+  const gerou = Number(a.reposicoes_geradas || 0) > 0
+    ? `<span class="plan-badge">↪️ ${Number(a.reposicoes_geradas)} reposição(ões) vinculada(s)</span>`
+    : '';
+  const plano = a.plan_id ? `<span class="plan-badge">🔁 Plano ${a.numero_plano || ''}${a.excecao_plano ? ' · alterada' : ''}</span>` : '';
+  const arquivada = a.arquivada ? `<span class="history-archived">🗃️ Arquivada</span>` : '';
+  return `<div class="history-event ${String(a.status || '').toLowerCase()} ${a.arquivada ? 'archived' : ''}">
+    <div class="history-date">
+      <b>${esc(fmtData(a.data_aula))}</b>
+      <strong>${esc(hora(a.hora_inicio))}</strong>
+    </div>
+    <div class="history-event-main">
+      <div class="history-event-title">
+        <b>${esc(statusLabel(a.status))}</b>
+        <span>${unidades} aula${unidades === 1 ? '' : 's'} · ${Number(a.duracao_minutos || 0)} min</span>
+      </div>
+      <small>👨‍🏫 ${esc(a.instrutor_nome)} · 🚗 ${esc(a.veiculo_nome)} ${esc(a.veiculo_placa || '')}</small>
+      <small>📍 ${esc(a.local_nome)}</small>
+      <div class="history-badges">${plano}${origem}${gerou}${arquivada}</div>
+      ${a.observacoes ? `<div class="history-note">📝 ${esc(a.observacoes).replace(/\n/g, '<br>')}</div>` : ''}
+      ${podeEnviarWhatsAppAula(a) ? `<div class="actions-row"><button type="button" class="mini secondary" data-whatsapp-aula="${a.id}">📲 Enviar WhatsApp</button></div>` : ''}
+    </div>
+  </div>`;
+}
+
+async function abrirHistoricoAluno(id) {
+  $('#historicoTitulo').textContent = '📚 Histórico do aluno';
+  $('#historicoSubtitulo').textContent = 'Carregando informações...';
+  $('#historicoSituacao').textContent = '—';
+  $('#historicoResumo').innerHTML = '<div class="empty small-empty">Carregando resumo...</div>';
+  $('#historicoPlanos').innerHTML = '<div class="empty small-empty">Carregando planos...</div>';
+  $('#historicoAulas').innerHTML = '<div class="empty small-empty">Carregando aulas...</div>';
+  $('#historicoPlanosQtd').textContent = '0';
+  $('#historicoAulasQtd').textContent = '0';
+  $('#erroHistoricoAluno').classList.add('hide');
+  open('mHistoricoAluno');
+
+  try {
+    const h = await api(`/api/alunos/${id}/historico`);
+    const a = h.aluno || {};
+    const r = h.resumo || {};
+    const planosHistorico = Array.isArray(h.planos) ? h.planos : [];
+    const aulasHistorico = Array.isArray(h.aulas) ? h.aulas : [];
+    historicoWhatsAppPorAula = new Map(aulasHistorico.map(x => [Number(x.id), {
+      ...x,
+      aluno_id: Number(a.id),
+      aluno_nome: a.nome,
+      aluno_whatsapp: a.whatsapp
+    }]));
+
+    $('#historicoTitulo').textContent = `📚 Histórico — ${a.nome || 'Aluno'}`;
+    $('#historicoSubtitulo').textContent = `Categoria ${a.categoria || '—'} · CPF ${a.cpf_mascarado || 'não informado'} · ${a.whatsapp || 'sem WhatsApp'}`;
+    $('#historicoSituacao').textContent = a.ativo ? 'Ativo' : 'Inativo';
+    $('#historicoSituacao').className = `remaining-badge ${a.ativo ? '' : 'history-inactive-badge'}`;
+
+    $('#historicoResumo').innerHTML = [
+      historicoMetricHtml('Contratadas', Number(r.contratadas || 0)),
+      historicoMetricHtml('Realizadas', Number(r.realizadas || 0), Number(r.realizadas_anteriores || 0) ? `${Number(r.realizadas_anteriores)} anteriores ao AutoAgenda` : ''),
+      historicoMetricHtml('Aulas futuras', Number(r.futuras || 0)),
+      historicoMetricHtml('Saldo restante', Number(r.restantes || 0), 'contratadas menos realizadas'),
+      historicoMetricHtml('A programar', Number(r.a_programar || 0), 'descontando aulas futuras'),
+      historicoMetricHtml('Faltas', Number(r.faltas || 0)),
+      historicoMetricHtml('Cancelamentos', Number(r.cancelamentos || 0)),
+      historicoMetricHtml('Reposições', Number(r.reposicoes || 0)),
+      historicoMetricHtml('Planos', Number(r.planos_total || 0), `${Number(r.planos_ativos || 0)} ativo(s)`),
+      historicoMetricHtml('Primeira aula', r.primeira_aula ? fmtData(r.primeira_aula) : '—'),
+      historicoMetricHtml('Última no histórico', r.ultima_aula ? fmtData(r.ultima_aula) : '—'),
+      historicoMetricHtml('Última realizada', r.ultima_realizada ? fmtData(r.ultima_realizada) : '—')
+    ].join('');
+
+    $('#historicoPlanosQtd').textContent = String(planosHistorico.length);
+    $('#historicoPlanos').innerHTML = planosHistorico.length
+      ? planosHistorico.map(historicoPlanoHtml).join('')
+      : '<div class="empty small-empty">Nenhum plano registrado para este aluno.</div>';
+
+    $('#historicoAulasQtd').textContent = String(aulasHistorico.length);
+    $('#historicoAulas').innerHTML = aulasHistorico.length
+      ? aulasHistorico.map(historicoAulaHtml).join('')
+      : '<div class="empty small-empty">Nenhuma aula registrada para este aluno.</div>';
+  } catch (e) {
+    $('#erroHistoricoAluno').textContent = e.message || 'Erro ao carregar histórico.';
+    $('#erroHistoricoAluno').classList.remove('hide');
+    $('#historicoResumo').innerHTML = '';
+    $('#historicoPlanos').innerHTML = '';
+    $('#historicoAulas').innerHTML = '';
+  }
+}
+
+// ========================= V2.1 — ENCONTRAR HORÁRIO LIVRE / REAGENDAMENTO =========================
 function preencherBuscaHorario() {
   $('#hAluno').innerHTML = alunos.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('');
   $('#hInstrutor').innerHTML = instrutores.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('');
@@ -726,6 +914,13 @@ function abrirBuscaHorario(prefill = {}) {
     abrirTab('configuracoes');
     return;
   }
+  const modoReposicao = Number(prefill.origem_aula_id || 0) > 0;
+  $('#hOrigemAulaId').value = modoReposicao ? String(prefill.origem_aula_id) : '';
+  $('#tituloHorarioLivre').textContent = modoReposicao ? '↪️ Reagendamento inteligente' : '🔎 Encontrar horário livre';
+  $('#textoHorarioLivre').textContent = modoReposicao
+    ? 'O AutoAgenda vai sugerir até 5 horários para repor a aula, preservando a aula original no histórico.'
+    : 'O AutoAgenda procura os próximos horários compatíveis com aluno, instrutor, veículo, funcionamento, folgas, manutenção e aulas já existentes.';
+  $('#buscarHorariosLivres').textContent = modoReposicao ? '🔎 Procurar horários para reposição' : '🔎 Procurar os 5 próximos horários';
   preencherBuscaHorario();
   $('#hDataInicio').value = prefill.data || proximaDataFuncionamento(iso());
   $('#hDuracao').value = String(prefill.duracao || Number(configFuncionamento.duracao_padrao_minutos || 50));
@@ -769,6 +964,7 @@ async function procurarHorariosLivres() {
       </button>`).join('')}`;
     $$('[data-free-slot-index]').forEach(b => b.onclick = () => {
       const x = r.resultados[Number(b.dataset.freeSlotIndex)];
+      const origemAulaId = Number($('#hOrigemAulaId').value || 0);
       const prefill = {
         aluno_id: Number($('#hAluno').value),
         instrutor_id: Number($('#hInstrutor').value),
@@ -777,7 +973,9 @@ async function procurarHorariosLivres() {
         data: x.data_aula,
         hora: x.hora_inicio,
         duracao: Number(x.duracao_minutos),
-        unidades: Number(x.aulas_unidades)
+        unidades: Number(x.aulas_unidades),
+        reposicao: origemAulaId > 0,
+        reposicao_de_id: origemAulaId || null
       };
       close('mHorarioLivre');
       novaAula(prefill);
@@ -804,16 +1002,25 @@ function novaAula(prefill = null) {
     return;
   }
   $('#fAula').reset();
+  aulaEdicaoAtual = null;
+  $('#whatsappAula').classList.add('hide');
   $('#aulaId').value = '';
   $('#aulaPlanId').value = '';
+  $('#aulaReposicaoDeId').value = prefill?.reposicao_de_id || '';
+  $('#aulaStatusOriginal').value = '';
+  $('#aAluno').disabled = false;
   const dataBase = prefill?.data || $('#filtroData').value || iso();
   $('#aData').value = prefill?.data ? dataBase : proximaDataFuncionamento(dataBase);
   $('#aHora').value = prefill?.hora || hora(configFuncionamento.hora_abertura || '07:00');
   $('#aDur').value = String(prefill?.duracao || Number(configFuncionamento.duracao_padrao_minutos || 50));
   $('#aUnidades').value = String(prefill?.unidades || 1);
   $('#aStatus').value = 'AGENDADA';
-  $('#tituloAula').textContent = prefill?.reposicao ? 'Repor aula' : 'Nova aula';
+  $('#tituloAula').textContent = prefill?.reposicao ? '↪️ Agendar reposição' : 'Nova aula';
   $('#salvarAula').textContent = prefill?.reposicao ? 'Agendar reposição' : 'Agendar aula';
+  $('#reposicaoBox').classList.toggle('hide', !prefill?.reposicao);
+  $('#reposicaoOrigemTexto').textContent = prefill?.reposicao
+    ? 'A nova aula ficará vinculada à aula original. A aula cancelada/faltada continuará preservada no histórico.'
+    : '';
   $('#erroAula').classList.add('hide');
   $('#serieBox').classList.add('hide');
   $('#aplicarProximas').checked = false;
@@ -822,6 +1029,7 @@ function novaAula(prefill = null) {
   if (prefill?.instrutor_id) $('#aInstrutor').value = prefill.instrutor_id;
   if (prefill?.veiculo_id) $('#aVeiculo').value = prefill.veiculo_id;
   if (prefill?.local_id) $('#aLocal').value = prefill.local_id;
+  if (prefill?.reposicao_de_id) $('#aAluno').disabled = true;
   $('#aObs').value = prefill?.observacoes || '';
   open('mAula');
 }
@@ -830,9 +1038,14 @@ async function editarAula(id) {
   try {
     const a = await api('/api/aulas/' + id);
     if (a.arquivada) return toast('Esta aula está arquivada.');
+    aulaEdicaoAtual = a;
+    $('#whatsappAula').classList.toggle('hide', !podeEnviarWhatsAppAula(a));
     preencherSelects();
     $('#aulaId').value = a.id;
     $('#aulaPlanId').value = a.plan_id || '';
+    $('#aulaReposicaoDeId').value = a.reposicao_de_id || '';
+    $('#aulaStatusOriginal').value = a.status || '';
+    $('#aAluno').disabled = false;
     $('#aAluno').value = a.aluno_id;
     $('#aInstrutor').value = a.instrutor_id;
     $('#aVeiculo').value = a.veiculo_id;
@@ -843,8 +1056,12 @@ async function editarAula(id) {
     $('#aUnidades').value = String(a.aulas_unidades || 1);
     $('#aStatus').value = a.status || 'AGENDADA';
     $('#aObs').value = a.observacoes || '';
-    $('#tituloAula').textContent = 'Alterar aula';
+    $('#tituloAula').textContent = a.reposicao_de_id ? 'Alterar reposição' : 'Alterar aula';
     $('#salvarAula').textContent = 'Salvar alterações';
+    $('#reposicaoBox').classList.toggle('hide', !a.reposicao_de_id);
+    $('#reposicaoOrigemTexto').textContent = a.reposicao_de_id
+      ? `Esta aula é uma reposição${a.reposicao_data_original ? ` da aula de ${fmtData(a.reposicao_data_original)}` : ''}. O vínculo histórico será preservado.`
+      : '';
     $('#erroAula').classList.add('hide');
     $('#aplicarProximas').checked = false;
     $('#serieBox').classList.toggle('hide', !a.plan_id);
@@ -864,30 +1081,49 @@ function pedirExcluirAula(id) {
   }, 'Arquivar');
 }
 
-function reporAula(id) {
-  const a = aulas.find(x => Number(x.id) === id);
-  if (!a) return;
-  novaAula({
-    reposicao: true,
-    aluno_id: a.aluno_id,
-    instrutor_id: a.instrutor_id,
-    veiculo_id: a.veiculo_id,
-    local_id: a.local_id,
-    data: $('#filtroData').value || iso(),
-    hora: hora(a.hora_inicio),
-    duracao: a.duracao_minutos,
-    unidades: a.aulas_unidades,
-    observacoes: `Reposição da aula de ${fmtData(a.data_aula)}.`
-  });
+async function reporAula(id) {
+  try {
+    let a = aulas.find(x => Number(x.id) === Number(id));
+    if (!a) a = await api('/api/aulas/' + id);
+    if (!['CANCELADA','FALTOU'].includes(String(a.status || '').toUpperCase())) {
+      return toast('A reposição só pode ser criada para uma aula cancelada ou com falta.');
+    }
+    if (Number(a.reposicao_id_ativa || 0) > 0) {
+      return toast('Esta aula já possui uma reposição ativa.');
+    }
+    abrirBuscaHorario({
+      origem_aula_id: Number(a.id),
+      aluno_id: Number(a.aluno_id),
+      instrutor_id: Number(a.instrutor_id),
+      veiculo_id: Number(a.veiculo_id),
+      local_id: Number(a.local_id),
+      data: iso(),
+      duracao: Number(a.duracao_minutos || configFuncionamento.duracao_padrao_minutos || 50),
+      unidades: Number(a.aulas_unidades || 1)
+    });
+  } catch (e) { toast(e.message); }
 }
 
 $('#novaAula').onclick = () => novaAula();
 $('#novaAulaAgenda').onclick = () => novaAula();
+$('#whatsappAula').onclick = () => {
+  const id = Number($('#aulaId').value || 0);
+  if (id) abrirWhatsAppAula(id);
+};
+
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-whatsapp-aula]');
+  if (!b) return;
+  abrirWhatsAppAula(Number(b.dataset.whatsappAula));
+});
+
 $('#fAula').onsubmit = async e => {
   e.preventDefault();
   $('#erroAula').classList.add('hide');
   const id = Number($('#aulaId').value || 0);
   const planId = Number($('#aulaPlanId').value || 0);
+  const reposicaoDeId = Number($('#aulaReposicaoDeId').value || 0);
+  const statusOriginal = $('#aulaStatusOriginal').value || '';
   const payload = {
     aluno_id: Number($('#aAluno').value),
     instrutor_id: Number($('#aInstrutor').value),
@@ -902,17 +1138,33 @@ $('#fAula').onsubmit = async e => {
   };
 
   try {
+    let resposta = null;
     if (id && planId && $('#aplicarProximas').checked) {
-      const r = await api(`/api/aulas/${id}/serie`, { method: 'PUT', body: JSON.stringify(payload) });
-      toast(`✅ Esta aula e mais ${Math.max(0, Number(r.alteradas || 1) - 1)} próximas foram alteradas.`);
+      resposta = await api(`/api/aulas/${id}/serie`, { method: 'PUT', body: JSON.stringify(payload) });
+      toast(`✅ Esta aula e mais ${Math.max(0, Number(resposta.alteradas || 1) - 1)} próximas foram alteradas.`);
+    } else if (!id && reposicaoDeId) {
+      resposta = await api(`/api/aulas/${reposicaoDeId}/reposicao`, { method:'POST', body:JSON.stringify(payload) });
+      toast('✅ Reposição agendada e vinculada ao histórico.');
     } else {
-      await api(id ? '/api/aulas/' + id : '/api/aulas', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) });
+      resposta = await api(id ? '/api/aulas/' + id : '/api/aulas', { method: id ? 'PUT' : 'POST', body: JSON.stringify(payload) });
       toast(id ? '✅ Aula alterada.' : '✅ Aula salva no banco.');
     }
     const dataEscolhida = $('#aData').value;
+    const oferecerReposicao = id > 0
+      && !['CANCELADA','FALTOU'].includes(String(statusOriginal).toUpperCase())
+      && ['CANCELADA','FALTOU'].includes(String(payload.status).toUpperCase());
     close('mAula');
+    $('#aAluno').disabled = false;
     $('#filtroData').value = dataEscolhida;
     await load();
+    if (oferecerReposicao) {
+      confirmar(
+        '↪️ Encontrar reposição?',
+        'A aula original foi preservada no histórico. Deseja que o AutoAgenda procure agora os próximos horários disponíveis para a reposição?',
+        () => reporAula(id),
+        'Procurar horários'
+      );
+    }
   } catch (x) {
     let msg = x.message;
     if (x.status === 409) msg = x.data?.error || '⚠️ Conflito de horário. Escolha outro horário.';

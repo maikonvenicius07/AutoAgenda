@@ -1,4 +1,4 @@
--- AutoAgenda V1.9.0
+-- AutoAgenda V2.3.1
 -- Schema compatível com o server.js atual.
 -- O servidor cria/migra automaticamente; este arquivo serve para referência e execução manual controlada.
 
@@ -135,6 +135,7 @@ CREATE TABLE IF NOT EXISTS autoagenda.aulas (
   excecao_plano BOOLEAN NOT NULL DEFAULT FALSE,
   arquivada BOOLEAN NOT NULL DEFAULT FALSE,
   arquivada_em TIMESTAMP,
+  reposicao_de_id INTEGER REFERENCES autoagenda.aulas(id) ON DELETE RESTRICT,
   criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
   atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
 );
@@ -158,6 +159,7 @@ ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS aulas_unidades INTEGER NOT
 ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS excecao_plano BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS arquivada BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS arquivada_em TIMESTAMP;
+ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS reposicao_de_id INTEGER;
 
 DO $$
 BEGIN
@@ -172,10 +174,24 @@ BEGIN
   END IF;
 END $$;
 
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'aulas_reposicao_de_id_fkey'
+      AND conrelid = 'autoagenda.aulas'::regclass
+  ) THEN
+    ALTER TABLE autoagenda.aulas
+      ADD CONSTRAINT aulas_reposicao_de_id_fkey
+      FOREIGN KEY (reposicao_de_id) REFERENCES autoagenda.aulas(id) ON DELETE RESTRICT;
+  END IF;
+END $$;
+
 CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_data ON autoagenda.aulas(data_aula);
 CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_ativas_data ON autoagenda.aulas(data_aula, hora_inicio) WHERE arquivada = FALSE;
 CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_instrutor_data ON autoagenda.aulas(instrutor_id, data_aula);
 CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_veiculo_data ON autoagenda.aulas(veiculo_id, data_aula);
 CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_aluno_data ON autoagenda.aulas(aluno_id, data_aula);
 CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_plan ON autoagenda.aulas(plan_id, data_aula, hora_inicio);
+CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_reposicao ON autoagenda.aulas(reposicao_de_id) WHERE reposicao_de_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_autoagenda_planos_aluno_ativo ON autoagenda.planos_aula(aluno_id, ativo);

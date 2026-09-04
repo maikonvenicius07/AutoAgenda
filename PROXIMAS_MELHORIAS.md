@@ -1,7 +1,26 @@
 # Próximas melhorias — AutoAgenda
 
-Versão atual: **V2.0 — Encontrar horário livre**.
+Versão atual consolidada: **V2.3.1**.
 
-Próxima etapa do roteiro: **ETAPA 7 — Reagendamento inteligente**.
+Concluído até aqui:
 
-Objetivo: quando uma aula for cancelada ou marcada como falta, oferecer de 3 a 5 horários livres usando o mesmo motor de disponibilidade da V2.0, preservar a aula original no histórico e vincular a nova aula como reposição.
+- Etapas 1 a 9 do roteiro principal;
+- correções de integridade e segurança;
+- busca de horários livres;
+- reagendamento inteligente;
+- histórico do aluno;
+- WhatsApp simples sem API paga.
+
+## Próxima etapa
+
+**ETAPA 10 — Confirmação da aula**
+
+Adicionar situação de confirmação independente do status operacional da aula:
+
+- aguardando confirmação;
+- confirmada;
+- pediu reagendamento.
+
+A informação deverá aparecer na agenda e deixar a estrutura pronta para futura confirmação automática via WhatsApp, mantendo a alteração manual nesta fase.
+
+Depois seguem: lembretes, dashboard, relatórios, financeiro, backup/exportação, login individual e permissões.

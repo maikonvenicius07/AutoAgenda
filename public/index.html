@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#111111">
   <title>AutoAgenda</title>
-  <link rel="stylesheet" href="style.css?v=1.9.0">
+  <link rel="stylesheet" href="style.css?v=2.3.1">
 </head>
 <body>
 <header>
@@ -244,12 +244,48 @@
 </div>
 
 
-<!-- V2.0 — ENCONTRAR HORÁRIO LIVRE -->
+<!-- V2.2 — HISTÓRICO COMPLETO DO ALUNO -->
+<div id="mHistoricoAluno" class="modal hide">
+  <div class="box box-wide history-box">
+    <button type="button" class="x" data-close="mHistoricoAluno">✕</button>
+    <div class="history-heading">
+      <div>
+        <h2 id="historicoTitulo">📚 Histórico do aluno</h2>
+        <p id="historicoSubtitulo" class="modal-text">Carregando informações...</p>
+      </div>
+      <span id="historicoSituacao" class="remaining-badge">—</span>
+    </div>
+
+    <div id="historicoResumo" class="history-summary"></div>
+
+    <section class="history-section">
+      <div class="history-section-title">
+        <div><h3>🔁 Planos</h3><small>Planos ativos e encerrados vinculados ao aluno.</small></div>
+        <span id="historicoPlanosQtd" class="plan-badge">0</span>
+      </div>
+      <div id="historicoPlanos" class="history-plans"></div>
+    </section>
+
+    <section class="history-section">
+      <div class="history-section-title">
+        <div><h3>🗓️ Linha do tempo das aulas</h3><small>Ordem cronológica, das aulas mais recentes para as mais antigas.</small></div>
+        <span id="historicoAulasQtd" class="plan-badge">0</span>
+      </div>
+      <div id="historicoAulas" class="history-timeline"></div>
+    </section>
+
+    <div id="erroHistoricoAluno" class="erro hide"></div>
+  </div>
+</div>
+
+
+<!-- V2.1 — ENCONTRAR HORÁRIO LIVRE / REAGENDAMENTO INTELIGENTE -->
 <div id="mHorarioLivre" class="modal hide">
   <div class="box search-slot-box">
     <button type="button" class="x" data-close="mHorarioLivre">✕</button>
-    <h2>🔎 Encontrar horário livre</h2>
-    <p class="modal-text">O AutoAgenda procura os próximos horários compatíveis com aluno, instrutor, veículo, funcionamento, folgas, manutenção e aulas já existentes.</p>
+    <h2 id="tituloHorarioLivre">🔎 Encontrar horário livre</h2>
+    <p class="modal-text" id="textoHorarioLivre">O AutoAgenda procura os próximos horários compatíveis com aluno, instrutor, veículo, funcionamento, folgas, manutenção e aulas já existentes.</p>
+    <input id="hOrigemAulaId" type="hidden">
     <div class="form-2">
       <label>Aluno<select id="hAluno" required></select></label>
       <label>Instrutor<select id="hInstrutor" required></select></label>
@@ -276,6 +312,9 @@
     <h2 id="tituloAula">Nova aula</h2>
     <input id="aulaId" type="hidden">
     <input id="aulaPlanId" type="hidden">
+    <input id="aulaReposicaoDeId" type="hidden">
+    <input id="aulaStatusOriginal" type="hidden">
+    <div id="reposicaoBox" class="series-box hide"><b>↪️ Reposição</b><small id="reposicaoOrigemTexto">A nova aula ficará vinculada à aula original e o histórico será preservado.</small></div>
     <label>Aluno<select id="aAluno" required></select></label>
     <label>Instrutor<select id="aInstrutor" required></select></label>
     <label>Veículo<select id="aVeiculo" required></select></label>
@@ -298,6 +337,7 @@
     </div>
 
     <div id="erroAula" class="erro hide"></div>
+    <button type="button" id="whatsappAula" class="secondary hide">📲 Enviar WhatsApp</button>
     <button id="salvarAula">Agendar aula</button>
   </form>
 </div>
@@ -489,6 +529,6 @@
 </div>
 
 <div id="toast" class="toast hide"></div>
-<script src="app.js?v=1.9.0"></script>
+<script src="app.js?v=2.3.1"></script>
 </body>
 </html>

@@ -125,3 +125,34 @@ nav{grid-template-columns:repeat(6,1fr)}
 .free-slot-option span{display:grid;gap:2px}.free-slot-option span b{font-size:14px}.free-slot-option span small{font-size:11px;color:#777}
 .free-slot-option strong{font-size:21px}.free-slot-option em{font-style:normal;font-size:11px;font-weight:900;color:#554600}
 @media(max-width:650px){.header-actions{width:100%}.header-actions button{flex:1}.free-slot-option{grid-template-columns:1fr auto}.free-slot-option em{grid-column:1/-1;text-align:right}}
+
+/* ========================= V2.2 HISTÓRICO COMPLETO DO ALUNO ========================= */
+.history-button{background:#e9eef7;color:#203b61}
+.history-box{width:min(940px,100%)}
+.history-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding-right:34px}
+.history-heading h2{margin-bottom:6px}
+.history-inactive-badge{background:#ececec;border-color:#d1d1d1;color:#666}
+.history-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:4px 0 8px}
+.history-metric{background:#f7f7f5;border:1px solid #e4e4df;border-radius:10px;padding:10px;min-width:0}
+.history-metric span{display:block;color:#777;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.02em}
+.history-metric b{display:block;font-size:20px;margin-top:4px;overflow-wrap:anywhere}
+.history-metric small{display:block;color:#777;font-size:10px;margin-top:3px}
+.history-section{display:grid;gap:9px;border-top:1px solid #e3e3df;padding-top:13px;margin-top:4px}
+.history-section-title{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.history-section-title h3{margin:0;font-size:15px}.history-section-title small{color:#777}
+.history-plans,.history-timeline{display:grid;gap:8px}
+.history-plans{max-height:250px;overflow:auto;padding-right:2px}
+.history-plan{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:10px;border:1px solid #deded9;border-radius:10px;background:#fafafa}
+.history-plan.inactive{opacity:.7;border-style:dashed}.history-plan>div:first-child{display:grid;gap:4px}.history-plan small{color:#666}
+.history-plan-side{display:grid;justify-items:end;gap:5px;white-space:nowrap}.history-plan-side small{font-size:10px}
+.history-timeline{max-height:430px;overflow:auto;padding-right:2px}
+.history-event{display:grid;grid-template-columns:116px 1fr;gap:12px;border:1px solid #deded9;border-left:5px solid var(--yellow);border-radius:10px;background:#fff;padding:11px}
+.history-event.confirmada{border-left-color:#28a05a}.history-event.realizada{border-left-color:#5b77bb}.history-event.cancelada,.history-event.faltou{border-left-color:var(--red)}
+.history-event.archived{opacity:.72;border-style:dashed}
+.history-date{display:grid;align-content:start;gap:3px;border-right:1px solid #ececea;padding-right:10px}.history-date b{font-size:12px}.history-date strong{font-size:20px}
+.history-event-main{display:grid;gap:5px;min-width:0}.history-event-main>small{color:#666}.history-event-title{display:flex;align-items:center;justify-content:space-between;gap:8px}.history-event-title span{font-size:11px;color:#666}
+.history-badges{display:flex;gap:5px;flex-wrap:wrap}.history-archived{display:inline-block;background:#ececec;color:#666;border-radius:999px;padding:4px 8px;font-size:10px;font-weight:800}
+.history-note{background:#f7f7f5;border-radius:7px;padding:7px 8px;color:#555;font-size:11px;overflow-wrap:anywhere}
+@media(max-width:800px){.history-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.history-plan{flex-direction:column}.history-plan-side{justify-items:start}.history-event{grid-template-columns:94px 1fr}}
+@media(max-width:520px){.history-summary{grid-template-columns:1fr 1fr}.history-heading{flex-direction:column}.history-event{grid-template-columns:1fr}.history-date{border-right:0;border-bottom:1px solid #ececea;padding:0 0 7px;grid-template-columns:1fr auto;align-items:center}.history-event-title{align-items:flex-start;flex-direction:column}}
+

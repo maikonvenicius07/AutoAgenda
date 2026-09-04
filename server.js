@@ -7,7 +7,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '2.3.1';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -48,6 +48,54 @@ const ADMIN_PASSWORD = String(process.env.AUTOAGENDA_PASSWORD || '');
 const AUTH_CONFIGURED = Boolean(ADMIN_USER && ADMIN_PASSWORD);
 const AUTH_REQUIRED = IS_PRODUCTION || AUTH_CONFIGURED;
 
+// Proteção simples contra tentativas repetidas de login.
+// É propositalmente mantida em memória: não altera o banco nem grava credenciais.
+const AUTH_MAX_FAILURES = 8;
+const AUTH_WINDOW_MS = 10 * 60 * 1000;
+const AUTH_BLOCK_MS = 15 * 60 * 1000;
+const authAttempts = new Map();
+
+function authClientKey(req) {
+  const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  return forwarded || req.ip || req.socket?.remoteAddress || 'desconhecido';
+}
+
+function authState(req) {
+  const key = authClientKey(req);
+  const now = Date.now();
+  let state = authAttempts.get(key);
+  if (!state) return { key, blocked: false, retryAfter: 0 };
+
+  if (state.blockedUntil && state.blockedUntil > now) {
+    return { key, blocked: true, retryAfter: Math.max(1, Math.ceil((state.blockedUntil - now) / 1000)) };
+  }
+
+  if ((state.firstFailureAt || 0) + AUTH_WINDOW_MS <= now) {
+    authAttempts.delete(key);
+    state = null;
+  } else if (state?.blockedUntil && state.blockedUntil <= now) {
+    authAttempts.delete(key);
+    state = null;
+  }
+  return { key, blocked: false, retryAfter: 0 };
+}
+
+function registrarFalhaAuth(key) {
+  const now = Date.now();
+  let state = authAttempts.get(key);
+  if (!state || (state.firstFailureAt || 0) + AUTH_WINDOW_MS <= now) {
+    state = { failures: 0, firstFailureAt: now, blockedUntil: 0 };
+  }
+  state.failures += 1;
+  if (state.failures >= AUTH_MAX_FAILURES) state.blockedUntil = now + AUTH_BLOCK_MS;
+  authAttempts.set(key, state);
+  return state;
+}
+
+function limparFalhasAuth(key) {
+  authAttempts.delete(key);
+}
+
 function textoSeguroIgual(a, b) {
   const aa = Buffer.from(String(a || ''), 'utf8');
   const bb = Buffer.from(String(b || ''), 'utf8');
@@ -76,6 +124,15 @@ app.use((req, res, next) => {
 
   if (!AUTH_CONFIGURED) return next();
 
+  const state = authState(req);
+  if (state.blocked) {
+    res.setHeader('Retry-After', String(state.retryAfter));
+    if (req.path.startsWith('/api/')) {
+      return res.status(429).json({ error: 'Muitas tentativas de acesso. Aguarde alguns minutos e tente novamente.' });
+    }
+    return res.status(429).type('text/plain; charset=utf-8').send('Muitas tentativas de acesso. Aguarde alguns minutos e tente novamente.');
+  }
+
   const auth = String(req.headers.authorization || '');
   if (auth.startsWith('Basic ')) {
     try {
@@ -83,8 +140,14 @@ app.use((req, res, next) => {
       const sep = decoded.indexOf(':');
       const user = sep >= 0 ? decoded.slice(0, sep) : decoded;
       const pass = sep >= 0 ? decoded.slice(sep + 1) : '';
-      if (textoSeguroIgual(user, ADMIN_USER) && textoSeguroIgual(pass, ADMIN_PASSWORD)) return next();
-    } catch {}
+      if (textoSeguroIgual(user, ADMIN_USER) && textoSeguroIgual(pass, ADMIN_PASSWORD)) {
+        limparFalhasAuth(state.key);
+        return next();
+      }
+      registrarFalhaAuth(state.key);
+    } catch {
+      registrarFalhaAuth(state.key);
+    }
   }
 
   res.setHeader('WWW-Authenticate', 'Basic realm="AutoAgenda", charset="UTF-8"');
@@ -330,6 +393,7 @@ async function initDatabase() {
     await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS excecao_plano BOOLEAN NOT NULL DEFAULT FALSE');
     await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS arquivada BOOLEAN NOT NULL DEFAULT FALSE');
     await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS arquivada_em TIMESTAMP');
+    await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS reposicao_de_id INTEGER');
 
     await client.query(`
       DO $$
@@ -344,6 +408,17 @@ async function initDatabase() {
           ADD CONSTRAINT aulas_plan_id_fkey
           FOREIGN KEY (plan_id) REFERENCES autoagenda.planos_aula(id) ON DELETE SET NULL;
         END IF;
+
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conname = 'aulas_reposicao_de_id_fkey'
+            AND conrelid = 'autoagenda.aulas'::regclass
+        ) THEN
+          ALTER TABLE autoagenda.aulas
+          ADD CONSTRAINT aulas_reposicao_de_id_fkey
+          FOREIGN KEY (reposicao_de_id) REFERENCES autoagenda.aulas(id) ON DELETE RESTRICT;
+        END IF;
       END $$;
     `);
 
@@ -353,6 +428,7 @@ async function initDatabase() {
     await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_veiculo_data ON autoagenda.aulas(veiculo_id, data_aula)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_aluno_data ON autoagenda.aulas(aluno_id, data_aula)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_plan ON autoagenda.aulas(plan_id, data_aula, hora_inicio)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_reposicao ON autoagenda.aulas(reposicao_de_id) WHERE reposicao_de_id IS NOT NULL');
     await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_planos_aluno_ativo ON autoagenda.planos_aula(aluno_id, ativo)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_instrutor_indisp_periodo ON autoagenda.instrutor_indisponibilidades(instrutor_id, data_inicio, data_fim)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_veiculo_indisp_periodo ON autoagenda.veiculo_indisponibilidades(veiculo_id, data_inicio, data_fim)');
@@ -1177,6 +1253,122 @@ app.get('/api/alunos/:id', async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao consultar aluno.' });
+  }
+});
+
+
+// ========================= V2.2 — HISTÓRICO COMPLETO DO ALUNO =========================
+// Consulta somente leitura. Não altera o cálculo de saldo já utilizado pelo AutoAgenda.
+app.get('/api/alunos/:id/historico', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: 'Aluno inválido.' });
+
+    const alunoQ = await query(`
+      SELECT id, nome, whatsapp, email, categoria, aulas_contratadas,
+             aulas_realizadas, aulas_realizadas_anteriores, observacoes,
+             ativo, criado_em, atualizado_em,
+             CASE WHEN LENGTH(COALESCE(cpf,'')) = 11
+                  THEN '***.***.***-' || RIGHT(cpf, 2)
+                  ELSE NULL END AS cpf_mascarado
+      FROM autoagenda.alunos
+      WHERE id = $1
+    `, [id]);
+    if (!alunoQ.rowCount) return res.status(404).json({ error: 'Aluno não encontrado.' });
+
+    const hoje = hojeApp();
+    const [metricasQ, aulasQ, planosQ] = await Promise.all([
+      query(`
+        SELECT
+          COALESCE(SUM(CASE
+            WHEN status='REALIZADA' AND arquivada=FALSE THEN aulas_unidades ELSE 0 END),0)::int AS realizadas_sistema,
+          COALESCE(SUM(CASE
+            WHEN data_aula >= $2::date
+             AND status IN ('AGENDADA','CONFIRMADA')
+             AND arquivada=FALSE THEN aulas_unidades ELSE 0 END),0)::int AS futuras_unidades,
+          COUNT(*) FILTER (WHERE status='FALTOU')::int AS faltas,
+          COUNT(*) FILTER (WHERE status='CANCELADA')::int AS cancelamentos,
+          COUNT(*) FILTER (WHERE reposicao_de_id IS NOT NULL)::int AS reposicoes,
+          COUNT(*)::int AS total_registros,
+          MIN(data_aula) AS primeira_aula,
+          MAX(data_aula) AS ultima_aula,
+          MAX(data_aula) FILTER (WHERE status='REALIZADA') AS ultima_realizada
+        FROM autoagenda.aulas
+        WHERE aluno_id=$1
+      `, [id, hoje]),
+      query(`
+        SELECT a.id, a.data_aula, a.hora_inicio, a.duracao_minutos,
+               a.status, a.observacoes, a.aulas_unidades,
+               a.plan_id, a.numero_plano, a.excecao_plano,
+               a.arquivada, a.arquivada_em, a.reposicao_de_id,
+               i.nome AS instrutor_nome,
+               v.nome AS veiculo_nome, v.placa AS veiculo_placa,
+               l.nome AS local_nome,
+               origem.data_aula AS reposicao_data_original,
+               origem.hora_inicio AS reposicao_hora_original,
+               COALESCE((
+                 SELECT COUNT(*) FROM autoagenda.aulas r
+                 WHERE r.reposicao_de_id=a.id
+               ),0)::int AS reposicoes_geradas
+        FROM autoagenda.aulas a
+        JOIN autoagenda.instrutores i ON i.id=a.instrutor_id
+        JOIN autoagenda.veiculos v ON v.id=a.veiculo_id
+        JOIN autoagenda.locais l ON l.id=a.local_id
+        LEFT JOIN autoagenda.aulas origem ON origem.id=a.reposicao_de_id
+        WHERE a.aluno_id=$1
+        ORDER BY a.data_aula DESC, a.hora_inicio DESC, a.id DESC
+      `, [id]),
+      query(`
+        SELECT p.id, p.data_inicio, p.hora_inicio, p.duracao_base_minutos,
+               p.aulas_por_encontro, p.total_aulas, p.dias_semana,
+               p.observacoes, p.ativo, p.criado_em, p.atualizado_em,
+               i.nome AS instrutor_nome,
+               v.nome AS veiculo_nome, v.placa AS veiculo_placa,
+               l.nome AS local_nome,
+               COALESCE((SELECT COUNT(*) FROM autoagenda.aulas a WHERE a.plan_id=p.id),0)::int AS encontros_gerados,
+               COALESCE((SELECT SUM(a.aulas_unidades) FROM autoagenda.aulas a WHERE a.plan_id=p.id),0)::int AS aulas_geradas
+        FROM autoagenda.planos_aula p
+        JOIN autoagenda.instrutores i ON i.id=p.instrutor_id
+        JOIN autoagenda.veiculos v ON v.id=p.veiculo_id
+        JOIN autoagenda.locais l ON l.id=p.local_id
+        WHERE p.aluno_id=$1
+        ORDER BY p.criado_em DESC, p.id DESC
+      `, [id])
+    ]);
+
+    const aluno = alunoQ.rows[0];
+    const m = metricasQ.rows[0] || {};
+    const contratadas = Number(aluno.aulas_contratadas || 0);
+    const anteriores = Number(aluno.aulas_realizadas_anteriores ?? aluno.aulas_realizadas ?? 0);
+    const realizadasSistema = Number(m.realizadas_sistema || 0);
+    const realizadas = Math.max(0, anteriores) + Math.max(0, realizadasSistema);
+    const futuras = Math.max(0, Number(m.futuras_unidades || 0));
+
+    // Mesma lógica já adotada nos cartões e na validação do saldo:
+    // "restantes" = contratado - realizado; "a_programar" desconta também as aulas futuras.
+    const resumo = {
+      contratadas,
+      realizadas_anteriores: anteriores,
+      realizadas_sistema: realizadasSistema,
+      realizadas,
+      futuras,
+      restantes: Math.max(0, contratadas - realizadas),
+      a_programar: Math.max(0, contratadas - realizadas - futuras),
+      faltas: Number(m.faltas || 0),
+      cancelamentos: Number(m.cancelamentos || 0),
+      reposicoes: Number(m.reposicoes || 0),
+      planos_total: planosQ.rowCount,
+      planos_ativos: planosQ.rows.filter(p => p.ativo).length,
+      total_registros: Number(m.total_registros || 0),
+      primeira_aula: m.primeira_aula || null,
+      ultima_aula: m.ultima_aula || null,
+      ultima_realizada: m.ultima_realizada || null
+    };
+
+    res.json({ aluno, resumo, planos: planosQ.rows, aulas: aulasQ.rows });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao consultar histórico do aluno.' });
   }
 });
 
@@ -2340,7 +2532,7 @@ app.post('/api/planos/preview', async (req, res) => {
     });
   } catch (error) {
     console.error(error);
-    res.status(error.statusCode || 500).json({ error: error.message || 'Erro ao gerar prévia.' });
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao gerar prévia.' });
   } finally {
     client.release();
   }
@@ -2455,7 +2647,7 @@ app.post('/api/planos', async (req, res) => {
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
     console.error(error);
-    res.status(error.statusCode || 500).json({ error: error.message || 'Erro ao criar agenda automática.' });
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao criar agenda automática.' });
   } finally {
     client.release();
   }
@@ -2536,12 +2728,22 @@ app.get('/api/aulas', async (req, res) => {
              a.data_aula, a.hora_inicio, a.duracao_minutos,
              a.status, a.observacoes, a.criado_em,
              a.plan_id, a.numero_plano, a.aulas_unidades, a.excecao_plano,
-             a.arquivada, a.arquivada_em
+             a.arquivada, a.arquivada_em, a.reposicao_de_id,
+             origem.data_aula AS reposicao_data_original,
+             origem.hora_inicio AS reposicao_hora_original,
+             COALESCE((
+               SELECT MIN(r.id)
+               FROM autoagenda.aulas r
+               WHERE r.reposicao_de_id = a.id
+                 AND r.arquivada = FALSE
+                 AND r.status IN ('AGENDADA','CONFIRMADA','REALIZADA')
+             ), 0)::int AS reposicao_id_ativa
       FROM autoagenda.aulas a
       JOIN autoagenda.alunos al ON al.id = a.aluno_id
       JOIN autoagenda.instrutores i ON i.id = a.instrutor_id
       JOIN autoagenda.veiculos v ON v.id = a.veiculo_id
       JOIN autoagenda.locais l ON l.id = a.local_id
+      LEFT JOIN autoagenda.aulas origem ON origem.id = a.reposicao_de_id
       ${filtro}
       ORDER BY a.data_aula, a.hora_inicio
     `, params);
@@ -2558,12 +2760,22 @@ app.get('/api/aulas/:id', async (req, res) => {
     const r = await query(`
       SELECT a.*, al.nome AS aluno_nome,
              i.nome AS instrutor_nome, v.nome AS veiculo_nome, v.placa AS veiculo_placa,
-             l.nome AS local_nome, l.endereco AS local_endereco
+             l.nome AS local_nome, l.endereco AS local_endereco,
+             origem.data_aula AS reposicao_data_original,
+             origem.hora_inicio AS reposicao_hora_original,
+             COALESCE((
+               SELECT MIN(r.id)
+               FROM autoagenda.aulas r
+               WHERE r.reposicao_de_id = a.id
+                 AND r.arquivada = FALSE
+                 AND r.status IN ('AGENDADA','CONFIRMADA','REALIZADA')
+             ), 0)::int AS reposicao_id_ativa
       FROM autoagenda.aulas a
       JOIN autoagenda.alunos al ON al.id=a.aluno_id
       JOIN autoagenda.instrutores i ON i.id=a.instrutor_id
       JOIN autoagenda.veiculos v ON v.id=a.veiculo_id
       JOIN autoagenda.locais l ON l.id=a.local_id
+      LEFT JOIN autoagenda.aulas origem ON origem.id=a.reposicao_de_id
       WHERE a.id=$1
     `, [id]);
     if (!r.rowCount) return res.status(404).json({ error:'Aula não encontrada.' });
@@ -2624,6 +2836,103 @@ app.post('/api/aulas', async (req, res) => {
     try { await client.query('ROLLBACK'); } catch {}
     console.error(error);
     res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao agendar aula.' });
+  } finally { client.release(); }
+});
+
+
+// ========================= V2.1 — REAGENDAMENTO INTELIGENTE =========================
+// Cria uma nova aula vinculada à aula cancelada/faltada, preservando integralmente o histórico.
+app.post('/api/aulas/:id/reposicao', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const origemId = Number(req.params.id);
+    const { instrutor_id, veiculo_id, local_id, data_aula, hora_inicio,
+            duracao_minutos = null, aulas_unidades = null, observacoes = '' } = req.body || {};
+    if (!Number.isInteger(origemId) || origemId < 1) throw erroHttp(400, 'Aula original inválida.');
+    if (!instrutor_id || !veiculo_id || !local_id || !data_aula || !hora_inicio) {
+      throw erroHttp(400, 'Preencha instrutor, veículo, local, data e horário da reposição.');
+    }
+
+    await client.query('BEGIN');
+    const origemQ = await client.query('SELECT * FROM autoagenda.aulas WHERE id=$1 FOR UPDATE', [origemId]);
+    if (!origemQ.rowCount) throw erroHttp(404, 'Aula original não encontrada.');
+    const origem = origemQ.rows[0];
+    if (!['CANCELADA','FALTOU'].includes(String(origem.status || '').toUpperCase())) {
+      throw erroHttp(409, 'A reposição só pode ser criada para uma aula CANCELADA ou FALTOU.');
+    }
+
+    const reposicaoExistente = await client.query(`
+      SELECT id, data_aula, hora_inicio, status
+      FROM autoagenda.aulas
+      WHERE reposicao_de_id=$1
+        AND arquivada=FALSE
+        AND status IN ('AGENDADA','CONFIRMADA','REALIZADA')
+      ORDER BY id DESC
+      LIMIT 1
+      FOR UPDATE
+    `, [origemId]);
+    if (reposicaoExistente.rowCount) {
+      const r = reposicaoExistente.rows[0];
+      throw erroHttp(409, `Esta aula já possui reposição ativa em ${String(r.data_aula).slice(0,10)} às ${String(r.hora_inicio).slice(0,5)}.`);
+    }
+
+    const config = await obterConfigFuncionamento(client);
+    const duracaoFinal = validarInteiroPositivo(duracao_minutos, Number(origem.duracao_minutos || config.duracao_padrao_minutos), 480);
+    const unidadesFinal = Math.min(4, validarInteiroPositivo(aulas_unidades, Number(origem.aulas_unidades || 1), 4));
+    validarDataParaStatus(data_aula, 'AGENDADA');
+
+    const dados = {
+      aluno_id: Number(origem.aluno_id),
+      instrutor_id: Number(instrutor_id),
+      veiculo_id: Number(veiculo_id),
+      data_aula,
+      hora_inicio,
+      duracao_minutos: duracaoFinal
+    };
+    await bloquearChavesTransacao(client, chavesAgenda(dados));
+    await validarRecursosAtivos(client, {
+      aluno_id: Number(origem.aluno_id),
+      instrutor_id: Number(instrutor_id),
+      veiculo_id: Number(veiculo_id),
+      local_id: Number(local_id)
+    });
+    await validarHorarioFuncionamento(client, dados, config);
+    await validarDisponibilidadeInstrutor(client, Number(instrutor_id), dados, config);
+    await validarDisponibilidadeVeiculo(client, Number(veiculo_id), dados);
+    await validarSaldoAula(client, {
+      aluno_id: Number(origem.aluno_id),
+      status: 'AGENDADA',
+      data_aula,
+      aulas_unidades: unidadesFinal
+    });
+
+    const conflito = await verificarConflito(client, dados, [], config.intervalo_minutos);
+    if (conflito.rowCount) {
+      throw erroHttp(409, 'Conflito de horário para a reposição. Escolha outro horário.');
+    }
+
+    const textoOrigem = `Reposição da aula de ${String(origem.data_aula).slice(0,10)} às ${String(origem.hora_inicio).slice(0,5)}.`;
+    const observacoesFinal = String(observacoes || '').trim()
+      ? `${String(observacoes).trim()}\n${textoOrigem}`
+      : textoOrigem;
+
+    const result = await client.query(`
+      INSERT INTO autoagenda.aulas
+        (aluno_id, instrutor_id, veiculo_id, local_id, data_aula, hora_inicio,
+         duracao_minutos, status, observacoes, aulas_unidades, arquivada, reposicao_de_id)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,'AGENDADA',$8,$9,FALSE,$10)
+      RETURNING *
+    `, [
+      Number(origem.aluno_id), Number(instrutor_id), Number(veiculo_id), Number(local_id),
+      data_aula, String(hora_inicio).slice(0,5), duracaoFinal, observacoesFinal, unidadesFinal, origemId
+    ]);
+
+    await client.query('COMMIT');
+    res.status(201).json({ ...result.rows[0], aula_original_id: origemId });
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch {}
+    console.error(error);
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao criar reposição.' });
   } finally { client.release(); }
 });
 
@@ -2817,7 +3126,7 @@ app.put('/api/aulas/:id/serie', async (req, res) => {
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
     console.error(error);
-    res.status(error.statusCode || 500).json({ error:error.statusCode ? error.message : (error.message || 'Erro ao alterar a série de aulas.') });
+    res.status(error.statusCode || 500).json({ error:error.statusCode ? error.message : 'Erro ao alterar a série de aulas.' });
   } finally { client.release(); }
 });
 

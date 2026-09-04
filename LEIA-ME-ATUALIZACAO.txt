@@ -1,17 +1,40 @@
-AUTOAGENDA V2.0 — ENCONTRAR HORÁRIO LIVRE
+AUTOAGENDA V2.3.1 — CONSOLIDAÇÃO
 
-1. Substitua os arquivos da versão anterior pelos desta pasta.
-2. Não altere DATABASE_URL, AUTOAGENDA_USER ou AUTOAGENDA_PASSWORD.
-3. Faça commit no GitHub e aguarde o deploy do Render.
-4. Faça Ctrl+F5.
-5. Confirme no topo AutoAgenda V2.0.0.
+Esta atualização foi preparada a partir do AutoAgenda-main(1).zip enviado em 04/09/2026, que estava na V2.0.
 
-TESTE PRINCIPAL
-- Clique em 🔎 Encontrar horário livre.
-- Escolha aluno, instrutor, veículo, local e data inicial.
-- Clique em procurar os 5 próximos horários.
-- Escolha um resultado.
-- Confirme que Nova aula abre preenchida.
-- Salve a aula e confirme que aparece na agenda.
+Ela consolida de uma vez:
+- V2.1 Reagendamento Inteligente;
+- V2.2 Histórico Completo do Aluno;
+- V2.3 WhatsApp simples;
+- correções V2.3.1 de segurança e consistência.
 
-A busca respeita funcionamento, disponibilidade do instrutor, folgas, disponibilidade/manutenção do veículo, conflitos existentes, duração, intervalo e saldo do aluno.
+ARQUIVOS PARA SUBSTITUIR NO GITHUB:
+- server.js
+- package.json
+- public/app.js
+- public/index.html
+- public/style.css
+- sql/schema.sql
+- README.md
+- PROXIMAS_MELHORIAS.md
+- LEIA-ME-ATUALIZACAO.txt
+
+ARQUIVOS NOVOS PARA ADICIONAR:
+- .gitignore
+- .env.example
+
+NÃO ALTERAR NO RENDER:
+- DATABASE_URL
+- AUTOAGENDA_USER
+- AUTOAGENDA_PASSWORD
+
+A migração do banco é automática pelo server.js. Não execute SQL manualmente.
+
+Após o commit:
+1. aguarde o deploy do Render;
+2. abra o AutoAgenda;
+3. pressione Ctrl+F5;
+4. confirme no indicador do banco: AutoAgenda V2.3.1;
+5. teste uma aula, uma reposição, o histórico do aluno e o WhatsApp.
+
+O WhatsApp de lembrete agora só aparece para aulas AGENDADAS ou CONFIRMADAS.
