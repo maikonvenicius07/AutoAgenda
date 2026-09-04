@@ -317,3 +317,49 @@ html[data-theme="dark"] .finance-note{background:#1d2735;border-color:#344f71;co
 @media(max-width:820px){.backup-controls{grid-template-columns:1fr}.backup-grid{grid-template-columns:1fr}.backup-format-buttons button{flex:1}}
 @media(max-width:520px){.backup-format-buttons{display:grid;grid-template-columns:1fr}.backup-format-buttons button{width:100%}}
 html[data-theme="dark"] .backup-security-note{background:#1d2735;border-color:#344f71;color:#cfdef2}html[data-theme="dark"] .backup-controls select{background:#202020;color:#f1f1f1;border-color:#494949}html[data-theme="dark"] .backup-format-help{background:#3b350f;border-color:#6c601a;color:#f7e99a}html[data-theme="dark"] .backup-info-card p,html[data-theme="dark"] .backup-note{color:#b7b7b7}html[data-theme="dark"] .backup-note{background:#252525;border-color:#494949}
+
+
+/* ========================= V3.0 — LOGIN INDIVIDUAL ========================= */
+body.auth-locked>header,
+body.auth-locked>main,
+body.auth-locked>.modal,
+body.auth-locked>#toast{display:none!important}
+.login-screen{min-height:100vh;display:grid;place-items:center;padding:24px;background:
+  radial-gradient(circle at 20% 20%,#f5c91422 0 18%,transparent 19%),
+  linear-gradient(135deg,#111 0%,#1c1c1c 62%,#342d0d 100%)}
+.login-card{width:min(440px,100%);background:#fff;border-radius:20px;border-top:7px solid var(--yellow);padding:24px;box-shadow:0 24px 70px #0008}
+.login-brand{display:flex;align-items:center;gap:12px;padding-bottom:16px;border-bottom:1px solid #ececec}
+.login-brand img{width:78px;height:58px;object-fit:contain;filter:drop-shadow(0 6px 7px #0005)}
+.login-brand h1,.login-brand p,.login-copy h2,.login-copy p{margin:0}
+.login-brand p{margin-top:3px;color:#777;font-size:12px}
+.login-copy{padding:20px 0 12px}.login-copy h2{margin-top:9px;font-size:26px}.login-copy p{margin-top:6px;color:#666}
+.login-badge{display:inline-block;background:#111;color:var(--yellow);padding:5px 9px;border-radius:999px;font-size:11px;font-weight:900}
+.login-form{display:grid;gap:12px}.login-form label{display:grid;gap:6px;font-size:12px;font-weight:800}
+.login-form input{width:100%;padding:13px;border:1px solid #ccc;border-radius:10px;background:#fff;font:inherit}
+.login-form button{margin-top:3px;font-size:15px}
+.login-setup{margin-top:14px;padding:11px 12px;background:#fde2df;color:#8f1d15;border:1px solid #e9b5af;border-radius:10px;font-size:12px;line-height:1.45}
+.login-foot{display:block;margin-top:15px;padding-top:12px;border-top:1px solid #ececec;color:#777;line-height:1.45}
+.session-user{display:flex;align-items:center;gap:9px;background:#222;border:1px solid #3a3a3a;border-radius:11px;padding:6px 7px 6px 10px}
+.session-user>div{display:grid;gap:2px}.session-user span{font-size:12px;font-weight:900;color:#fff}.session-user small{font-size:9px;color:var(--yellow);text-transform:uppercase;font-weight:900}
+.session-user .mini{background:#3a3a3a;color:#fff}
+.user-security-note{margin-bottom:14px;padding:11px 13px;background:#f4f7fb;border:1px solid #d8dfeb;border-left:5px solid #334f8f;border-radius:10px;color:#475569;font-size:12px;line-height:1.5}
+.user-list{display:grid;gap:10px}.user-item{border-left:5px solid var(--yellow)}.user-item.inactive{opacity:.62;border-style:dashed}
+.user-item-main{display:flex;align-items:center;justify-content:space-between;gap:16px}.user-item-main h3,.user-item-main p{margin:0}.user-item-main p{margin-top:5px;color:#555;font-size:13px}.user-item-main small{display:block;margin-top:5px;color:#777}
+.user-item-title{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.user-role,.user-you{display:inline-flex;width:max-content;border-radius:999px;padding:4px 8px;font-size:10px;font-weight:900}
+.user-role.admin{background:#fff1bd;color:#6e5700}.user-role.instrutor{background:#e7effb;color:#234c80}.user-role.inactive{background:#ececec;color:#666}.user-you{background:#def3e5;color:#145c31}
+.user-modal-box{width:min(520px,100%)}
+@media(min-width:1001px){nav{grid-template-columns:repeat(6,minmax(0,1fr))}}
+@media(max-width:760px){.header-actions{gap:6px;flex-wrap:wrap}.session-user{order:4;width:100%;justify-content:space-between}.user-item-main{align-items:flex-start;flex-direction:column}.user-item-main .actions-row{margin-top:2px}.login-card{padding:19px}}
+html[data-theme="dark"] .login-card{background:#1d1d1d;color:#f1f1f1;border-color:var(--yellow)}
+html[data-theme="dark"] .login-brand{border-color:#353535}
+html[data-theme="dark"] .login-brand p,html[data-theme="dark"] .login-copy p,html[data-theme="dark"] .login-foot{color:#b7b7b7}
+html[data-theme="dark"] .login-form input{background:#252525;color:#fff;border-color:#4a4a4a}
+html[data-theme="dark"] .login-foot{border-color:#353535}
+html[data-theme="dark"] .user-security-note{background:#1d2735;border-color:#344f71;color:#cfdef2}
+html[data-theme="dark"] .user-item{background:#1d1d1d;border-color:#3a3a3a}
+html[data-theme="dark"] .user-item-main p,html[data-theme="dark"] .user-item-main small{color:#b7b7b7}
+html[data-theme="dark"] .user-role.admin{background:#4a3d0b;color:#ffe997}
+html[data-theme="dark"] .user-role.instrutor{background:#253750;color:#cfe2ff}
+html[data-theme="dark"] .user-role.inactive{background:#333;color:#c8c8c8}
+html[data-theme="dark"] .user-you{background:#183b25;color:#9de1b4}

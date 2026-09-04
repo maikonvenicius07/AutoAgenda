@@ -1,8 +1,47 @@
--- AutoAgenda V2.9.0
+-- AutoAgenda V3.0.0
 -- Schema compatível com o server.js atual.
 -- O servidor cria/migra automaticamente; este arquivo serve para referência e execução manual controlada.
 
 CREATE SCHEMA IF NOT EXISTS autoagenda;
+
+CREATE TABLE IF NOT EXISTS autoagenda.usuarios (
+  id SERIAL PRIMARY KEY,
+  nome VARCHAR(150) NOT NULL,
+  login VARCHAR(60) NOT NULL,
+  email VARCHAR(180),
+  senha_hash TEXT NOT NULL,
+  perfil VARCHAR(20) NOT NULL DEFAULT 'ADMIN'
+    CHECK (perfil IN ('ADMIN','INSTRUTOR')),
+  ativo BOOLEAN NOT NULL DEFAULT TRUE,
+  ultimo_login_em TIMESTAMP,
+  criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+  atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_autoagenda_usuarios_login
+ON autoagenda.usuarios(LOWER(login));
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_autoagenda_usuarios_email
+ON autoagenda.usuarios(LOWER(email))
+WHERE email IS NOT NULL AND email <> '';
+
+CREATE TABLE IF NOT EXISTS autoagenda.sessoes (
+  id BIGSERIAL PRIMARY KEY,
+  usuario_id INTEGER NOT NULL REFERENCES autoagenda.usuarios(id) ON DELETE CASCADE,
+  token_hash CHAR(64) NOT NULL UNIQUE,
+  expira_em TIMESTAMP NOT NULL,
+  ultimo_uso_em TIMESTAMP NOT NULL DEFAULT NOW(),
+  revogada_em TIMESTAMP,
+  user_agent VARCHAR(500),
+  ip_hash CHAR(64),
+  criado_em TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_autoagenda_sessoes_usuario
+ON autoagenda.sessoes(usuario_id, expira_em);
+
+CREATE INDEX IF NOT EXISTS idx_autoagenda_sessoes_expira
+ON autoagenda.sessoes(expira_em);
 
 CREATE TABLE IF NOT EXISTS autoagenda.instrutores (
   id SERIAL PRIMARY KEY,

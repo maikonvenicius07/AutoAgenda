@@ -1,4 +1,4 @@
-# AutoAgenda V2.9.1
+# AutoAgenda V3.0.0
 
 Sistema de organização de aulas práticas para autoescola, com backend Node/Express, PostgreSQL e deploy no Render.
 
@@ -21,58 +21,89 @@ Sistema de organização de aulas práticas para autoescola, com backend Node/Ex
 - financeiro simples;
 - backup/exportação em CSV, Excel e JSON;
 - modo claro/escuro;
+- login individual;
 - preservação do histórico.
 
-## V2.9.1 — Backup / Exportação (correção Excel)
+## V3.0.0 — Login individual
 
-A ETAPA 15 adiciona a aba **💾 Backup**, voltada para cópia de segurança e exportação de dados.
+A ETAPA 16 substitui a autenticação básica do navegador por uma tela de login própria do AutoAgenda.
 
-É possível selecionar:
-- todos os dados;
-- alunos;
-- instrutores;
-- veículos;
-- locais;
-- aulas;
-- planos;
-- financeiro;
-- configurações.
+### Usuários
 
-### Formatos
+O banco possui a tabela `autoagenda.usuarios` com:
+- nome;
+- login;
+- e-mail;
+- `senha_hash`;
+- perfil (`ADMIN` ou `INSTRUTOR`);
+- ativo/inativo;
+- último login;
+- datas de criação e atualização.
 
-**CSV** — indicado para conferência simples e abertura em planilhas. Nas exportações individuais, cada coluna do cadastro vira uma coluna do CSV. No backup completo, os registros são consolidados com a identificação da entidade.
+A senha nunca é armazenada em texto puro.
 
-**Excel (.xlsx)** — nas exportações completas, cada conjunto de dados é criado em uma aba separada. Na V2.9.1 o arquivo é gerado diretamente no padrão Office Open XML, usando apenas módulos nativos do Node.js.
+### Hash de senha
 
-**JSON** — formato recomendado para o **backup completo**, pois preserva estrutura, nomes de campos, versão do AutoAgenda, data de geração e todos os registros necessários para uma futura rotina de restauração.
+As senhas são protegidas com `scrypt`, salt aleatório e comparação resistente a timing attack.
 
-### Conteúdo adicional do backup completo
+### Sessões
 
-Além dos oito conjuntos principais do roteiro, o backup completo inclui:
-- indisponibilidades de instrutores;
-- indisponibilidades/manutenções de veículos.
+As sessões são salvas na tabela `autoagenda.sessoes`.
 
-Esses dados são necessários para que uma futura restauração reproduza corretamente as regras de disponibilidade.
+O navegador recebe somente um token aleatório em cookie:
+- `HttpOnly`;
+- `SameSite=Lax`;
+- `Secure` em produção;
+- duração de 12 horas.
+
+No banco é armazenado apenas o SHA-256 do token, nunca o token original.
+
+Ao desativar um usuário, suas sessões abertas são revogadas.
+
+### Primeiro administrador
+
+Para uma migração segura da V2.9.1:
+
+1. a V3.0 cria automaticamente as tabelas de usuários e sessões;
+2. se ainda não existir nenhum usuário, as variáveis já configuradas no Render
+   `AUTOAGENDA_USER` e `AUTOAGENDA_PASSWORD` são usadas uma única vez para criar
+   o primeiro administrador;
+3. a senha é imediatamente convertida para hash;
+4. depois disso, o login passa a usar os usuários gravados no PostgreSQL.
+
+Portanto, não é necessário trocar nem apagar as variáveis do Render nesta atualização.
+
+### Área Usuários
+
+Administradores possuem a aba **👥 Usuários**, com:
+- criação de conta;
+- edição de nome, login, e-mail e perfil;
+- troca de senha;
+- ativação/desativação;
+- proteção para não desativar o próprio usuário;
+- proteção para não remover/desativar o último administrador ativo.
+
+Nesta versão, o perfil já é gravado, mas a limitação detalhada de módulos para o perfil Instrutor será implementada na ETAPA 17.
 
 ## Segurança
 
-As exportações leem somente tabelas do schema PostgreSQL `autoagenda`.
-
-Nunca são exportados:
-- `DATABASE_URL`;
-- `AUTOAGENDA_USER`;
-- `AUTOAGENDA_PASSWORD`;
-- tokens;
-- segredos;
-- credenciais do Render.
-
-Os arquivos exportados podem conter dados pessoais cadastrados no sistema, como CPF, telefone e e-mail. Devem ser armazenados em local seguro.
+- todas as rotas `/api/*`, exceto health e autenticação, exigem sessão válida;
+- rotas do WhatsApp também exigem sessão;
+- existe limitação de tentativas de login;
+- usuário inativo não consegue usar sessão existente;
+- alteração de senha revoga outras sessões do usuário;
+- hashes e sessões não entram no Backup/Exportação da ETAPA 15;
+- `DATABASE_URL`, senhas e tokens não são gravados no código.
 
 ## Banco
 
-A V2.9.1 não cria novas tabelas nem colunas. Não é necessário executar SQL manualmente.
+A migração é automática no início do servidor.
 
-A coleta do backup completo utiliza uma transação PostgreSQL somente leitura com snapshot consistente, reduzindo o risco de juntar dados de momentos diferentes durante a geração do arquivo.
+Novas tabelas:
+- `autoagenda.usuarios`;
+- `autoagenda.sessoes`.
+
+Não é necessário executar SQL manualmente.
 
 ## Dependências
 
@@ -81,12 +112,8 @@ A coleta do backup completo utiliza uma transação PostgreSQL somente leitura c
 - pg 8.13.1
 - dotenv 16.4.7
 
+Nenhuma nova dependência externa foi adicionada para autenticação.
+
 ## Próxima etapa
 
-**ETAPA 16 — Login individual**, com usuários próprios, senha com hash seguro e sessões protegidas.
-
-
-### V2.9.1 — correção da exportação Excel
-- A geração `.xlsx` não depende mais do pacote `exceljs`.
-- O XLSX é produzido em Office Open XML usando apenas módulos nativos do Node, reduzindo risco de falha no Render.
-- CSV e JSON permanecem inalterados.
+**ETAPA 17 — Níveis de acesso**, aplicando permissões diferentes para Administrador e Instrutor.

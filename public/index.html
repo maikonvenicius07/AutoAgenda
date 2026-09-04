@@ -14,9 +14,40 @@
       document.documentElement.dataset.theme = 'light';
     }
   </script>
-  <link rel="stylesheet" href="style.css?v=2.9.0">
+  <link rel="stylesheet" href="style.css?v=3.0.0-login">
 </head>
-<body>
+<body class="auth-locked">
+<section id="loginScreen" class="login-screen">
+  <div class="login-card">
+    <div class="login-brand">
+      <img src="assets/carro-autoescola.png" alt="Carro de autoescola">
+      <div>
+        <h1>AutoAgenda</h1>
+        <p>Sua aula. Seu horário. Tudo organizado.</p>
+      </div>
+    </div>
+    <div class="login-copy">
+      <span class="login-badge">🔐 Login individual</span>
+      <h2>Acesse sua conta</h2>
+      <p>Entre com seu usuário e senha para acessar a agenda.</p>
+    </div>
+    <form id="fLogin" class="login-form" autocomplete="on">
+      <label>Usuário
+        <input id="loginUsuario" name="username" autocomplete="username" maxlength="60" required placeholder="Seu login">
+      </label>
+      <label>Senha
+        <input id="loginSenha" name="password" type="password" autocomplete="current-password" maxlength="128" required placeholder="Sua senha">
+      </label>
+      <div id="erroLogin" class="erro hide"></div>
+      <button type="submit" id="entrarLogin">Entrar</button>
+    </form>
+    <div id="loginSetupInfo" class="login-setup hide">
+      ⛔ O primeiro administrador ainda não foi criado. Mantenha
+      <b>AUTOAGENDA_USER</b> e <b>AUTOAGENDA_PASSWORD</b> configurados no Render e faça um novo deploy.
+    </div>
+    <small class="login-foot">Sessão protegida por cookie HttpOnly. A senha nunca é armazenada em texto puro.</small>
+  </div>
+</section>
 <header>
   <div class="brand">
     <img class="brand-car" src="assets/carro-autoescola.png" alt="Carro de autoescola">
@@ -25,7 +56,15 @@
       <small>Sua aula. Seu horário. Tudo organizado.</small>
     </div>
   </div>
-  <div class="header-actions"><button type="button" class="secondary theme-toggle" id="alternarTema" aria-pressed="false" title="Alternar entre modo claro e modo escuro">🌙 Modo escuro</button><button type="button" class="secondary" id="encontrarHorarioHeader">🔎 Horário livre</button><button id="novaAula">+ Nova aula</button></div>
+  <div class="header-actions">
+    <div class="session-user" id="sessionUserBox">
+      <div><span id="usuarioSessaoNome">Usuário</span><small id="usuarioSessaoPerfil">—</small></div>
+      <button type="button" class="secondary mini" id="sairSessao">Sair</button>
+    </div>
+    <button type="button" class="secondary theme-toggle" id="alternarTema" aria-pressed="false" title="Alternar entre modo claro e modo escuro">🌙 Modo escuro</button>
+    <button type="button" class="secondary" id="encontrarHorarioHeader">🔎 Horário livre</button>
+    <button id="novaAula">+ Nova aula</button>
+  </div>
 </header>
 
 <main>
@@ -41,6 +80,7 @@
     <button class="tab" data-tab="relatorios">📑 Relatórios</button>
     <button class="tab" data-tab="financeiro">💰 Financeiro</button>
     <button class="tab" data-tab="backup">💾 Backup</button>
+    <button class="tab hide" id="tabUsuarios" data-tab="usuarios">👥 Usuários</button>
     <button class="tab" data-tab="configuracoes">⚙️ Configurações</button>
   </nav>
 
@@ -373,6 +413,21 @@
     <div class="backup-note">ℹ️ Esta etapa cria e baixa os backups. A restauração automática será implementada somente quando houver uma rotina própria de importação e validação, evitando sobrescrever dados por engano.</div>
   </section>
 
+  <section id="usuarios" class="panel">
+    <div class="head">
+      <div>
+        <h2>👥 Usuários</h2>
+        <p>Cadastre contas individuais para acesso ao AutoAgenda.</p>
+      </div>
+      <button type="button" id="novoUsuario">+ Novo usuário</button>
+    </div>
+    <div class="user-security-note">
+      🔐 As senhas são armazenadas somente como <b>hash seguro</b>. O perfil já é registrado como
+      Administrador ou Instrutor. As permissões detalhadas por módulo serão aplicadas na próxima etapa.
+    </div>
+    <div id="listaUsuarios" class="user-list"></div>
+  </section>
+
   <section id="configuracoes" class="panel">
     <div class="head">
       <div>
@@ -485,6 +540,33 @@
     </div>
   </section>
 </main>
+
+<!-- MODAL USUÁRIO -->
+<div id="mUsuario" class="modal hide">
+  <form id="fUsuario" class="box user-modal-box">
+    <button type="button" class="x" data-close="mUsuario">✕</button>
+    <h2 id="tituloUsuario">Novo usuário</h2>
+    <input id="usuarioId" type="hidden">
+    <label>Nome<input id="usuarioNome" maxlength="150" required placeholder="Nome do usuário"></label>
+    <label>Login<input id="usuarioLogin" maxlength="60" required autocomplete="off" placeholder="ex.: davile"></label>
+    <label>E-mail<input id="usuarioEmail" type="email" maxlength="180" placeholder="E-mail (opcional)"></label>
+    <label>Perfil
+      <select id="usuarioPerfil" required>
+        <option value="ADMIN">Administrador</option>
+        <option value="INSTRUTOR">Instrutor</option>
+      </select>
+    </label>
+    <label>Senha
+      <input id="usuarioSenha" type="password" minlength="8" maxlength="128" autocomplete="new-password" placeholder="Mínimo 8 caracteres">
+      <small class="field-help" id="usuarioSenhaAjuda">Obrigatória no novo usuário. Deve conter letra e número.</small>
+    </label>
+    <label>Confirmar senha
+      <input id="usuarioSenha2" type="password" minlength="8" maxlength="128" autocomplete="new-password" placeholder="Repita a senha">
+    </label>
+    <div id="erroUsuario" class="erro hide"></div>
+    <button type="submit" id="salvarUsuario">💾 Salvar usuário</button>
+  </form>
+</div>
 
 <!-- MODAL ALUNO -->
 <div id="mAluno" class="modal hide">
@@ -834,6 +916,6 @@
 </div>
 
 <div id="toast" class="toast hide"></div>
-<script src="app.js?v=2.9.0"></script>
+<script src="app.js?v=3.0.0-login"></script>
 </body>
 </html>

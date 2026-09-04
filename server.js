@@ -8,7 +8,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '2.9.1';
+const APP_VERSION = '3.0.0';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -44,13 +44,20 @@ const pool = new Pool({
 app.disable('x-powered-by');
 
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
-const ADMIN_USER = String(process.env.AUTOAGENDA_USER || '').trim();
-const ADMIN_PASSWORD = String(process.env.AUTOAGENDA_PASSWORD || '');
-const AUTH_CONFIGURED = Boolean(ADMIN_USER && ADMIN_PASSWORD);
-const AUTH_REQUIRED = IS_PRODUCTION || AUTH_CONFIGURED;
 
-// Proteção simples contra tentativas repetidas de login.
-// É propositalmente mantida em memória: não altera o banco nem grava credenciais.
+// V3.0 — login individual.
+// As variáveis antigas do Render continuam sendo usadas APENAS para criar o
+// primeiro administrador quando a tabela de usuários ainda está vazia.
+// Depois disso, a autenticação passa a ser exclusivamente por usuários do PostgreSQL.
+const BOOTSTRAP_USER = String(process.env.AUTOAGENDA_USER || '').trim();
+const BOOTSTRAP_PASSWORD = String(process.env.AUTOAGENDA_PASSWORD || '');
+const BOOTSTRAP_CONFIGURED = Boolean(BOOTSTRAP_USER && BOOTSTRAP_PASSWORD);
+let LOGIN_READY = false;
+
+const SESSION_COOKIE = 'autoagenda_session';
+const SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+
+// Proteção contra tentativas repetidas de login.
 const AUTH_MAX_FAILURES = 8;
 const AUTH_WINDOW_MS = 10 * 60 * 1000;
 const AUTH_BLOCK_MS = 15 * 60 * 1000;
@@ -71,12 +78,9 @@ function authState(req) {
     return { key, blocked: true, retryAfter: Math.max(1, Math.ceil((state.blockedUntil - now) / 1000)) };
   }
 
-  if ((state.firstFailureAt || 0) + AUTH_WINDOW_MS <= now) {
+  if ((state.firstFailureAt || 0) + AUTH_WINDOW_MS <= now || (state.blockedUntil && state.blockedUntil <= now)) {
     authAttempts.delete(key);
-    state = null;
-  } else if (state?.blockedUntil && state.blockedUntil <= now) {
-    authAttempts.delete(key);
-    state = null;
+    return { key, blocked: false, retryAfter: 0 };
   }
   return { key, blocked: false, retryAfter: 0 };
 }
@@ -97,10 +101,142 @@ function limparFalhasAuth(key) {
   authAttempts.delete(key);
 }
 
-function textoSeguroIgual(a, b) {
-  const aa = Buffer.from(String(a || ''), 'utf8');
-  const bb = Buffer.from(String(b || ''), 'utf8');
-  return aa.length === bb.length && crypto.timingSafeEqual(aa, bb);
+function hashSha256(valor) {
+  return crypto.createHash('sha256').update(String(valor || ''), 'utf8').digest('hex');
+}
+
+function cookieValor(req, nome) {
+  const raw = String(req.headers.cookie || '');
+  for (const parte of raw.split(';')) {
+    const i = parte.indexOf('=');
+    if (i < 0) continue;
+    const k = parte.slice(0, i).trim();
+    if (k !== nome) continue;
+    try { return decodeURIComponent(parte.slice(i + 1).trim()); } catch { return parte.slice(i + 1).trim(); }
+  }
+  return '';
+}
+
+function definirCookieSessao(res, token) {
+  const maxAge = Math.floor(SESSION_TTL_MS / 1000);
+  const partes = [
+    `${SESSION_COOKIE}=${encodeURIComponent(token)}`,
+    'Path=/',
+    `Max-Age=${maxAge}`,
+    'HttpOnly',
+    'SameSite=Lax'
+  ];
+  if (IS_PRODUCTION) partes.push('Secure');
+  res.setHeader('Set-Cookie', partes.join('; '));
+}
+
+function limparCookieSessao(res) {
+  const partes = [
+    `${SESSION_COOKIE}=`,
+    'Path=/',
+    'Max-Age=0',
+    'HttpOnly',
+    'SameSite=Lax'
+  ];
+  if (IS_PRODUCTION) partes.push('Secure');
+  res.setHeader('Set-Cookie', partes.join('; '));
+}
+
+function scryptAsync(senha, salt, opcoes) {
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(senha, salt, 64, opcoes, (err, derivedKey) => {
+      if (err) reject(err);
+      else resolve(derivedKey);
+    });
+  });
+}
+
+async function criarHashSenha(senha) {
+  const salt = crypto.randomBytes(16);
+  const N = 16384, r = 8, p = 1;
+  const hash = await scryptAsync(String(senha), salt, { N, r, p, maxmem: 64 * 1024 * 1024 });
+  return `scrypt$${N}$${r}$${p}$${salt.toString('base64')}$${hash.toString('base64')}`;
+}
+
+async function verificarHashSenha(senha, armazenado) {
+  try {
+    const [alg, nStr, rStr, pStr, saltB64, hashB64] = String(armazenado || '').split('$');
+    if (alg !== 'scrypt' || !saltB64 || !hashB64) return false;
+    const N = Number(nStr), r = Number(rStr), p = Number(pStr);
+    if (!Number.isInteger(N) || !Number.isInteger(r) || !Number.isInteger(p)) return false;
+    const esperado = Buffer.from(hashB64, 'base64');
+    const atual = await scryptAsync(String(senha), Buffer.from(saltB64, 'base64'), {
+      N, r, p, maxmem: 64 * 1024 * 1024
+    });
+    return esperado.length === atual.length && crypto.timingSafeEqual(esperado, atual);
+  } catch {
+    return false;
+  }
+}
+
+function normalizarLogin(valor) {
+  return String(valor || '').trim().toLowerCase();
+}
+
+function validarLoginUsuario(login) {
+  return /^[a-z0-9._-]{3,60}$/.test(login);
+}
+
+function validarSenhaNova(senha) {
+  const s = String(senha || '');
+  if (s.length < 8 || s.length > 128) return 'A senha deve ter entre 8 e 128 caracteres.';
+  if (!/[A-Za-zÀ-ÿ]/.test(s) || !/\d/.test(s)) return 'A senha deve conter pelo menos uma letra e um número.';
+  return '';
+}
+
+function perfilUsuario(valor) {
+  const p = String(valor || '').trim().toUpperCase();
+  return ['ADMIN','INSTRUTOR'].includes(p) ? p : '';
+}
+
+async function autenticarSessao(req) {
+  const token = cookieValor(req, SESSION_COOKIE);
+  if (!token) return null;
+  const tokenHash = hashSha256(token);
+  const r = await query(`
+    SELECT
+      s.id AS sessao_id,
+      s.expira_em,
+      u.id, u.nome, u.login, u.email, u.perfil, u.ativo
+    FROM autoagenda.sessoes s
+    JOIN autoagenda.usuarios u ON u.id = s.usuario_id
+    WHERE s.token_hash = $1
+      AND s.revogada_em IS NULL
+      AND s.expira_em > NOW()
+      AND u.ativo = TRUE
+    LIMIT 1
+  `, [tokenHash]);
+  if (!r.rowCount) return null;
+
+  const sessao = r.rows[0];
+  query(`
+    UPDATE autoagenda.sessoes
+    SET ultimo_uso_em = NOW()
+    WHERE id = $1
+      AND ultimo_uso_em < NOW() - INTERVAL '15 minutes'
+  `, [sessao.sessao_id]).catch(() => {});
+
+  return {
+    sessao_id: Number(sessao.sessao_id),
+    id: Number(sessao.id),
+    nome: sessao.nome,
+    login: sessao.login,
+    email: sessao.email,
+    perfil: sessao.perfil,
+    ativo: sessao.ativo
+  };
+}
+
+function exigirAdmin(req, res, next) {
+  if (req.usuario?.perfil !== 'ADMIN') {
+    return res.status(403).json({ error: 'Apenas administradores podem gerenciar usuários.' });
+  }
+  next();
 }
 
 app.use((req, res, next) => {
@@ -113,65 +249,376 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use((req, res, next) => {
-  if (req.path === '/api/health') return next();
-
-  // Em produção, o AutoAgenda não expõe dados pessoais se usuário/senha não estiverem configurados.
-  if (AUTH_REQUIRED && !AUTH_CONFIGURED) {
-    const mensagem = 'AutoAgenda protegido: configure AUTOAGENDA_USER e AUTOAGENDA_PASSWORD no Render antes de liberar o acesso.';
-    if (req.path.startsWith('/api/')) return res.status(503).json({ error: mensagem, security_setup_required: true });
-    return res.status(503).type('text/plain; charset=utf-8').send(mensagem);
-  }
-
-  if (!AUTH_CONFIGURED) return next();
-
-  const state = authState(req);
-  if (state.blocked) {
-    res.setHeader('Retry-After', String(state.retryAfter));
-    if (req.path.startsWith('/api/')) {
-      return res.status(429).json({ error: 'Muitas tentativas de acesso. Aguarde alguns minutos e tente novamente.' });
-    }
-    return res.status(429).type('text/plain; charset=utf-8').send('Muitas tentativas de acesso. Aguarde alguns minutos e tente novamente.');
-  }
-
-  const auth = String(req.headers.authorization || '');
-  if (auth.startsWith('Basic ')) {
-    try {
-      const decoded = Buffer.from(auth.slice(6), 'base64').toString('utf8');
-      const sep = decoded.indexOf(':');
-      const user = sep >= 0 ? decoded.slice(0, sep) : decoded;
-      const pass = sep >= 0 ? decoded.slice(sep + 1) : '';
-      if (textoSeguroIgual(user, ADMIN_USER) && textoSeguroIgual(pass, ADMIN_PASSWORD)) {
-        limparFalhasAuth(state.key);
-        return next();
-      }
-      registrarFalhaAuth(state.key);
-    } catch {
-      registrarFalhaAuth(state.key);
-    }
-  }
-
-  res.setHeader('WWW-Authenticate', 'Basic realm="AutoAgenda", charset="UTF-8"');
-  if (req.path.startsWith('/api/')) return res.status(401).json({ error: 'Usuário ou senha inválidos.' });
-  return res.status(401).send('Acesso protegido ao AutoAgenda.');
-});
-
 app.use(express.json({ limit: '1mb' }));
+
+// Os arquivos estáticos (inclusive a tela de login) podem ser carregados sem sessão.
+// Os dados e ações do backend continuam protegidos pelo middleware logo abaixo.
 app.use(express.static(path.join(__dirname, 'public'), {
   etag: true,
   setHeaders(res, filePath) {
     if (/\.(png|jpg|jpeg|webp|svg|ico)$/i.test(filePath)) {
       res.setHeader('Cache-Control', 'public, max-age=86400');
     } else {
-      // Durante a evolução do projeto, evita o navegador carregar JS/HTML antigos após um deploy.
       res.setHeader('Cache-Control', 'no-store');
     }
   }
 }));
 
+app.use(async (req, res, next) => {
+  const publico = req.path === '/api/health'
+    || req.path === '/api/auth/status'
+    || req.path === '/api/auth/login';
+  if (publico) return next();
+
+  if (!req.path.startsWith('/api/') && !req.path.startsWith('/whatsapp/')) return next();
+
+  if (!LOGIN_READY) {
+    return res.status(503).json({
+      error: 'Login individual ainda não foi inicializado. Configure AUTOAGENDA_USER e AUTOAGENDA_PASSWORD no Render para criar o primeiro administrador.',
+      security_setup_required: true
+    });
+  }
+
+  try {
+    const usuario = await autenticarSessao(req);
+    if (!usuario) {
+      limparCookieSessao(res);
+      return res.status(401).json({ error: 'Sessão expirada ou usuário não autenticado.', login_required: true });
+    }
+    req.usuario = usuario;
+    req.sessaoId = usuario.sessao_id;
+    next();
+  } catch (error) {
+    console.error('Erro ao validar sessão:', error);
+    res.status(500).json({ error: 'Erro ao validar a sessão.' });
+  }
+});
+
 async function query(text, params = []) {
   return pool.query(text, params);
 }
+
+// ========================= V3.0 — AUTENTICAÇÃO INDIVIDUAL =========================
+app.get('/api/auth/status', async (req, res) => {
+  if (!LOGIN_READY) {
+    return res.json({
+      authenticated: false,
+      setup_required: true,
+      version: APP_VERSION
+    });
+  }
+
+  try {
+    const usuario = await autenticarSessao(req);
+    if (!usuario) {
+      limparCookieSessao(res);
+      return res.json({ authenticated: false, setup_required: false, version: APP_VERSION });
+    }
+    res.json({
+      authenticated: true,
+      setup_required: false,
+      version: APP_VERSION,
+      usuario: {
+        id: usuario.id,
+        nome: usuario.nome,
+        login: usuario.login,
+        email: usuario.email,
+        perfil: usuario.perfil
+      }
+    });
+  } catch (error) {
+    console.error('Erro ao consultar sessão:', error);
+    res.status(500).json({ error: 'Erro ao consultar a sessão.' });
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  if (!LOGIN_READY) {
+    return res.status(503).json({
+      error: 'O login individual ainda não foi inicializado. Configure AUTOAGENDA_USER e AUTOAGENDA_PASSWORD no Render e faça novo deploy.',
+      security_setup_required: true
+    });
+  }
+
+  const state = authState(req);
+  if (state.blocked) {
+    res.setHeader('Retry-After', String(state.retryAfter));
+    return res.status(429).json({ error: 'Muitas tentativas de login. Aguarde alguns minutos e tente novamente.' });
+  }
+
+  const login = normalizarLogin(req.body?.login);
+  const senha = String(req.body?.senha || '');
+  if (!login || !senha) return res.status(400).json({ error: 'Informe login e senha.' });
+
+  try {
+    const q = await query(`
+      SELECT id, nome, login, email, senha_hash, perfil, ativo
+      FROM autoagenda.usuarios
+      WHERE LOWER(login) = LOWER($1)
+      LIMIT 1
+    `, [login]);
+
+    const usuario = q.rows[0];
+    const valido = usuario?.ativo === true && await verificarHashSenha(senha, usuario?.senha_hash || '');
+    if (!valido) {
+      registrarFalhaAuth(state.key);
+      return res.status(401).json({ error: 'Login ou senha inválidos.' });
+    }
+
+    const token = crypto.randomBytes(32).toString('base64url');
+    const tokenHash = hashSha256(token);
+    const sessionTtlSeconds = Math.floor(SESSION_TTL_MS / 1000);
+    const userAgent = String(req.headers['user-agent'] || '').slice(0, 500);
+    const ipHash = hashSha256(authClientKey(req));
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`
+        DELETE FROM autoagenda.sessoes
+        WHERE expira_em <= NOW()
+           OR (revogada_em IS NOT NULL AND revogada_em < NOW() - INTERVAL '7 days')
+      `);
+      await client.query(`
+        INSERT INTO autoagenda.sessoes
+          (usuario_id, token_hash, expira_em, ultimo_uso_em, user_agent, ip_hash)
+        VALUES ($1,$2,NOW() + ($3 * INTERVAL '1 second'),NOW(),$4,$5)
+      `, [usuario.id, tokenHash, sessionTtlSeconds, userAgent || null, ipHash]);
+      await client.query(`
+        UPDATE autoagenda.usuarios
+        SET ultimo_login_em = NOW(), atualizado_em = NOW()
+        WHERE id = $1
+      `, [usuario.id]);
+      await client.query('COMMIT');
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch {}
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    limparFalhasAuth(state.key);
+    definirCookieSessao(res, token);
+    res.json({
+      ok: true,
+      usuario: {
+        id: Number(usuario.id),
+        nome: usuario.nome,
+        login: usuario.login,
+        email: usuario.email,
+        perfil: usuario.perfil
+      }
+    });
+  } catch (error) {
+    console.error('Erro no login:', error);
+    res.status(500).json({ error: 'Erro ao realizar login.' });
+  }
+});
+
+app.post('/api/auth/logout', async (req, res) => {
+  try {
+    if (req.sessaoId) {
+      await query(`
+        UPDATE autoagenda.sessoes
+        SET revogada_em = NOW()
+        WHERE id = $1 AND revogada_em IS NULL
+      `, [req.sessaoId]);
+    }
+  } catch (error) {
+    console.error('Erro ao encerrar sessão:', error);
+  } finally {
+    limparCookieSessao(res);
+  }
+  res.json({ ok: true });
+});
+
+app.get('/api/usuarios', exigirAdmin, async (req, res) => {
+  try {
+    const r = await query(`
+      SELECT id, nome, login, email, perfil, ativo, ultimo_login_em, criado_em, atualizado_em
+      FROM autoagenda.usuarios
+      ORDER BY ativo DESC, nome, login
+    `);
+    res.json(r.rows);
+  } catch (error) {
+    console.error('Erro ao listar usuários:', error);
+    res.status(500).json({ error: 'Erro ao carregar usuários.' });
+  }
+});
+
+app.post('/api/usuarios', exigirAdmin, async (req, res) => {
+  const nome = String(req.body?.nome || '').trim();
+  const login = normalizarLogin(req.body?.login);
+  const email = String(req.body?.email || '').trim().toLowerCase() || null;
+  const perfil = perfilUsuario(req.body?.perfil);
+  const senha = String(req.body?.senha || '');
+
+  if (nome.length < 2 || nome.length > 150) return res.status(400).json({ error: 'Informe um nome válido.' });
+  if (!validarLoginUsuario(login)) return res.status(400).json({ error: 'Login inválido. Use 3 a 60 caracteres: letras, números, ponto, hífen ou sublinhado.' });
+  if (!perfil) return res.status(400).json({ error: 'Perfil inválido.' });
+  const erroSenha = validarSenhaNova(senha);
+  if (erroSenha) return res.status(400).json({ error: erroSenha });
+  if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'E-mail inválido.' });
+
+  try {
+    const senhaHash = await criarHashSenha(senha);
+    const r = await query(`
+      INSERT INTO autoagenda.usuarios (nome, login, email, senha_hash, perfil, ativo)
+      VALUES ($1,$2,$3,$4,$5,TRUE)
+      RETURNING id, nome, login, email, perfil, ativo, ultimo_login_em, criado_em, atualizado_em
+    `, [nome, login, email, senhaHash, perfil]);
+    res.status(201).json(r.rows[0]);
+  } catch (error) {
+    if (error.code === '23505') {
+      return res.status(409).json({ error: 'Já existe usuário com este login ou e-mail.' });
+    }
+    console.error('Erro ao criar usuário:', error);
+    res.status(500).json({ error: 'Erro ao criar usuário.' });
+  }
+});
+
+app.put('/api/usuarios/:id', exigirAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  const nome = String(req.body?.nome || '').trim();
+  const login = normalizarLogin(req.body?.login);
+  const email = String(req.body?.email || '').trim().toLowerCase() || null;
+  const perfil = perfilUsuario(req.body?.perfil);
+  const senha = String(req.body?.senha || '');
+
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Usuário inválido.' });
+  if (nome.length < 2 || nome.length > 150) return res.status(400).json({ error: 'Informe um nome válido.' });
+  if (!validarLoginUsuario(login)) return res.status(400).json({ error: 'Login inválido. Use 3 a 60 caracteres: letras, números, ponto, hífen ou sublinhado.' });
+  if (!perfil) return res.status(400).json({ error: 'Perfil inválido.' });
+  if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'E-mail inválido.' });
+  if (senha) {
+    const erroSenha = validarSenhaNova(senha);
+    if (erroSenha) return res.status(400).json({ error: erroSenha });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const atualQ = await client.query(`
+      SELECT id, nome, login, perfil, ativo
+      FROM autoagenda.usuarios
+      WHERE id = $1
+      FOR UPDATE
+    `, [id]);
+    if (!atualQ.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Usuário não encontrado.' });
+    }
+    const atual = atualQ.rows[0];
+
+    if (atual.perfil === 'ADMIN' && perfil !== 'ADMIN' && atual.ativo) {
+      const admins = await client.query(`
+        SELECT COUNT(*)::int AS total
+        FROM autoagenda.usuarios
+        WHERE ativo = TRUE AND perfil = 'ADMIN' AND id <> $1
+      `, [id]);
+      if (Number(admins.rows[0].total || 0) < 1) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'Não é possível remover o perfil do último administrador ativo.' });
+      }
+    }
+
+    const senhaHash = senha ? await criarHashSenha(senha) : null;
+    const r = await client.query(`
+      UPDATE autoagenda.usuarios
+      SET nome = $1,
+          login = $2,
+          email = $3,
+          perfil = $4,
+          senha_hash = COALESCE($5, senha_hash),
+          atualizado_em = NOW()
+      WHERE id = $6
+      RETURNING id, nome, login, email, perfil, ativo, ultimo_login_em, criado_em, atualizado_em
+    `, [nome, login, email, perfil, senhaHash, id]);
+
+    if (senha) {
+      await client.query(`
+        UPDATE autoagenda.sessoes
+        SET revogada_em = NOW()
+        WHERE usuario_id = $1
+          AND revogada_em IS NULL
+          AND id <> $2
+      `, [id, req.sessaoId]);
+    }
+
+    await client.query('COMMIT');
+    res.json(r.rows[0]);
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch {}
+    if (error.code === '23505') {
+      return res.status(409).json({ error: 'Já existe usuário com este login ou e-mail.' });
+    }
+    console.error('Erro ao atualizar usuário:', error);
+    res.status(500).json({ error: 'Erro ao atualizar usuário.' });
+  } finally {
+    client.release();
+  }
+});
+
+app.patch('/api/usuarios/:id/situacao', exigirAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  const ativo = req.body?.ativo === true;
+  if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Usuário inválido.' });
+  if (id === Number(req.usuario?.id) && !ativo) {
+    return res.status(409).json({ error: 'Você não pode desativar o próprio usuário enquanto está conectado.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const q = await client.query(`
+      SELECT id, perfil, ativo
+      FROM autoagenda.usuarios
+      WHERE id = $1
+      FOR UPDATE
+    `, [id]);
+    if (!q.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Usuário não encontrado.' });
+    }
+    const u = q.rows[0];
+
+    if (!ativo && u.ativo && u.perfil === 'ADMIN') {
+      const admins = await client.query(`
+        SELECT COUNT(*)::int AS total
+        FROM autoagenda.usuarios
+        WHERE ativo = TRUE AND perfil = 'ADMIN' AND id <> $1
+      `, [id]);
+      if (Number(admins.rows[0].total || 0) < 1) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'Não é possível desativar o último administrador ativo.' });
+      }
+    }
+
+    const r = await client.query(`
+      UPDATE autoagenda.usuarios
+      SET ativo = $1, atualizado_em = NOW()
+      WHERE id = $2
+      RETURNING id, nome, login, email, perfil, ativo, ultimo_login_em, criado_em, atualizado_em
+    `, [ativo, id]);
+
+    if (!ativo) {
+      await client.query(`
+        UPDATE autoagenda.sessoes
+        SET revogada_em = NOW()
+        WHERE usuario_id = $1 AND revogada_em IS NULL
+      `, [id]);
+    }
+
+    await client.query('COMMIT');
+    res.json(r.rows[0]);
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch {}
+    console.error('Erro ao alterar situação do usuário:', error);
+    res.status(500).json({ error: 'Erro ao alterar situação do usuário.' });
+  } finally {
+    client.release();
+  }
+});
 
 function normalizarWhatsAppParaLink(valor) {
   let d = String(valor || '').replace(/\D/g, '');
@@ -190,6 +637,47 @@ async function initDatabase() {
   try {
     await client.query('BEGIN');
     await client.query('CREATE SCHEMA IF NOT EXISTS autoagenda');
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS autoagenda.usuarios (
+        id SERIAL PRIMARY KEY,
+        nome VARCHAR(150) NOT NULL,
+        login VARCHAR(60) NOT NULL,
+        email VARCHAR(180),
+        senha_hash TEXT NOT NULL,
+        perfil VARCHAR(20) NOT NULL DEFAULT 'ADMIN',
+        ativo BOOLEAN NOT NULL DEFAULT TRUE,
+        ultimo_login_em TIMESTAMP,
+        criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+        atualizado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+        CHECK (perfil IN ('ADMIN','INSTRUTOR'))
+      )
+    `);
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_autoagenda_usuarios_login
+      ON autoagenda.usuarios(LOWER(login))
+    `);
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_autoagenda_usuarios_email
+      ON autoagenda.usuarios(LOWER(email))
+      WHERE email IS NOT NULL AND email <> ''
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS autoagenda.sessoes (
+        id BIGSERIAL PRIMARY KEY,
+        usuario_id INTEGER NOT NULL REFERENCES autoagenda.usuarios(id) ON DELETE CASCADE,
+        token_hash CHAR(64) NOT NULL UNIQUE,
+        expira_em TIMESTAMP NOT NULL,
+        ultimo_uso_em TIMESTAMP NOT NULL DEFAULT NOW(),
+        revogada_em TIMESTAMP,
+        user_agent VARCHAR(500),
+        ip_hash CHAR(64),
+        criado_em TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_sessoes_usuario ON autoagenda.sessoes(usuario_id, expira_em)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_sessoes_expira ON autoagenda.sessoes(expira_em)');
 
     await client.query(`
       CREATE TABLE IF NOT EXISTS autoagenda.instrutores (
@@ -557,7 +1045,34 @@ async function initDatabase() {
       WHERE NOT EXISTS (SELECT 1 FROM autoagenda.locais)
     `);
 
+    // V3.0 — cria o primeiro administrador usando as variáveis já existentes
+    // do Render, somente quando ainda não há nenhum usuário cadastrado.
+    const qtdUsuarios = await client.query('SELECT COUNT(*)::int AS total FROM autoagenda.usuarios');
+    if (Number(qtdUsuarios.rows[0].total || 0) === 0 && BOOTSTRAP_CONFIGURED) {
+      const loginInicial = normalizarLogin(BOOTSTRAP_USER);
+      const senhaHashInicial = await criarHashSenha(BOOTSTRAP_PASSWORD);
+      await client.query(`
+        INSERT INTO autoagenda.usuarios (nome, login, email, senha_hash, perfil, ativo)
+        VALUES ($1,$2,NULL,$3,'ADMIN',TRUE)
+      `, ['Administrador AutoAgenda', loginInicial, senhaHashInicial]);
+      console.log(`Login individual: primeiro administrador criado a partir de AUTOAGENDA_USER (${loginInicial}).`);
+    }
+
+    await client.query(`
+      DELETE FROM autoagenda.sessoes
+      WHERE expira_em <= NOW()
+         OR (revogada_em IS NOT NULL AND revogada_em < NOW() - INTERVAL '7 days')
+    `);
+
+    const adminsAtivos = await client.query(`
+      SELECT COUNT(*)::int AS total
+      FROM autoagenda.usuarios
+      WHERE ativo = TRUE AND perfil = 'ADMIN'
+    `);
+    const loginReadyAfterCommit = Number(adminsAtivos.rows[0].total || 0) > 0;
+
     await client.query('COMMIT');
+    LOGIN_READY = loginReadyAfterCommit;
     console.log(`Schema autoagenda V${APP_VERSION} verificado/criado com sucesso.`);
   } catch (error) {
     await client.query('ROLLBACK');
@@ -577,7 +1092,7 @@ app.get('/api/health', async (req, res) => {
                WHERE schema_name = 'autoagenda'
              ) AS schema_autoagenda
     `);
-    res.json({ ok: true, version: APP_VERSION, auth_required: AUTH_REQUIRED, auth_configured: AUTH_CONFIGURED, security_ready: !AUTH_REQUIRED || AUTH_CONFIGURED, database: true, schema_autoagenda: result.rows[0].schema_autoagenda, agora: result.rows[0].agora });
+    res.json({ ok: true, version: APP_VERSION, login_individual: true, security_ready: LOGIN_READY, setup_required: !LOGIN_READY, database: true, schema_autoagenda: result.rows[0].schema_autoagenda, agora: result.rows[0].agora });
   } catch (error) {
     console.error(error);
     res.status(500).json({ ok: false, database: false, error: 'Falha ao conectar ao banco.' });
@@ -4721,10 +5236,10 @@ async function start() {
     await initDatabase();
     app.listen(PORT, () => {
       console.log(`AutoAgenda V${APP_VERSION} rodando na porta ${PORT}`);
-      if (AUTH_REQUIRED && !AUTH_CONFIGURED) {
-        console.error('SEGURANÇA: produção bloqueada até configurar AUTOAGENDA_USER e AUTOAGENDA_PASSWORD.');
-      } else if (AUTH_CONFIGURED) {
-        console.log('Segurança: acesso protegido por autenticação básica.');
+      if (!LOGIN_READY) {
+        console.error('SEGURANÇA: login individual sem administrador ativo. Configure AUTOAGENDA_USER e AUTOAGENDA_PASSWORD para o bootstrap inicial.');
+      } else {
+        console.log('Segurança: login individual ativo com sessão HttpOnly.');
       }
     });
   } catch (error) {

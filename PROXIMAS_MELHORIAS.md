@@ -1,45 +1,48 @@
 # Próximas melhorias — AutoAgenda
 
-Versão atual consolidada: **V2.9.1**.
+## Situação atual
 
-Concluído até aqui: **ETAPAS 1 a 15** do roteiro principal.
+Versão: **V3.0.0 — Login individual**
 
-## Concluído nesta versão
+Etapas concluídas:
+1. Configurações;
+2. Agenda semanal;
+3. Horário de funcionamento;
+4. Disponibilidade dos instrutores;
+5. Disponibilidade dos veículos;
+6. Encontrar horário livre;
+7. Reagendamento inteligente;
+8. Histórico do aluno;
+9. WhatsApp;
+10. Confirmação da aula;
+11. Lembretes;
+12. Dashboard;
+13. Relatórios;
+14. Financeiro simples;
+15. Backup / Exportação;
+16. Login individual.
 
-**ETAPA 15 — Backup e Exportação**
+## Próximo passo — ETAPA 17
 
-A nova área **💾 Backup** permite exportar:
+### Níveis de acesso
+
+Aplicar permissões reais por perfil.
+
+**Administrador**
 - alunos;
+- agenda;
+- configurações;
 - instrutores;
 - veículos;
-- locais;
-- aulas;
-- planos;
 - financeiro;
-- configurações.
+- relatórios;
+- backup;
+- usuários.
 
-Formatos disponíveis:
-- CSV;
-- Excel (.xlsx);
-- JSON.
+**Instrutor**
+- sua própria agenda;
+- alunos relacionados às suas aulas;
+- status das aulas;
+- reagendamento autorizado.
 
-O backup completo também inclui tabelas auxiliares de indisponibilidade de instrutores e veículos, preservando dados necessários para uma futura restauração.
-
-Credenciais do Render e variáveis de ambiente não fazem parte das exportações.
-
-## Próxima etapa
-
-**ETAPA 16 — Login individual**
-
-Substituir futuramente o login básico por usuários individuais, com:
-- nome;
-- login;
-- e-mail;
-- senha armazenada com hash seguro;
-- perfil;
-- ativo/inativo;
-- sessões seguras;
-- proteção das rotas do backend.
-
-Depois segue:
-- ETAPA 17 — Permissões por usuário (Administrador e Instrutor).
+A V3.0 já grava o perfil do usuário e deixa a estrutura pronta. A próxima versão deverá aplicar as restrições no frontend e, principalmente, no backend.

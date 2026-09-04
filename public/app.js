@@ -31,6 +31,10 @@ function alternarTema() {
 }
 
 let alunos = [], alunosTodos = [], instrutores = [], veiculos = [], locais = [], aulas = [], aulasHoje = [], aulasSemana = [], planos = [];
+let usuarioAtual = null;
+let usuariosData = [];
+let usuariosCarregados = false;
+let loginEmAndamento = false;
 let resumoDashboard = {};
 let relatorioData = {};
 let relatorioCarregado = false;
@@ -218,21 +222,129 @@ function resumoFuncionamento() {
   return `${dias} · ${hora(configFuncionamento.hora_abertura)}–${hora(configFuncionamento.hora_encerramento)} · ${Number(configFuncionamento.duracao_padrao_minutos || 50)} min${intervalo ? ` + ${intervalo} min intervalo` : ''}`;
 }
 
+function mostrarLogin(mensagem = '', setupRequired = false) {
+  document.body.classList.add('auth-locked');
+  $('#loginScreen')?.classList.remove('hide');
+  const erro = $('#erroLogin');
+  if (erro) {
+    erro.textContent = mensagem || '';
+    erro.classList.toggle('hide', !mensagem);
+  }
+  $('#loginSetupInfo')?.classList.toggle('hide', !setupRequired);
+  const btn = $('#entrarLogin');
+  if (btn) btn.disabled = setupRequired || loginEmAndamento;
+  setTimeout(() => $('#loginUsuario')?.focus(), 50);
+}
+
+function liberarApp(usuario) {
+  usuarioAtual = usuario || null;
+  document.body.classList.remove('auth-locked');
+  $('#loginScreen')?.classList.add('hide');
+  $('#loginSenha').value = '';
+  const admin = usuarioAtual?.perfil === 'ADMIN';
+  $('#tabUsuarios')?.classList.toggle('hide', !admin);
+  $('#usuarioSessaoNome').textContent = usuarioAtual?.nome || usuarioAtual?.login || 'Usuário';
+  $('#usuarioSessaoPerfil').textContent = admin ? 'Administrador' : 'Instrutor';
+
+  if (!admin) {
+    usuariosData = [];
+    usuariosCarregados = false;
+    if ($('#listaUsuarios')) $('#listaUsuarios').innerHTML = '';
+    if ($('#usuarios')?.classList.contains('active')) {
+      $$('.tab').forEach(x => x.classList.toggle('active', x.dataset.tab === 'painel'));
+      $$('.panel').forEach(p => p.classList.toggle('active', p.id === 'painel'));
+    }
+  }
+}
+
 async function api(u, o = {}) {
   const { headers = {}, ...rest } = o;
   const r = await fetch(u, {
+    credentials: 'same-origin',
     ...rest,
     headers: { 'Content-Type': 'application/json', ...headers }
   });
   let d = {};
   try { d = await r.json(); } catch {}
   if (!r.ok) {
+    if (r.status === 401 && !u.startsWith('/api/auth/')) {
+      usuarioAtual = null;
+      mostrarLogin('Sua sessão expirou. Entre novamente para continuar.');
+    }
     const e = new Error(d.error || 'Erro');
     e.status = r.status;
     e.data = d;
     throw e;
   }
   return d;
+}
+
+async function iniciarAutenticacao() {
+  try {
+    const r = await fetch('/api/auth/status', { credentials:'same-origin', cache:'no-store' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || 'Falha ao verificar login.');
+    if (!d.authenticated) {
+      mostrarLogin('', d.setup_required === true);
+      return;
+    }
+    liberarApp(d.usuario);
+    await health();
+    await load();
+  } catch (e) {
+    mostrarLogin('Não foi possível verificar o login. Tente novamente.');
+  }
+}
+
+async function efetuarLogin() {
+  if (loginEmAndamento) return;
+  const login = $('#loginUsuario').value.trim();
+  const senha = $('#loginSenha').value;
+  const erro = $('#erroLogin');
+  if (!login || !senha) {
+    erro.textContent = 'Informe usuário e senha.';
+    erro.classList.remove('hide');
+    return;
+  }
+  loginEmAndamento = true;
+  $('#entrarLogin').disabled = true;
+  $('#entrarLogin').textContent = 'Entrando...';
+  erro.classList.add('hide');
+  try {
+    const r = await fetch('/api/auth/login', {
+      method:'POST',
+      credentials:'same-origin',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ login, senha })
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      mostrarLogin(d.error || 'Não foi possível entrar.', d.security_setup_required === true);
+      return;
+    }
+    liberarApp(d.usuario);
+    usuariosCarregados = false;
+    await health();
+    await load();
+  } catch {
+    mostrarLogin('Erro de conexão ao realizar login.');
+  } finally {
+    loginEmAndamento = false;
+    $('#entrarLogin').disabled = false;
+    $('#entrarLogin').textContent = 'Entrar';
+  }
+}
+
+async function sairSessao() {
+  try {
+    await api('/api/auth/logout', { method:'POST', body:'{}' });
+  } catch (_) {}
+  usuarioAtual = null;
+  usuariosData = [];
+  usuariosCarregados = false;
+  $$('.tab').forEach(x => x.classList.toggle('active', x.dataset.tab === 'painel'));
+  $$('.panel').forEach(p => p.classList.toggle('active', p.id === 'painel'));
+  mostrarLogin('');
 }
 
 function toast(t) {
@@ -252,6 +364,7 @@ function abrirTab(id) {
   if (id === 'relatorios') carregarRelatorios();
   if (id === 'financeiro') carregarFinanceiro();
   if (id === 'backup') carregarBackupResumo();
+  if (id === 'usuarios' && usuarioAtual?.perfil === 'ADMIN') carregarUsuarios();
 }
 $$('.tab').forEach(b => b.onclick = () => abrirTab(b.dataset.tab));
 $$('[data-close]').forEach(b => b.onclick = () => close(b.dataset.close));
@@ -1195,8 +1308,8 @@ async function load() {
 async function health() {
   try {
     const h = await api('/api/health');
-    const seguranca = h.security_ready ? ' · 🔒 acesso protegido' : ' · ⛔ proteção precisa ser configurada';
-    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '2.9.0'}${seguranca}.`;
+    const seguranca = h.security_ready ? ' · 🔐 login individual ativo' : ' · ⛔ login individual precisa ser inicializado';
+    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '3.0.0'}${seguranca}.`;
     $('#db').className = h.security_ready ? 'db ok' : 'db fail';
   } catch {
     $('#db').textContent = '🔴 Banco não conectado. Verifique DATABASE_URL no Render.';
@@ -2360,6 +2473,115 @@ function pedirEncerrarPlano(id, cancelarFuturas = false) {
 
 
 
+
+// ========================= V3.0 — USUÁRIOS / LOGIN INDIVIDUAL =========================
+function usuarioPerfilLabel(perfil) {
+  return String(perfil || '').toUpperCase() === 'ADMIN' ? 'Administrador' : 'Instrutor';
+}
+
+function usuarioItemHtml(u) {
+  const ativo = u.ativo !== false;
+  const proprio = Number(u.id) === Number(usuarioAtual?.id);
+  return `<article class="card user-item ${ativo ? '' : 'inactive'}">
+    <div class="user-item-main">
+      <div>
+        <div class="user-item-title">
+          <h3>${esc(u.nome)}</h3>
+          <span class="user-role ${String(u.perfil || '').toLowerCase()}">${esc(usuarioPerfilLabel(u.perfil))}</span>
+          ${proprio ? '<span class="user-you">Você</span>' : ''}
+          ${!ativo ? '<span class="user-role inactive">Inativo</span>' : ''}
+        </div>
+        <p><b>Login:</b> ${esc(u.login)}${u.email ? ` · ${esc(u.email)}` : ''}</p>
+        <small>Último acesso: ${u.ultimo_login_em ? new Date(u.ultimo_login_em).toLocaleString('pt-BR') : 'ainda não acessou'}</small>
+      </div>
+      <div class="actions-row">
+        <button type="button" class="mini edit" data-edit-usuario="${Number(u.id)}">✏️ Editar</button>
+        ${ativo
+          ? `<button type="button" class="mini delete" data-situacao-usuario="${Number(u.id)}" data-usuario-ativo="0" ${proprio ? 'disabled title="Você não pode desativar a própria conta"' : ''}>⏸️ Desativar</button>`
+          : `<button type="button" class="mini plan" data-situacao-usuario="${Number(u.id)}" data-usuario-ativo="1">▶️ Reativar</button>`}
+      </div>
+    </div>
+  </article>`;
+}
+
+function renderUsuarios() {
+  if (!$('#listaUsuarios')) return;
+  $('#listaUsuarios').innerHTML = usuariosData.length
+    ? usuariosData.map(usuarioItemHtml).join('')
+    : '<div class="empty">Nenhum usuário cadastrado.</div>';
+
+  $$('[data-edit-usuario]').forEach(b => b.onclick = () => editarUsuario(Number(b.dataset.editUsuario)));
+  $$('[data-situacao-usuario]').forEach(b => b.onclick = () => alterarSituacaoUsuario(
+    Number(b.dataset.situacaoUsuario),
+    b.dataset.usuarioAtivo === '1'
+  ));
+}
+
+async function carregarUsuarios(forcar = false) {
+  if (usuarioAtual?.perfil !== 'ADMIN') return;
+  if (usuariosCarregados && !forcar) return renderUsuarios();
+  try {
+    usuariosData = await api('/api/usuarios');
+    usuariosCarregados = true;
+    renderUsuarios();
+  } catch (e) {
+    toast(e.message || 'Erro ao carregar usuários.');
+  }
+}
+
+function novoUsuario() {
+  $('#fUsuario').reset();
+  $('#usuarioId').value = '';
+  $('#tituloUsuario').textContent = 'Novo usuário';
+  $('#usuarioPerfil').value = 'INSTRUTOR';
+  $('#usuarioSenha').required = true;
+  $('#usuarioSenha2').required = true;
+  $('#usuarioSenhaAjuda').textContent = 'Obrigatória no novo usuário. Deve conter pelo menos uma letra e um número.';
+  $('#erroUsuario').classList.add('hide');
+  open('mUsuario');
+}
+
+function editarUsuario(id) {
+  const u = usuariosData.find(x => Number(x.id) === Number(id));
+  if (!u) return toast('Usuário não encontrado.');
+  $('#fUsuario').reset();
+  $('#usuarioId').value = String(u.id);
+  $('#tituloUsuario').textContent = 'Editar usuário';
+  $('#usuarioNome').value = u.nome || '';
+  $('#usuarioLogin').value = u.login || '';
+  $('#usuarioEmail').value = u.email || '';
+  $('#usuarioPerfil').value = u.perfil || 'INSTRUTOR';
+  $('#usuarioSenha').required = false;
+  $('#usuarioSenha2').required = false;
+  $('#usuarioSenhaAjuda').textContent = 'Deixe em branco para manter a senha atual. Ao trocar, use pelo menos uma letra e um número.';
+  $('#erroUsuario').classList.add('hide');
+  open('mUsuario');
+}
+
+function alterarSituacaoUsuario(id, ativo) {
+  const u = usuariosData.find(x => Number(x.id) === Number(id));
+  if (!u) return;
+  confirmar(
+    ativo ? 'Reativar usuário?' : 'Desativar usuário?',
+    ativo
+      ? `${u.nome} poderá voltar a entrar no AutoAgenda.`
+      : `${u.nome} perderá o acesso e as sessões abertas serão encerradas.`,
+    async () => {
+      try {
+        await api(`/api/usuarios/${id}/situacao`, {
+          method:'PATCH',
+          body:JSON.stringify({ ativo })
+        });
+        usuariosCarregados = false;
+        await carregarUsuarios(true);
+        toast(ativo ? '✅ Usuário reativado.' : '✅ Usuário desativado.');
+      } catch (e) { toast(e.message); }
+    },
+    ativo ? 'Reativar' : 'Desativar'
+  );
+}
+
+
 // ========================= V2.9 — BACKUP / EXPORTAÇÃO =========================
 function renderBackupResumo() {
   const c = backupData?.contagens || {};
@@ -2481,6 +2703,65 @@ if ($('#backupCompletoJson')) $('#backupCompletoJson').onclick = () => baixarBac
 if ($('#backupCompletoExcel')) $('#backupCompletoExcel').onclick = () => baixarBackup('xlsx', 'completo');
 atualizarAjudaBackup();
 
+
+// ========================= V3.0 — EVENTOS DE LOGIN E USUÁRIOS =========================
+$('#fLogin').onsubmit = async e => {
+  e.preventDefault();
+  await efetuarLogin();
+};
+$('#sairSessao').onclick = sairSessao;
+$('#novoUsuario').onclick = novoUsuario;
+
+$('#fUsuario').onsubmit = async e => {
+  e.preventDefault();
+  const id = Number($('#usuarioId').value || 0);
+  const senha = $('#usuarioSenha').value;
+  const senha2 = $('#usuarioSenha2').value;
+  const erro = $('#erroUsuario');
+
+  if (senha !== senha2) {
+    erro.textContent = 'As senhas não conferem.';
+    erro.classList.remove('hide');
+    return;
+  }
+
+  const payload = {
+    nome: $('#usuarioNome').value.trim(),
+    login: $('#usuarioLogin').value.trim(),
+    email: $('#usuarioEmail').value.trim(),
+    perfil: $('#usuarioPerfil').value,
+    senha
+  };
+
+  const btn = $('#salvarUsuario');
+  try {
+    erro.classList.add('hide');
+    btn.disabled = true;
+    btn.textContent = 'Salvando...';
+    const atualizado = await api(id ? `/api/usuarios/${id}` : '/api/usuarios', {
+      method: id ? 'PUT' : 'POST',
+      body: JSON.stringify(payload)
+    });
+
+    close('mUsuario');
+    usuariosCarregados = false;
+    await carregarUsuarios(true);
+
+    if (Number(atualizado.id) === Number(usuarioAtual?.id)) {
+      usuarioAtual = { ...usuarioAtual, ...atualizado };
+      liberarApp(usuarioAtual);
+    }
+    toast(id ? '✅ Usuário atualizado.' : '✅ Usuário criado.');
+  } catch (e2) {
+    erro.textContent = e2.message || 'Erro ao salvar usuário.';
+    erro.classList.remove('hide');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '💾 Salvar usuário';
+  }
+};
+
+
 // ========================= NAVEGAÇÃO / INICIALIZAÇÃO =========================
 $('#relDataInicio').value = inicioMesISO();
 $('#relDataFim').value = iso();
@@ -2521,5 +2802,4 @@ const botaoTema = $('#alternarTema');
 if (botaoTema) botaoTema.onclick = alternarTema;
 atualizarBotaoTema();
 
-health();
-load();
+iniciarAutenticacao();
