@@ -3,11 +3,12 @@ require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const crypto = require('crypto');
+const zlib = require('zlib');
 const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '2.9.0';
+const APP_VERSION = '2.9.1';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -3551,12 +3552,10 @@ const EXPORTACOES_SUPORTE = {
 };
 
 const EXPORTACOES_COMPLETAS = { ...EXPORTACOES, ...EXPORTACOES_SUPORTE };
-let ExcelJSLazy = null;
-
-function excelJS() {
-  if (!ExcelJSLazy) ExcelJSLazy = require('exceljs');
-  return ExcelJSLazy;
-}
+// V2.9.1 — XLSX gerado sem dependência externa.
+// O arquivo Excel é montado no padrão Office Open XML (.xlsx) e compactado
+// usando apenas o módulo nativo zlib do Node. Isso elimina falhas do ExcelJS
+// no ambiente do Render e reduz memória/dependências no caminho de exportação.
 
 function valorSeguroPlanilha(valor) {
   if (valor === null || valor === undefined) return '';
@@ -3667,59 +3666,231 @@ function csvCompleto(conjuntos) {
   return `${linhas.join('\r\n')}\r\n`;
 }
 
-async function excelDeConjuntos(conjuntos) {
-  const ExcelJS = excelJS();
-  const workbook = new ExcelJS.Workbook();
-  workbook.creator = 'AutoAgenda';
-  workbook.lastModifiedBy = 'AutoAgenda';
-  workbook.created = new Date();
-  workbook.modified = new Date();
-  workbook.subject = `Exportação AutoAgenda V${APP_VERSION}`;
+function limparTextoXml(valor) {
+  return String(valor ?? '')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+    .slice(0, 32767);
+}
 
-  for (const conjunto of Object.values(conjuntos)) {
-    const ws = workbook.addWorksheet(String(conjunto.aba || conjunto.nome).slice(0, 31), {
-      views: [{ state: 'frozen', ySplit: 1 }]
-    });
-    const colunas = conjunto.colunas.length
-      ? conjunto.colunas
-      : [...new Set(conjunto.registros.flatMap(r => Object.keys(r || {})))];
+function escaparXml(valor) {
+  return limparTextoXml(valor)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
 
-    if (!colunas.length) {
-      ws.addRow(['Sem colunas disponíveis']);
-      continue;
+function colunaExcel(numero) {
+  let n = Number(numero);
+  let letras = '';
+  while (n > 0) {
+    const resto = (n - 1) % 26;
+    letras = String.fromCharCode(65 + resto) + letras;
+    n = Math.floor((n - 1) / 26);
+  }
+  return letras || 'A';
+}
+
+function celulaXlsx(ref, valor, estilo = 0) {
+  const s = estilo ? ` s="${estilo}"` : '';
+  if (valor === null || valor === undefined || valor === '') {
+    return `<c r="${ref}"${s} t="inlineStr"><is><t></t></is></c>`;
+  }
+  if (typeof valor === 'number' && Number.isFinite(valor)) {
+    return `<c r="${ref}"${s}><v>${valor}</v></c>`;
+  }
+  if (typeof valor === 'boolean') {
+    return `<c r="${ref}"${s} t="b"><v>${valor ? 1 : 0}</v></c>`;
+  }
+  if (valor instanceof Date) valor = valor.toISOString();
+  if (Array.isArray(valor) || (typeof valor === 'object' && valor !== null)) {
+    valor = JSON.stringify(valor);
+  }
+  return `<c r="${ref}"${s} t="inlineStr"><is><t xml:space="preserve">${escaparXml(valor)}</t></is></c>`;
+}
+
+function xmlPlanilha(conjunto) {
+  const colunas = conjunto.colunas.length
+    ? conjunto.colunas
+    : [...new Set(conjunto.registros.flatMap(r => Object.keys(r || {})))];
+  const cols = colunas.map((coluna, i) => {
+    let maior = String(coluna).length;
+    for (const registro of conjunto.registros.slice(0, 250)) {
+      maior = Math.max(maior, String(valorSeguroPlanilha(registro?.[coluna]) ?? '').length);
     }
+    const largura = Math.min(40, Math.max(12, maior + 2));
+    return `<col min="${i + 1}" max="${i + 1}" width="${largura}" customWidth="1"/>`;
+  }).join('');
 
-    ws.columns = colunas.map(coluna => ({ header: coluna, key: coluna, width: Math.min(32, Math.max(12, String(coluna).length + 2)) }));
-    for (const registro of conjunto.registros) {
-      const linha = {};
-      for (const coluna of colunas) linha[coluna] = valorSeguroPlanilha(registro?.[coluna]);
-      ws.addRow(linha);
-    }
-
-    const header = ws.getRow(1);
-    header.font = { bold: true };
-    header.alignment = { vertical: 'middle', horizontal: 'left' };
-    header.height = 22;
-    for (const cell of header.cells) {
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFD400' } };
-      cell.border = { bottom: { style: 'thin', color: { argb: 'FFB59A00' } } };
-    }
-
-    if (conjunto.registros.length) ws.autoFilter = { from: 'A1', to: header.getCell(colunas.length).address };
-
-    // Ajuste simples com limite para observações e textos longos não abrirem colunas gigantes.
-    colunas.forEach((coluna, i) => {
-      let maior = String(coluna).length;
-      for (const registro of conjunto.registros.slice(0, 250)) {
-        maior = Math.max(maior, String(valorSeguroPlanilha(registro?.[coluna]) ?? '').length);
-      }
-      ws.getColumn(i + 1).width = Math.min(40, Math.max(12, maior + 2));
-      ws.getColumn(i + 1).alignment = { vertical: 'top', wrapText: maior > 28 };
+  const linhas = [];
+  if (!colunas.length) {
+    linhas.push('<row r="1"><c r="A1" s="1" t="inlineStr"><is><t>Sem colunas disponíveis</t></is></c></row>');
+  } else {
+    const cabecalho = colunas.map((coluna, i) => celulaXlsx(`${colunaExcel(i + 1)}1`, coluna, 1)).join('');
+    linhas.push(`<row r="1" ht="22" customHeight="1">${cabecalho}</row>`);
+    conjunto.registros.forEach((registro, idx) => {
+      const rowNumber = idx + 2;
+      const cells = colunas.map((coluna, i) => celulaXlsx(`${colunaExcel(i + 1)}${rowNumber}`, valorSeguroPlanilha(registro?.[coluna]))).join('');
+      linhas.push(`<row r="${rowNumber}">${cells}</row>`);
     });
   }
 
-  const buffer = await workbook.xlsx.writeBuffer();
-  return Buffer.from(buffer);
+  const ultimaColuna = colunaExcel(Math.max(1, colunas.length));
+  const ultimaLinha = Math.max(1, conjunto.registros.length + 1);
+  const filtro = colunas.length && conjunto.registros.length ? `<autoFilter ref="A1:${ultimaColuna}${ultimaLinha}"/>` : '';
+
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <dimension ref="A1:${ultimaColuna}${ultimaLinha}"/>
+  <sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
+  <sheetFormatPr defaultRowHeight="15"/>
+  ${cols ? `<cols>${cols}</cols>` : ''}
+  <sheetData>${linhas.join('')}</sheetData>
+  ${filtro}
+</worksheet>`;
+}
+
+// CRC32 usado pelos registros ZIP do .xlsx.
+const TABELA_CRC32 = (() => {
+  const tabela = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    tabela[n] = c >>> 0;
+  }
+  return tabela;
+})();
+
+function crc32(buffer) {
+  let c = 0xFFFFFFFF;
+  for (const byte of buffer) c = TABELA_CRC32[(c ^ byte) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+
+function dataHoraDosZip(data = new Date()) {
+  const ano = Math.max(1980, data.getFullYear());
+  const dosTime = ((data.getHours() & 31) << 11) | ((data.getMinutes() & 63) << 5) | ((Math.floor(data.getSeconds() / 2)) & 31);
+  const dosDate = (((ano - 1980) & 127) << 9) | (((data.getMonth() + 1) & 15) << 5) | (data.getDate() & 31);
+  return { dosTime, dosDate };
+}
+
+function criarZip(arquivos) {
+  const locais = [];
+  const centrais = [];
+  let offset = 0;
+  const { dosTime, dosDate } = dataHoraDosZip();
+
+  for (const arquivo of arquivos) {
+    const nome = Buffer.from(arquivo.nome.replace(/\\/g, '/'), 'utf8');
+    const original = Buffer.isBuffer(arquivo.dados) ? arquivo.dados : Buffer.from(String(arquivo.dados), 'utf8');
+    const compactado = zlib.deflateRawSync(original, { level: 6 });
+    const crc = crc32(original);
+
+    const local = Buffer.alloc(30);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0x0800, 6); // nomes UTF-8
+    local.writeUInt16LE(8, 8); // deflate
+    local.writeUInt16LE(dosTime, 10);
+    local.writeUInt16LE(dosDate, 12);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(compactado.length, 18);
+    local.writeUInt32LE(original.length, 22);
+    local.writeUInt16LE(nome.length, 26);
+    local.writeUInt16LE(0, 28);
+    locais.push(local, nome, compactado);
+
+    const central = Buffer.alloc(46);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(0x0800, 8);
+    central.writeUInt16LE(8, 10);
+    central.writeUInt16LE(dosTime, 12);
+    central.writeUInt16LE(dosDate, 14);
+    central.writeUInt32LE(crc, 16);
+    central.writeUInt32LE(compactado.length, 20);
+    central.writeUInt32LE(original.length, 24);
+    central.writeUInt16LE(nome.length, 28);
+    central.writeUInt16LE(0, 30);
+    central.writeUInt16LE(0, 32);
+    central.writeUInt16LE(0, 34);
+    central.writeUInt16LE(0, 36);
+    central.writeUInt32LE(0, 38);
+    central.writeUInt32LE(offset, 42);
+    centrais.push(central, nome);
+
+    offset += local.length + nome.length + compactado.length;
+  }
+
+  const blocoCentral = Buffer.concat(centrais);
+  const fim = Buffer.alloc(22);
+  fim.writeUInt32LE(0x06054b50, 0);
+  fim.writeUInt16LE(0, 4);
+  fim.writeUInt16LE(0, 6);
+  fim.writeUInt16LE(arquivos.length, 8);
+  fim.writeUInt16LE(arquivos.length, 10);
+  fim.writeUInt32LE(blocoCentral.length, 12);
+  fim.writeUInt32LE(offset, 16);
+  fim.writeUInt16LE(0, 20);
+  return Buffer.concat([...locais, blocoCentral, fim]);
+}
+
+async function excelDeConjuntos(conjuntos) {
+  const lista = Object.values(conjuntos);
+  const sheets = lista.map((conjunto, i) => ({
+    id: i + 1,
+    nome: limparTextoXml(String(conjunto.aba || conjunto.nome || `Planilha ${i + 1}`).slice(0, 31)) || `Planilha ${i + 1}`,
+    conjunto
+  }));
+
+  const contentTypes = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
+  ${sheets.map(s => `<Override PartName="/xl/worksheets/sheet${s.id}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}
+</Types>`;
+
+  const rootRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>`;
+
+  const workbook = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <bookViews><workbookView xWindow="0" yWindow="0" windowWidth="24000" windowHeight="12000"/></bookViews>
+  <sheets>${sheets.map(s => `<sheet name="${escaparXml(s.nome)}" sheetId="${s.id}" r:id="rId${s.id}"/>`).join('')}</sheets>
+</workbook>`;
+
+  const workbookRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  ${sheets.map(s => `<Relationship Id="rId${s.id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${s.id}.xml"/>`).join('')}
+  <Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+</Relationships>`;
+
+  const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <fonts count="2"><font><sz val="11"/><name val="Calibri"/><family val="2"/></font><font><b/><sz val="11"/><name val="Calibri"/><family val="2"/></font></fonts>
+  <fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFD400"/><bgColor indexed="64"/></patternFill></fill></fills>
+  <borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left/><right/><top/><bottom style="thin"><color rgb="FFB59A00"/></bottom><diagonal/></border></borders>
+  <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+  <cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center" horizontal="left"/></xf></cellXfs>
+  <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+</styleSheet>`;
+
+  const arquivos = [
+    { nome: '[Content_Types].xml', dados: contentTypes },
+    { nome: '_rels/.rels', dados: rootRels },
+    { nome: 'xl/workbook.xml', dados: workbook },
+    { nome: 'xl/_rels/workbook.xml.rels', dados: workbookRels },
+    { nome: 'xl/styles.xml', dados: styles },
+    ...sheets.map(s => ({ nome: `xl/worksheets/sheet${s.id}.xml`, dados: xmlPlanilha(s.conjunto) }))
+  ];
+
+  return criarZip(arquivos);
 }
 
 function nomeArquivoBackup(entidade, formato) {
@@ -3793,10 +3964,7 @@ app.get('/api/backup/exportar', async (req, res) => {
     return res.send(arquivoExcel);
   } catch (error) {
     console.error('Erro ao exportar backup:', error);
-    const mensagem = String(error?.code || '').toUpperCase() === 'MODULE_NOT_FOUND'
-      ? 'Exportação Excel indisponível. Verifique a instalação das dependências no Render.'
-      : 'Erro ao gerar o arquivo de backup/exportação.';
-    if (!res.headersSent) return res.status(500).json({ error: mensagem });
+    if (!res.headersSent) return res.status(500).json({ error: 'Erro ao gerar o arquivo de backup/exportação.' });
   }
 });
 

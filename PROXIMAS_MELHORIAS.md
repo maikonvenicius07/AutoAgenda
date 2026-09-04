@@ -1,6 +1,6 @@
 # Próximas melhorias — AutoAgenda
 
-Versão atual consolidada: **V2.9.0**.
+Versão atual consolidada: **V2.9.1**.
 
 Concluído até aqui: **ETAPAS 1 a 15** do roteiro principal.
 

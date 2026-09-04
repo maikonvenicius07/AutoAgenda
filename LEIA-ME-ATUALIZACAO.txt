@@ -1,47 +1,19 @@
-AUTOAGENDA V2.9.0 — BACKUP / EXPORTAÇÃO
+AutoAgenda V2.9.1 — CORREÇÃO DA EXPORTAÇÃO EXCEL
 
-ETAPA 15 do roteiro principal.
+Problema corrigido:
+- A exportação Excel do backup completo podia encerrar a resposta no Render e o Chrome mostrava ERR_INVALID_RESPONSE.
 
-NOVIDADES
-- Nova aba: 💾 Backup.
-- Exportação de alunos, instrutores, veículos, locais, aulas, planos, financeiro e configurações.
-- Formatos: CSV, Excel (.xlsx) e JSON.
-- Backup completo JSON preparado para futura rotina de restauração.
-- Exportação Excel completa com uma aba por conjunto de dados.
-- Backup completo inclui também indisponibilidades de instrutores e veículos.
-- Resumo com contagens de alunos, aulas, planos e lançamentos financeiros.
+Solução:
+- Removida a dependência ExcelJS do caminho de exportação.
+- O AutoAgenda agora gera o arquivo XLSX diretamente no padrão Office Open XML, usando apenas módulos nativos do Node.js.
+- JSON e CSV permanecem sem alteração.
+- Nenhuma alteração no PostgreSQL. Não execute SQL manualmente.
 
-SEGURANÇA
-- DATABASE_URL não é exportada.
-- AUTOAGENDA_USER e AUTOAGENDA_PASSWORD não são exportados.
-- Senhas, tokens e credenciais do ambiente não são exportados.
-- Os arquivos podem conter CPF, telefone, e-mail e outros dados pessoais cadastrados. Guarde-os em local seguro.
-
-BANCO
-- Nenhuma nova tabela ou coluna nesta versão.
-- Não é necessário executar SQL manualmente.
-
-DEPENDÊNCIA NOVA
-- exceljs 4.4.0, usada somente para gerar arquivos .xlsx.
-- O Render instalará a dependência a partir do package.json durante o deploy.
-
-ARQUIVOS ALTERADOS
+Arquivos alterados:
 - server.js
 - package.json
-- public/app.js
-- public/index.html
-- public/style.css
-- sql/schema.sql (somente identificação da versão)
 - README.md
 - PROXIMAS_MELHORIAS.md
 - LEIA-ME-ATUALIZACAO.txt
-- CHECKLIST_V2.9.md
-- RELATORIO_DE_TESTES_V2.9.md
 
-ATUALIZAÇÃO NO GITHUB
-1. Substitua/adicone os arquivos mantendo as mesmas pastas.
-2. Faça Commit changes.
-3. Aguarde o deploy do Render ficar Live.
-4. Pressione Ctrl+F5 no AutoAgenda.
-5. Confirme no topo: AutoAgenda V2.9.0.
-6. Abra 💾 Backup e teste primeiro o Backup completo JSON e depois o Excel.
+Após atualizar no GitHub: aguarde o Render ficar Live e teste Backup > Excel novamente.

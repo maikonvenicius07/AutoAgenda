@@ -1,4 +1,4 @@
-# AutoAgenda V2.9.0
+# AutoAgenda V2.9.1
 
 Sistema de organização de aulas práticas para autoescola, com backend Node/Express, PostgreSQL e deploy no Render.
 
@@ -23,7 +23,7 @@ Sistema de organização de aulas práticas para autoescola, com backend Node/Ex
 - modo claro/escuro;
 - preservação do histórico.
 
-## V2.9.0 — Backup / Exportação
+## V2.9.1 — Backup / Exportação (correção Excel)
 
 A ETAPA 15 adiciona a aba **💾 Backup**, voltada para cópia de segurança e exportação de dados.
 
@@ -42,7 +42,7 @@ A ETAPA 15 adiciona a aba **💾 Backup**, voltada para cópia de segurança e e
 
 **CSV** — indicado para conferência simples e abertura em planilhas. Nas exportações individuais, cada coluna do cadastro vira uma coluna do CSV. No backup completo, os registros são consolidados com a identificação da entidade.
 
-**Excel (.xlsx)** — nas exportações completas, cada conjunto de dados é criado em uma aba separada. A geração utiliza `exceljs`.
+**Excel (.xlsx)** — nas exportações completas, cada conjunto de dados é criado em uma aba separada. Na V2.9.1 o arquivo é gerado diretamente no padrão Office Open XML, usando apenas módulos nativos do Node.js.
 
 **JSON** — formato recomendado para o **backup completo**, pois preserva estrutura, nomes de campos, versão do AutoAgenda, data de geração e todos os registros necessários para uma futura rotina de restauração.
 
@@ -70,7 +70,7 @@ Os arquivos exportados podem conter dados pessoais cadastrados no sistema, como 
 
 ## Banco
 
-A V2.9.0 não cria novas tabelas nem colunas. Não é necessário executar SQL manualmente.
+A V2.9.1 não cria novas tabelas nem colunas. Não é necessário executar SQL manualmente.
 
 A coleta do backup completo utiliza uma transação PostgreSQL somente leitura com snapshot consistente, reduzindo o risco de juntar dados de momentos diferentes durante a geração do arquivo.
 
@@ -80,8 +80,13 @@ A coleta do backup completo utiliza uma transação PostgreSQL somente leitura c
 - Express 4.21.2
 - pg 8.13.1
 - dotenv 16.4.7
-- exceljs 4.4.0
 
 ## Próxima etapa
 
 **ETAPA 16 — Login individual**, com usuários próprios, senha com hash seguro e sessões protegidas.
+
+
+### V2.9.1 — correção da exportação Excel
+- A geração `.xlsx` não depende mais do pacote `exceljs`.
+- O XLSX é produzido em Office Open XML usando apenas módulos nativos do Node, reduzindo risco de falha no Render.
+- CSV e JSON permanecem inalterados.
