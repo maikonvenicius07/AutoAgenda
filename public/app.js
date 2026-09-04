@@ -34,6 +34,9 @@ let alunos = [], alunosTodos = [], instrutores = [], veiculos = [], locais = [],
 let resumoDashboard = {};
 let relatorioData = {};
 let relatorioCarregado = false;
+let financeiroData = { itens: [], resumo: {} };
+let financeiroCarregado = false;
+let financeiroMostrarArquivados = false;
 let configInstrutores = [], configVeiculos = [], configLocais = [];
 let configFuncionamento = {
   dias_funcionamento: [0,1,2,3,4,5,6],
@@ -63,6 +66,7 @@ const iso = () => {
 const hora = h => h ? String(h).slice(0, 5) : '';
 const dataISO = d => String(d || '').slice(0, 10);
 const fmtData = d => dataISO(d).split('-').reverse().join('/');
+const moedaBR = v => Number(v || 0).toLocaleString('pt-BR', { style:'currency', currency:'BRL' });
 const addDaysISO = (data, dias) => {
   const [y,m,d] = dataISO(data).split('-').map(Number);
   const x = new Date(Date.UTC(y, m - 1, d));
@@ -244,6 +248,7 @@ function abrirTab(id) {
   if (id === 'semana') carregarAulasSemana();
   if (id === 'lembretes') carregarLembretes();
   if (id === 'relatorios') carregarRelatorios();
+  if (id === 'financeiro') carregarFinanceiro();
 }
 $$('.tab').forEach(b => b.onclick = () => abrirTab(b.dataset.tab));
 $$('[data-close]').forEach(b => b.onclick = () => close(b.dataset.close));
@@ -331,10 +336,12 @@ function studentHtml(a) {
         <button type="button" class="mini history-button" data-history-aluno="${a.id}">📚 Histórico</button>
         <button type="button" class="mini secondary" data-find-slot-aluno="${a.id}">🔎 Horário livre</button>
         <button type="button" class="mini plan" data-plan-aluno="${a.id}">📅 Montar agenda</button>
+        <button type="button" class="mini finance-button" data-finance-aluno="${a.id}">💰 Financeiro</button>
         <button type="button" class="mini edit" data-edit-aluno="${a.id}">✏️ Editar</button>
         <button type="button" class="mini delete" data-del-aluno="${a.id}">⏸️ Desativar</button>
       ` : `
         <button type="button" class="mini history-button" data-history-aluno="${a.id}">📚 Histórico</button>
+        <button type="button" class="mini finance-button" data-finance-aluno="${a.id}">💰 Financeiro</button>
         <button type="button" class="mini plan" data-reactivate-aluno="${a.id}">▶️ Reativar aluno</button>
       `}
     </div>
@@ -906,6 +913,170 @@ async function carregarRelatorios(forcar = false) {
   }
 }
 
+
+// ========================= V2.8 — FINANCEIRO SIMPLES =========================
+function financeiroStatusLabel(status) {
+  return ({QUITADO:'✅ Quitado',PARCIAL:'🟡 Parcial',PENDENTE:'🕐 Pendente',VENCIDO:'🔴 Vencido'})[String(status || '').toUpperCase()] || String(status || '');
+}
+
+function financeiroFormaLabel(forma) {
+  return ({PIX:'PIX',DINHEIRO:'Dinheiro',CARTAO:'Cartão',TRANSFERENCIA:'Transferência',BOLETO:'Boleto',OUTRO:'Outro'})[String(forma || '').toUpperCase()] || '—';
+}
+
+function financeiroItemHtml(x) {
+  const ativo = x.ativo !== false;
+  const status = String(x.status_financeiro || 'PENDENTE').toLowerCase();
+  return `<article class="card finance-item ${ativo ? '' : 'inactive'}">
+    <div class="finance-item-main">
+      <div>
+        <div class="finance-item-title"><h3>${esc(x.aluno_nome)}</h3><span class="finance-status ${status}">${esc(financeiroStatusLabel(x.status_financeiro))}</span>${!ativo ? '<span class="finance-status archived">Arquivado</span>' : ''}</div>
+        <p><b>${esc(x.pacote)}</b> · ${Number(x.quantidade_aulas || 0)} aula(s)</p>
+        <small>Pagamento: ${x.data_pagamento ? fmtData(x.data_pagamento) : 'não registrado'} · ${esc(financeiroFormaLabel(x.forma_pagamento))}</small>
+        <small>Vencimento: ${x.vencimento ? fmtData(x.vencimento) : 'sem vencimento'}</small>
+        ${x.observacoes ? `<small class="finance-observation">📝 ${esc(x.observacoes)}</small>` : ''}
+      </div>
+      <div class="finance-values">
+        <div><span>Pacote</span><b>${moedaBR(x.valor_pacote)}</b></div>
+        <div><span>Pago</span><b>${moedaBR(x.valor_pago)}</b></div>
+        <div><span>Saldo</span><b>${moedaBR(x.saldo_financeiro)}</b></div>
+      </div>
+    </div>
+    <div class="actions-row finance-actions">
+      <button type="button" class="mini edit" data-edit-financeiro="${Number(x.id)}">✏️ Editar</button>
+      ${ativo
+        ? `<button type="button" class="mini delete" data-situacao-financeiro="${Number(x.id)}" data-financeiro-ativo="0">🗃️ Arquivar</button>`
+        : `<button type="button" class="mini plan" data-situacao-financeiro="${Number(x.id)}" data-financeiro-ativo="1">▶️ Reativar</button>`}
+    </div>
+  </article>`;
+}
+
+function preencherFiltroFinanceiro() {
+  const sel = $('#finFiltroAluno');
+  if (!sel) return;
+  const atual = sel.value;
+  const mapa = new Map();
+  alunos.forEach(a => mapa.set(Number(a.id), a.nome));
+  (financeiroData.itens || []).forEach(x => mapa.set(Number(x.aluno_id), x.aluno_nome));
+  const opts = [...mapa.entries()].sort((a,b) => String(a[1]).localeCompare(String(b[1]), 'pt-BR'))
+    .map(([id,nome]) => `<option value="${id}">${esc(nome)}</option>`).join('');
+  sel.innerHTML = '<option value="">Todos os alunos</option>' + opts;
+  if ([...sel.options].some(o => o.value === atual)) sel.value = atual;
+}
+
+function renderFinanceiro() {
+  const r = financeiroData.resumo || {};
+  if ($('#finTotalPacotes')) $('#finTotalPacotes').textContent = moedaBR(r.total_pacotes);
+  if ($('#finTotalPago')) $('#finTotalPago').textContent = moedaBR(r.total_pago);
+  if ($('#finTotalReceber')) $('#finTotalReceber').textContent = moedaBR(r.total_a_receber);
+  if ($('#finTotalVencido')) $('#finTotalVencido').textContent = moedaBR(r.total_vencido);
+  if ($('#finMostrarArquivados')) $('#finMostrarArquivados').textContent = financeiroMostrarArquivados ? 'Ocultar arquivados' : 'Mostrar arquivados';
+
+  preencherFiltroFinanceiro();
+  const itens = financeiroData.itens || [];
+  if ($('#listaFinanceiro')) $('#listaFinanceiro').innerHTML = itens.length
+    ? itens.map(financeiroItemHtml).join('')
+    : '<div class="empty">Nenhum lançamento financeiro encontrado para este filtro.</div>';
+  if ($('#finResumoFiltro')) $('#finResumoFiltro').textContent = `${Number(r.lancamentos || 0)} lançamento(s) exibido(s). O saldo financeiro não altera o saldo de aulas.`;
+  bindFinanceiroDynamic();
+}
+
+async function carregarFinanceiro(forcar = false) {
+  if (financeiroCarregado && !forcar) return renderFinanceiro();
+  const alunoId = $('#finFiltroAluno')?.value || '';
+  const qs = new URLSearchParams();
+  if (alunoId) qs.set('aluno_id', alunoId);
+  if (financeiroMostrarArquivados) qs.set('incluir_arquivados', '1');
+  try {
+    financeiroData = await api(`/api/financeiro${qs.toString() ? `?${qs}` : ''}`);
+    financeiroCarregado = true;
+    renderFinanceiro();
+  } catch (e) {
+    toast(e.message || 'Erro ao carregar financeiro.');
+  }
+}
+
+function prepararSelectAlunoFinanceiro(alunoId = null, nomeExtra = '') {
+  const sel = $('#finAluno');
+  const mapa = new Map(alunos.map(a => [Number(a.id), a.nome]));
+  if (alunoId && !mapa.has(Number(alunoId)) && nomeExtra) mapa.set(Number(alunoId), nomeExtra);
+  sel.innerHTML = [...mapa.entries()].sort((a,b) => String(a[1]).localeCompare(String(b[1]), 'pt-BR'))
+    .map(([id,nome]) => `<option value="${id}">${esc(nome)}</option>`).join('');
+  if (alunoId) sel.value = String(alunoId);
+}
+
+function novoLancamentoFinanceiro(alunoId = null) {
+  $('#fFinanceiro').reset();
+  $('#finId').value = '';
+  $('#tituloFinanceiro').textContent = '💰 Novo lançamento financeiro';
+  $('#finValorPago').value = '0';
+  const aluno = alunos.find(a => Number(a.id) === Number(alunoId)) || alunos[0];
+  prepararSelectAlunoFinanceiro(aluno?.id || null, aluno?.nome || '');
+  if (aluno) {
+    $('#finAluno').value = String(aluno.id);
+    $('#finQtdAulas').value = Number(aluno.aulas_contratadas || 1);
+    $('#finPacote').value = `Pacote Categoria ${aluno.categoria || 'B'} - ${Number(aluno.aulas_contratadas || 1)} aulas`;
+  } else {
+    $('#finQtdAulas').value = '1';
+  }
+  $('#erroFinanceiro').classList.add('hide');
+  open('mFinanceiro');
+}
+
+function editarLancamentoFinanceiro(id) {
+  const x = (financeiroData.itens || []).find(i => Number(i.id) === Number(id));
+  if (!x) return toast('Lançamento financeiro não encontrado.');
+  $('#fFinanceiro').reset();
+  $('#finId').value = String(x.id);
+  $('#tituloFinanceiro').textContent = '💰 Editar lançamento financeiro';
+  prepararSelectAlunoFinanceiro(x.aluno_id, x.aluno_nome);
+  $('#finAluno').value = String(x.aluno_id);
+  $('#finPacote').value = x.pacote || '';
+  $('#finQtdAulas').value = Number(x.quantidade_aulas || 1);
+  $('#finValorPacote').value = Number(x.valor_pacote || 0).toFixed(2);
+  $('#finValorPago').value = Number(x.valor_pago || 0).toFixed(2);
+  $('#finDataPagamento').value = dataISO(x.data_pagamento);
+  $('#finVencimento').value = dataISO(x.vencimento);
+  $('#finFormaPagamento').value = x.forma_pagamento || '';
+  $('#finObservacoes').value = x.observacoes || '';
+  $('#erroFinanceiro').classList.add('hide');
+  open('mFinanceiro');
+}
+
+function bindFinanceiroDynamic() {
+  $$('[data-edit-financeiro]').forEach(b => b.onclick = () => editarLancamentoFinanceiro(Number(b.dataset.editFinanceiro)));
+  $$('[data-situacao-financeiro]').forEach(b => b.onclick = () => alterarSituacaoFinanceiro(Number(b.dataset.situacaoFinanceiro), b.dataset.financeiroAtivo === '1'));
+}
+
+function alterarSituacaoFinanceiro(id, ativo) {
+  const x = (financeiroData.itens || []).find(i => Number(i.id) === Number(id));
+  confirmar(
+    ativo ? 'Reativar lançamento?' : 'Arquivar lançamento?',
+    ativo
+      ? `O lançamento financeiro de ${x?.aluno_nome || 'este aluno'} voltará à lista principal.`
+      : `O lançamento financeiro de ${x?.aluno_nome || 'este aluno'} será arquivado. Nenhuma aula ou plano será alterado.`,
+    async () => {
+      try {
+        await api(`/api/financeiro/${id}/situacao`, {method:'PATCH', body:JSON.stringify({ativo})});
+        toast(ativo ? '✅ Lançamento reativado.' : '✅ Lançamento arquivado.');
+        financeiroCarregado = false;
+        await carregarFinanceiro(true);
+      } catch (e) { toast(e.message); }
+    },
+    ativo ? 'Reativar' : 'Arquivar'
+  );
+}
+
+function abrirFinanceiroAluno(alunoId) {
+  const sel = $('#finFiltroAluno');
+  if (sel && ![...sel.options].some(o => o.value === String(alunoId))) {
+    const a = alunos.find(x => Number(x.id) === Number(alunoId));
+    if (a) sel.insertAdjacentHTML('beforeend', `<option value="${Number(a.id)}">${esc(a.nome)}</option>`);
+  }
+  if (sel) sel.value = String(alunoId);
+  financeiroCarregado = false;
+  abrirTab('financeiro');
+}
+
 function render() {
   renderDashboard();
 
@@ -968,6 +1139,7 @@ function bindDynamic() {
   $$('[data-del-aluno]').forEach(b => b.onclick = () => pedirExcluirAluno(Number(b.dataset.delAluno)));
   $$('[data-reactivate-aluno]').forEach(b => b.onclick = () => reativarAluno(Number(b.dataset.reactivateAluno)));
   $$('[data-plan-aluno]').forEach(b => b.onclick = () => abrirPlano(Number(b.dataset.planAluno)));
+  $$('[data-finance-aluno]').forEach(b => b.onclick = () => abrirFinanceiroAluno(Number(b.dataset.financeAluno)));
   $$('[data-find-slot-aluno]').forEach(b => b.onclick = () => abrirBuscaHorario({ aluno_id:Number(b.dataset.findSlotAluno) }));
   $$('[data-edit-aula]').forEach(b => b.onclick = () => editarAula(Number(b.dataset.editAula)));
   $$('[data-del-aula]').forEach(b => b.onclick = () => pedirExcluirAula(Number(b.dataset.delAula)));
@@ -1021,7 +1193,7 @@ async function health() {
   try {
     const h = await api('/api/health');
     const seguranca = h.security_ready ? ' · 🔒 acesso protegido' : ' · ⛔ proteção precisa ser configurada';
-    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '2.7.0'}${seguranca}.`;
+    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '2.8.0'}${seguranca}.`;
     $('#db').className = h.security_ready ? 'db ok' : 'db fail';
   } catch {
     $('#db').textContent = '🔴 Banco não conectado. Verifique DATABASE_URL no Render.';
@@ -2182,6 +2354,58 @@ function pedirEncerrarPlano(id, cancelarFuturas = false) {
     cancelarFuturas ? 'Encerrar e cancelar' : 'Encerrar'
   );
 }
+
+
+// ========================= V2.8 — EVENTOS DO FINANCEIRO =========================
+$('#novoFinanceiro').onclick = () => novoLancamentoFinanceiro();
+$('#finAtualizar').onclick = () => { financeiroCarregado = false; carregarFinanceiro(true); };
+$('#finMostrarArquivados').onclick = () => {
+  financeiroMostrarArquivados = !financeiroMostrarArquivados;
+  financeiroCarregado = false;
+  carregarFinanceiro(true);
+};
+$('#finFiltroAluno').onchange = () => { financeiroCarregado = false; carregarFinanceiro(true); };
+$('#finValorPago').oninput = () => {
+  const pago = Number($('#finValorPago').value || 0);
+  if (pago > 0 && !$('#finDataPagamento').value) $('#finDataPagamento').value = iso();
+};
+
+$('#fFinanceiro').onsubmit = async e => {
+  e.preventDefault();
+  const id = Number($('#finId').value || 0);
+  const payload = {
+    aluno_id: Number($('#finAluno').value),
+    pacote: $('#finPacote').value.trim(),
+    quantidade_aulas: Number($('#finQtdAulas').value),
+    valor_pacote: Number($('#finValorPacote').value || 0),
+    valor_pago: Number($('#finValorPago').value || 0),
+    data_pagamento: $('#finDataPagamento').value || null,
+    vencimento: $('#finVencimento').value || null,
+    forma_pagamento: $('#finFormaPagamento').value || null,
+    observacoes: $('#finObservacoes').value.trim()
+  };
+  const erro = $('#erroFinanceiro');
+  const btn = $('#salvarFinanceiro');
+  try {
+    erro.classList.add('hide');
+    btn.disabled = true;
+    btn.textContent = 'Salvando...';
+    await api(id ? `/api/financeiro/${id}` : '/api/financeiro', {
+      method: id ? 'PUT' : 'POST',
+      body: JSON.stringify(payload)
+    });
+    close('mFinanceiro');
+    toast(id ? '✅ Lançamento financeiro atualizado.' : '✅ Lançamento financeiro cadastrado.');
+    financeiroCarregado = false;
+    await carregarFinanceiro(true);
+  } catch (e2) {
+    erro.textContent = e2.message || 'Erro ao salvar lançamento financeiro.';
+    erro.classList.remove('hide');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '💾 Salvar lançamento';
+  }
+};
 
 // ========================= NAVEGAÇÃO / INICIALIZAÇÃO =========================
 $('#relDataInicio').value = inicioMesISO();

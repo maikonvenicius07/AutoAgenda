@@ -14,7 +14,7 @@
       document.documentElement.dataset.theme = 'light';
     }
   </script>
-  <link rel="stylesheet" href="style.css?v=2.7.0">
+  <link rel="stylesheet" href="style.css?v=2.8.0">
 </head>
 <body>
 <header>
@@ -39,6 +39,7 @@
     <button class="tab" data-tab="planos">🔁 Planos</button>
     <button class="tab" data-tab="lembretes">🔔 Lembretes</button>
     <button class="tab" data-tab="relatorios">📑 Relatórios</button>
+    <button class="tab" data-tab="financeiro">💰 Financeiro</button>
     <button class="tab" data-tab="configuracoes">⚙️ Configurações</button>
   </nav>
 
@@ -272,6 +273,36 @@
     </div>
   </section>
 
+  <section id="financeiro" class="panel">
+    <div class="head finance-head">
+      <div>
+        <h2>💰 Financeiro simples</h2>
+        <p>Controle básico de pacotes e pagamentos sem misturar a parte financeira com as regras da agenda.</p>
+      </div>
+      <button type="button" id="novoFinanceiro">+ Novo lançamento</button>
+    </div>
+
+    <div class="finance-note">🔒 Os lançamentos financeiros são independentes da quantidade de aulas contratadas. Alterar um pagamento aqui <b>não cria, cancela ou modifica aulas</b>.</div>
+
+    <div class="stats stats4 finance-kpis">
+      <div><span>Valor dos pacotes</span><strong id="finTotalPacotes">R$ 0,00</strong><small>lançamentos exibidos</small></div>
+      <div><span>Valor recebido</span><strong id="finTotalPago">R$ 0,00</strong><small>pagamentos registrados</small></div>
+      <div><span>A receber</span><strong id="finTotalReceber">R$ 0,00</strong><small>saldo financeiro</small></div>
+      <div><span>Vencido</span><strong id="finTotalVencido">R$ 0,00</strong><small>saldo após vencimento</small></div>
+    </div>
+
+    <div class="card finance-filter-card">
+      <div class="finance-filters">
+        <label>Aluno<select id="finFiltroAluno"><option value="">Todos os alunos</option></select></label>
+        <button type="button" class="secondary" id="finMostrarArquivados">Mostrar arquivados</button>
+        <button type="button" class="secondary" id="finAtualizar">↻ Atualizar</button>
+      </div>
+      <small id="finResumoFiltro" class="field-help">Carregando financeiro...</small>
+    </div>
+
+    <div id="listaFinanceiro" class="finance-list"></div>
+  </section>
+
   <section id="configuracoes" class="panel">
     <div class="head">
       <div>
@@ -406,6 +437,43 @@
   </form>
 </div>
 
+
+<!-- V2.8 — FINANCEIRO SIMPLES -->
+<div id="mFinanceiro" class="modal hide">
+  <form id="fFinanceiro" class="box box-wide">
+    <button type="button" class="x" data-close="mFinanceiro">✕</button>
+    <h2 id="tituloFinanceiro">💰 Novo lançamento financeiro</h2>
+    <input id="finId" type="hidden">
+    <label>Aluno<select id="finAluno" required></select></label>
+    <div class="form-2">
+      <label>Pacote<input id="finPacote" maxlength="150" required placeholder="Ex.: Pacote Categoria B - 20 aulas"></label>
+      <label>Quantidade de aulas<input id="finQtdAulas" type="number" min="1" max="500" step="1" required></label>
+    </div>
+    <div class="form-2">
+      <label>Valor do pacote (R$)<input id="finValorPacote" type="number" min="0" max="99999999.99" step="0.01" required></label>
+      <label>Valor pago até agora (R$)<input id="finValorPago" type="number" min="0" max="99999999.99" step="0.01" value="0" required></label>
+    </div>
+    <div class="form-2">
+      <label>Data do pagamento<input id="finDataPagamento" type="date"></label>
+      <label>Vencimento<input id="finVencimento" type="date"></label>
+    </div>
+    <label>Forma de pagamento
+      <select id="finFormaPagamento">
+        <option value="">Selecione</option>
+        <option value="PIX">PIX</option>
+        <option value="DINHEIRO">Dinheiro</option>
+        <option value="CARTAO">Cartão</option>
+        <option value="TRANSFERENCIA">Transferência</option>
+        <option value="BOLETO">Boleto</option>
+        <option value="OUTRO">Outro</option>
+      </select>
+    </label>
+    <label>Observações<textarea id="finObservacoes" maxlength="2000" placeholder="Ex.: entrada, parcelamento, observações do pagamento"></textarea></label>
+    <div class="finance-modal-note">O <b>saldo financeiro</b> é calculado automaticamente: valor do pacote − valor pago.</div>
+    <div id="erroFinanceiro" class="erro hide"></div>
+    <button id="salvarFinanceiro">💾 Salvar lançamento</button>
+  </form>
+</div>
 
 <!-- V2.2 — HISTÓRICO COMPLETO DO ALUNO -->
 <div id="mHistoricoAluno" class="modal hide">
@@ -696,6 +764,6 @@
 </div>
 
 <div id="toast" class="toast hide"></div>
-<script src="app.js?v=2.7.0"></script>
+<script src="app.js?v=2.8.0"></script>
 </body>
 </html>

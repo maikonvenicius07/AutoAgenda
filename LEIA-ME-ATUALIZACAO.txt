@@ -1,35 +1,35 @@
-AUTOAGENDA V2.7.0 — RELATÓRIOS
+AUTOAGENDA V2.8.0 — FINANCEIRO SIMPLES
 
-Esta versão implementa a ETAPA 13 do roteiro.
+Esta versão implementa a ETAPA 14 do roteiro.
 
 NOVO
-- Nova aba 📑 Relatórios.
-- Seleção de data inicial e data final.
-- Atalho para o mês atual.
-- Quantidade de aulas realizadas, faltas, cancelamentos e reposições.
-- Alunos ativos e alunos com movimentação no período.
-- Aulas por instrutor.
-- Aulas por veículo.
-- Horários mais utilizados.
-- Taxa de ocupação estimada do período.
-- Capacidade estimada do período.
-- Estrutura de dados preparada para futura exportação em Excel.
+- Nova aba 💰 Financeiro.
+- Botão 💰 Financeiro também nos cartões dos alunos.
+- Cadastro de pacote financeiro por aluno.
+- Valor do pacote.
+- Quantidade de aulas do pacote.
+- Valor pago acumulado.
+- Saldo financeiro calculado automaticamente.
+- Data do pagamento.
+- Data de vencimento.
+- Forma de pagamento: PIX, dinheiro, cartão, transferência, boleto ou outro.
+- Observações.
+- Situações automáticas: Quitado, Parcial, Pendente e Vencido.
+- Resumo com total dos pacotes, recebido, a receber e vencido.
+- Filtro por aluno.
+- Arquivamento e reativação de lançamentos sem apagar o histórico.
 
-DESEMPENHO
-- O relatório é carregado somente quando a aba Relatórios é aberta ou quando o usuário solicita nova consulta.
-- O backend usa consultas agregadas no PostgreSQL.
-- O histórico completo de aulas não é enviado ao navegador para montar o relatório.
-- O período máximo por consulta é de 366 dias.
-
-IMPORTANTE SOBRE OCUPAÇÃO
-- A taxa é uma estimativa operacional.
-- Considera horário de funcionamento, duração padrão, intervalo, instrutores ativos e veículos disponíveis.
-- Folgas, indisponibilidades e manutenções específicas continuam sendo validadas na agenda.
+REGRA IMPORTANTE
+- O financeiro é separado da agenda.
+- Alterar valor, pagamento ou quantidade de aulas no Financeiro NÃO altera o cadastro de aulas contratadas.
+- Não cria, exclui, cancela ou reagenda aulas.
+- O saldo financeiro é calculado como valor do pacote menos valor pago.
 
 BANCO
-- Nenhuma tabela ou coluna nova nesta versão.
-- Não é necessário executar SQL manualmente.
-- Nenhum dado existente é apagado ou alterado pela atualização.
+- Nova tabela: autoagenda.financeiro.
+- A criação/migração é automática ao iniciar o servidor.
+- Não execute SQL manualmente.
+- Nenhum dado existente é apagado.
 
 DEPLOY
 1. Use o ZIP "Somente_Arquivos_Para_Substituir" para atualizar o GitHub.
@@ -37,6 +37,7 @@ DEPLOY
 3. Faça Commit changes.
 4. Aguarde o Render concluir o deploy.
 5. Pressione Ctrl+F5.
-6. Confirme no topo: AutoAgenda V2.7.0.
+6. Confirme no topo: AutoAgenda V2.8.0.
+7. Abra 💰 Financeiro e faça um lançamento de teste.
 
 Não altere DATABASE_URL, AUTOAGENDA_USER ou AUTOAGENDA_PASSWORD.

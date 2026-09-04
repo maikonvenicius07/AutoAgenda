@@ -1,4 +1,4 @@
--- AutoAgenda V2.5.0
+-- AutoAgenda V2.8.0
 -- Schema compatível com o server.js atual.
 -- O servidor cria/migra automaticamente; este arquivo serve para referência e execução manual controlada.
 
@@ -154,6 +154,28 @@ CREATE TABLE IF NOT EXISTS autoagenda.aulas (
   criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
   atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS autoagenda.financeiro (
+  id SERIAL PRIMARY KEY,
+  aluno_id INTEGER NOT NULL REFERENCES autoagenda.alunos(id) ON DELETE RESTRICT,
+  pacote VARCHAR(150) NOT NULL,
+  valor_pacote NUMERIC(12,2) NOT NULL CHECK (valor_pacote > 0),
+  quantidade_aulas INTEGER NOT NULL DEFAULT 1 CHECK (quantidade_aulas > 0),
+  valor_pago NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (valor_pago >= 0),
+  data_pagamento DATE,
+  vencimento DATE,
+  forma_pagamento VARCHAR(30),
+  observacoes TEXT,
+  ativo BOOLEAN NOT NULL DEFAULT TRUE,
+  criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+  atualizado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+  CHECK (valor_pago <= valor_pacote)
+);
+
+CREATE INDEX IF NOT EXISTS idx_autoagenda_financeiro_aluno
+ON autoagenda.financeiro(aluno_id, ativo);
+CREATE INDEX IF NOT EXISTS idx_autoagenda_financeiro_vencimento
+ON autoagenda.financeiro(vencimento) WHERE ativo = TRUE;
 
 -- Migrações seguras para instalações anteriores.
 ALTER TABLE autoagenda.alunos ADD COLUMN IF NOT EXISTS cpf VARCHAR(11);

@@ -7,7 +7,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '2.7.0';
+const APP_VERSION = '2.8.0';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -353,6 +353,27 @@ async function initDatabase() {
       )
     `);
 
+    // V2.8 — financeiro simples separado da lógica da agenda.
+    // O saldo financeiro é calculado a partir de valor_pacote - valor_pago para evitar divergências.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS autoagenda.financeiro (
+        id SERIAL PRIMARY KEY,
+        aluno_id INTEGER NOT NULL REFERENCES autoagenda.alunos(id) ON DELETE RESTRICT,
+        pacote VARCHAR(150) NOT NULL,
+        valor_pacote NUMERIC(12,2) NOT NULL CHECK (valor_pacote > 0),
+        quantidade_aulas INTEGER NOT NULL DEFAULT 1 CHECK (quantidade_aulas > 0),
+        valor_pago NUMERIC(12,2) NOT NULL DEFAULT 0 CHECK (valor_pago >= 0),
+        data_pagamento DATE,
+        vencimento DATE,
+        forma_pagamento VARCHAR(30),
+        observacoes TEXT,
+        ativo BOOLEAN NOT NULL DEFAULT TRUE,
+        criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+        atualizado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+        CHECK (valor_pago <= valor_pacote)
+      )
+    `);
+
     // Migrações seguras da disponibilidade individual dos instrutores.
     await client.query('ALTER TABLE autoagenda.instrutores ADD COLUMN IF NOT EXISTS disponibilidade_personalizada BOOLEAN NOT NULL DEFAULT FALSE');
     await client.query('ALTER TABLE autoagenda.instrutores ADD COLUMN IF NOT EXISTS dias_trabalho INTEGER[]');
@@ -514,6 +535,8 @@ async function initDatabase() {
     await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_planos_aluno_ativo ON autoagenda.planos_aula(aluno_id, ativo)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_instrutor_indisp_periodo ON autoagenda.instrutor_indisponibilidades(instrutor_id, data_inicio, data_fim)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_veiculo_indisp_periodo ON autoagenda.veiculo_indisponibilidades(veiculo_id, data_inicio, data_fim)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_financeiro_aluno ON autoagenda.financeiro(aluno_id, ativo)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_financeiro_vencimento ON autoagenda.financeiro(vencimento) WHERE ativo = TRUE');
 
     await client.query(`
       INSERT INTO autoagenda.instrutores (nome, whatsapp, email, categorias)
@@ -664,6 +687,24 @@ function validarInteiroNaoNegativo(valor, padrao = 0, maximo = 10000) {
   const n = Number(valor);
   if (!Number.isInteger(n) || n < 0 || n > maximo) return padrao;
   return n;
+}
+
+function validarValorMonetario(valor, campo = 'Valor', maximo = 99999999.99) {
+  const texto = String(valor ?? '').trim().replace(',', '.');
+  const n = Number(texto);
+  if (!Number.isFinite(n) || n < 0 || n > maximo) {
+    throw erroHttp(400, `${campo} inválido.`);
+  }
+  return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
+function validarDataOpcional(valor, campo) {
+  if (valor === null || valor === undefined || String(valor).trim() === '') return null;
+  const data = String(valor).slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) throw erroHttp(400, `${campo} inválida.`);
+  const d = dateOnlyUTC(data);
+  if (isoDateUTC(d) !== data) throw erroHttp(400, `${campo} inválida.`);
+  return data;
 }
 
 function normalizarCpf(valor) {
@@ -3316,6 +3357,176 @@ app.get('/api/relatorios/resumo', async (req, res) => {
     res.status(500).json({ error: 'Erro ao gerar relatório.' });
   } finally {
     client.release();
+  }
+});
+
+
+// ========================= V2.8 — FINANCEIRO SIMPLES =========================
+// O financeiro fica isolado da agenda: registrar/editar um pacote financeiro não altera
+// aulas contratadas, planos, saldo de aulas nem horários do aluno.
+const FORMAS_PAGAMENTO = ['DINHEIRO','PIX','CARTAO','TRANSFERENCIA','BOLETO','OUTRO'];
+
+function normalizarFormaPagamento(valor) {
+  const v = String(valor || '').trim().toUpperCase();
+  return FORMAS_PAGAMENTO.includes(v) ? v : '';
+}
+
+function validarLancamentoFinanceiro(body = {}) {
+  const alunoId = Number(body.aluno_id);
+  if (!Number.isInteger(alunoId) || alunoId < 1) throw erroHttp(400, 'Selecione um aluno válido.');
+
+  const pacote = String(body.pacote || '').trim().slice(0, 150);
+  if (!pacote) throw erroHttp(400, 'Informe o nome do pacote.');
+
+  const quantidadeAulas = validarInteiroPositivo(body.quantidade_aulas, 0, 500);
+  if (!quantidadeAulas) throw erroHttp(400, 'Informe uma quantidade de aulas válida.');
+
+  const valorPacote = validarValorMonetario(body.valor_pacote, 'Valor do pacote');
+  if (valorPacote <= 0) throw erroHttp(400, 'O valor do pacote deve ser maior que zero.');
+  const valorPago = validarValorMonetario(body.valor_pago ?? 0, 'Valor pago');
+  if (valorPago > valorPacote) throw erroHttp(400, 'O valor pago não pode ser maior que o valor do pacote.');
+
+  const dataPagamento = validarDataOpcional(body.data_pagamento, 'Data do pagamento');
+  const vencimento = validarDataOpcional(body.vencimento, 'Data de vencimento');
+  let formaPagamento = normalizarFormaPagamento(body.forma_pagamento);
+
+  if (valorPago > 0 && !dataPagamento) throw erroHttp(400, 'Informe a data do pagamento quando houver valor pago.');
+  if (valorPago > 0 && !formaPagamento) throw erroHttp(400, 'Informe a forma de pagamento quando houver valor pago.');
+  if (valorPago === 0) formaPagamento = '';
+
+  return {
+    aluno_id: alunoId,
+    pacote,
+    valor_pacote: valorPacote,
+    quantidade_aulas: quantidadeAulas,
+    valor_pago: valorPago,
+    data_pagamento: valorPago > 0 ? dataPagamento : null,
+    vencimento,
+    forma_pagamento: valorPago > 0 ? formaPagamento : null,
+    observacoes: String(body.observacoes || '').trim().slice(0, 2000) || null
+  };
+}
+
+app.get('/api/financeiro', async (req, res) => {
+  try {
+    const alunoId = req.query.aluno_id ? Number(req.query.aluno_id) : null;
+    const incluirArquivados = ['1','true','sim'].includes(String(req.query.incluir_arquivados || '').toLowerCase());
+    if (alunoId !== null && (!Number.isInteger(alunoId) || alunoId < 1)) {
+      return res.status(400).json({ error: 'Filtro de aluno inválido.' });
+    }
+
+    const hoje = hojeApp();
+    const params = [alunoId, incluirArquivados, hoje];
+    const where = `($1::int IS NULL OR f.aluno_id=$1) AND ($2::boolean=TRUE OR f.ativo=TRUE)`;
+
+    const [itensQ, resumoQ] = await Promise.all([
+      query(`
+        SELECT f.id, f.aluno_id, al.nome AS aluno_nome, al.ativo AS aluno_ativo,
+               f.pacote, f.valor_pacote, f.quantidade_aulas, f.valor_pago,
+               GREATEST(f.valor_pacote - f.valor_pago, 0)::numeric(12,2) AS saldo_financeiro,
+               TO_CHAR(f.data_pagamento, 'YYYY-MM-DD') AS data_pagamento,
+               TO_CHAR(f.vencimento, 'YYYY-MM-DD') AS vencimento,
+               f.forma_pagamento, f.observacoes, f.ativo, f.criado_em, f.atualizado_em,
+               CASE
+                 WHEN f.valor_pago >= f.valor_pacote THEN 'QUITADO'
+                 WHEN f.vencimento IS NOT NULL AND f.vencimento < $3::date THEN 'VENCIDO'
+                 WHEN f.valor_pago > 0 THEN 'PARCIAL'
+                 ELSE 'PENDENTE'
+               END AS status_financeiro
+        FROM autoagenda.financeiro f
+        JOIN autoagenda.alunos al ON al.id=f.aluno_id
+        WHERE ${where}
+        ORDER BY f.ativo DESC,
+                 CASE WHEN f.vencimento IS NULL THEN 1 ELSE 0 END,
+                 f.vencimento ASC NULLS LAST,
+                 f.criado_em DESC
+      `, params),
+      query(`
+        SELECT COUNT(*)::int AS lancamentos,
+               COALESCE(SUM(f.valor_pacote),0)::numeric(12,2) AS total_pacotes,
+               COALESCE(SUM(f.valor_pago),0)::numeric(12,2) AS total_pago,
+               COALESCE(SUM(GREATEST(f.valor_pacote - f.valor_pago,0)),0)::numeric(12,2) AS total_a_receber,
+               COALESCE(SUM(CASE WHEN f.vencimento IS NOT NULL AND f.vencimento < $3::date
+                                      AND f.valor_pago < f.valor_pacote
+                                 THEN GREATEST(f.valor_pacote - f.valor_pago,0) ELSE 0 END),0)::numeric(12,2) AS total_vencido
+        FROM autoagenda.financeiro f
+        WHERE ${where}
+      `, params)
+    ]);
+
+    res.json({ itens: itensQ.rows, resumo: resumoQ.rows[0] || {}, filtro_aluno_id: alunoId, incluir_arquivados: incluirArquivados });
+  } catch (error) {
+    console.error('Erro ao consultar financeiro:', error);
+    res.status(500).json({ error: 'Erro ao consultar financeiro.' });
+  }
+});
+
+app.post('/api/financeiro', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const d = validarLancamentoFinanceiro(req.body || {});
+    const alunoQ = await client.query('SELECT id FROM autoagenda.alunos WHERE id=$1 AND ativo=TRUE', [d.aluno_id]);
+    if (!alunoQ.rowCount) return res.status(404).json({ error: 'Aluno não encontrado ou inativo.' });
+
+    const result = await client.query(`
+      INSERT INTO autoagenda.financeiro
+        (aluno_id, pacote, valor_pacote, quantidade_aulas, valor_pago, data_pagamento, vencimento, forma_pagamento, observacoes)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      RETURNING id
+    `, [d.aluno_id, d.pacote, d.valor_pacote, d.quantidade_aulas, d.valor_pago, d.data_pagamento, d.vencimento, d.forma_pagamento, d.observacoes]);
+    res.status(201).json({ ok: true, id: result.rows[0].id });
+  } catch (error) {
+    console.error('Erro ao cadastrar lançamento financeiro:', error);
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao cadastrar lançamento financeiro.' });
+  } finally {
+    client.release();
+  }
+});
+
+app.put('/api/financeiro/:id', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: 'Lançamento inválido.' });
+    const d = validarLancamentoFinanceiro(req.body || {});
+
+    const existe = await client.query('SELECT id FROM autoagenda.financeiro WHERE id=$1', [id]);
+    if (!existe.rowCount) return res.status(404).json({ error: 'Lançamento financeiro não encontrado.' });
+    const alunoQ = await client.query('SELECT id FROM autoagenda.alunos WHERE id=$1', [d.aluno_id]);
+    if (!alunoQ.rowCount) return res.status(404).json({ error: 'Aluno não encontrado.' });
+
+    await client.query(`
+      UPDATE autoagenda.financeiro
+      SET aluno_id=$1, pacote=$2, valor_pacote=$3, quantidade_aulas=$4,
+          valor_pago=$5, data_pagamento=$6, vencimento=$7, forma_pagamento=$8,
+          observacoes=$9, atualizado_em=NOW()
+      WHERE id=$10
+    `, [d.aluno_id, d.pacote, d.valor_pacote, d.quantidade_aulas, d.valor_pago, d.data_pagamento, d.vencimento, d.forma_pagamento, d.observacoes, id]);
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Erro ao atualizar lançamento financeiro:', error);
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao atualizar lançamento financeiro.' });
+  } finally {
+    client.release();
+  }
+});
+
+app.patch('/api/financeiro/:id/situacao', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: 'Lançamento inválido.' });
+    const ativo = req.body?.ativo === true;
+    const result = await query(`
+      UPDATE autoagenda.financeiro
+      SET ativo=$1, atualizado_em=NOW()
+      WHERE id=$2
+      RETURNING id, ativo
+    `, [ativo, id]);
+    if (!result.rowCount) return res.status(404).json({ error: 'Lançamento financeiro não encontrado.' });
+    res.json({ ok: true, ...result.rows[0] });
+  } catch (error) {
+    console.error('Erro ao alterar situação financeira:', error);
+    res.status(500).json({ error: 'Erro ao alterar situação financeira.' });
   }
 });
 
