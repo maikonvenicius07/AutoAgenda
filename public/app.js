@@ -40,6 +40,13 @@ let configFuncionamento = {
   duracao_padrao_minutos: 50,
   intervalo_minutos: 0
 };
+let configLembretes = {
+  lembrete_dia_anterior_ativo: true,
+  lembrete_dia_anterior_hora: '18:00',
+  lembrete_horas_antes_ativo: true,
+  lembrete_horas_antes: 2
+};
+let lembretesData = { itens: [], resumo: { pendentes: 0, atrasados: 0, proximos_7_dias: 0 } };
 let mostrarInativosConfig = false;
 let mostrarInativosAlunos = false;
 let confirmAction = null;
@@ -233,6 +240,7 @@ function abrirTab(id) {
   $$('.tab').forEach(x => x.classList.toggle('active', x.dataset.tab === id));
   $$('.panel').forEach(p => p.classList.toggle('active', p.id === id));
   if (id === 'semana') carregarAulasSemana();
+  if (id === 'lembretes') carregarLembretes();
 }
 $$('.tab').forEach(b => b.onclick = () => abrirTab(b.dataset.tab));
 $$('[data-close]').forEach(b => b.onclick = () => close(b.dataset.close));
@@ -635,6 +643,73 @@ function renderSemana() {
   $$('[data-week-edit]').forEach(b => b.onclick = () => editarAula(Number(b.dataset.weekEdit)));
 }
 
+
+// ========================= V2.5 — LEMBRETES =========================
+function formatarDataHoraLembrete(valor) {
+  const v = String(valor || '');
+  if (!v.includes('T')) return '—';
+  const [d,t] = v.split('T');
+  return `${fmtData(d)} às ${String(t || '').slice(0,5)}`;
+}
+function lembreteTipoLabel(tipo) {
+  return String(tipo) === 'DIA_ANTERIOR' ? '📅 Dia anterior' : '⏰ Horas antes';
+}
+function renderConfigLembretes() {
+  const c = configLembretes || {};
+  const diaAtivo = c.lembrete_dia_anterior_ativo !== false;
+  const horasAtivo = c.lembrete_horas_antes_ativo !== false;
+  $('#cfgLembreteDiaAtivo').checked = diaAtivo;
+  $('#cfgLembreteDiaHora').value = c.lembrete_dia_anterior_hora || '18:00';
+  $('#cfgLembreteDiaHora').disabled = !diaAtivo;
+  $('#cfgLembreteHorasAtivo').checked = horasAtivo;
+  $('#cfgLembreteHoras').value = Number(c.lembrete_horas_antes || 2);
+  $('#cfgLembreteHoras').disabled = !horasAtivo;
+  const partes = [];
+  if (diaAtivo) partes.push(`dia anterior às ${c.lembrete_dia_anterior_hora || '18:00'}`);
+  if (horasAtivo) partes.push(`${Number(c.lembrete_horas_antes || 2)}h antes`);
+  $('#cfgLembretesResumo').textContent = partes.length ? partes.join(' + ') : 'Desativados';
+}
+function lembreteHtml(x) {
+  const atrasado = Boolean(x.atrasado);
+  const confirmacao = confirmacaoLabel(confirmacaoStatusAula(x));
+  return `<article class="reminder-item ${atrasado ? 'overdue' : ''}">
+    <div class="reminder-time"><b>${esc(lembreteTipoLabel(x.tipo))}</b><strong>${esc(formatarDataHoraLembrete(x.lembrete_em))}</strong>${atrasado ? '<span>⚠️ Atrasado</span>' : '<span>Programado</span>'}</div>
+    <div class="reminder-main">
+      <h3>${esc(x.aluno_nome)}</h3>
+      <p>📚 Aula: ${esc(fmtData(x.data_aula))} às ${esc(hora(x.hora_inicio))}</p>
+      <small>👨‍🏫 ${esc(x.instrutor_nome)} · 🚗 ${esc(x.veiculo_nome)} · 📍 ${esc(x.local_nome)}</small>
+      <small>${esc(confirmacao)}</small>
+    </div>
+    <div class="reminder-actions">
+      <a class="mini secondary" href="/whatsapp/aula/${Number(x.aula_id)}" style="text-decoration:none">📲 WhatsApp</a>
+      <button type="button" class="mini" data-lembrete-enviado="${Number(x.aula_id)}" data-lembrete-tipo="${esc(x.tipo)}">✅ Marcar enviado</button>
+    </div>
+  </article>`;
+}
+function renderLembretes() {
+  const d = lembretesData || {itens:[],resumo:{}};
+  const r = d.resumo || {};
+  $('#lemPendentes').textContent = Number(r.pendentes || 0);
+  $('#lemAtrasados').textContent = Number(r.atrasados || 0);
+  $('#lemProximos7').textContent = Number(r.proximos_7_dias || 0);
+  const itens = Array.isArray(d.itens) ? d.itens : [];
+  $('#listaLembretes').innerHTML = itens.length ? itens.map(lembreteHtml).join('') : '<div class="empty">✅ Nenhum lembrete pendente.</div>';
+  $$('[data-lembrete-enviado]').forEach(b => b.onclick = () => marcarLembreteEnviado(Number(b.dataset.lembreteEnviado), b.dataset.lembreteTipo));
+}
+async function carregarLembretes() {
+  try {
+    lembretesData = await api('/api/lembretes');
+    renderLembretes();
+  } catch (e) { toast(e.message || 'Erro ao carregar lembretes.'); }
+}
+async function marcarLembreteEnviado(aulaId, tipo) {
+  try {
+    await api(`/api/aulas/${aulaId}/lembretes/${encodeURIComponent(tipo)}`, {method:'PATCH', body:JSON.stringify({enviado:true})});
+    toast('✅ Lembrete marcado como enviado.');
+    await carregarLembretes();
+  } catch (e) { toast(e.message); }
+}
+
 function render() {
   $('#sAlunos').textContent = Number(resumoDashboard.alunos_ativos ?? alunos.length);
   $('#sHoje').textContent = Number(resumoDashboard.aulas_hoje ?? aulasHoje.length);
@@ -656,6 +731,8 @@ function render() {
   $('#listaPlanos').innerHTML = planos.length ? planos.map(planoHtml).join('') : '<div class="empty"><b>Nenhum plano automático criado ainda.</b><br><br>Clique em <b>+ Criar plano automático</b> acima ou em <b>📅 Montar agenda</b> no cartão do aluno.</div>';
 
   renderConfiguracoes();
+  renderConfigLembretes();
+  renderLembretes();
   preencherSelects();
   renderSemana();
   bindDynamic();
@@ -722,7 +799,7 @@ async function load() {
   try {
     const dataSelecionada = $('#filtroData').value || iso();
     const hoje = iso();
-    [alunos, instrutores, veiculos, locais, aulas, aulasHoje, planos, configInstrutores, configVeiculos, configLocais, configFuncionamento, resumoDashboard] = await Promise.all([
+    [alunos, instrutores, veiculos, locais, aulas, aulasHoje, planos, configInstrutores, configVeiculos, configLocais, configFuncionamento, configLembretes, lembretesData, resumoDashboard] = await Promise.all([
       api('/api/alunos'),
       api('/api/instrutores'),
       api('/api/veiculos'),
@@ -734,6 +811,8 @@ async function load() {
       api('/api/veiculos?incluir_inativos=1'),
       api('/api/locais?incluir_inativos=1'),
       api('/api/configuracoes/funcionamento'),
+      api('/api/configuracoes/lembretes'),
+      api('/api/lembretes'),
       api('/api/dashboard/resumo')
     ]);
     if (mostrarInativosAlunos) alunosTodos = await api('/api/alunos?incluir_inativos=1');
@@ -749,7 +828,7 @@ async function health() {
   try {
     const h = await api('/api/health');
     const seguranca = h.security_ready ? ' · 🔒 acesso protegido' : ' · ⛔ proteção precisa ser configurada';
-    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '2.3.1'}${seguranca}.`;
+    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '2.5.0'}${seguranca}.`;
     $('#db').className = h.security_ready ? 'db ok' : 'db fail';
   } catch {
     $('#db').textContent = '🔴 Banco não conectado. Verifique DATABASE_URL no Render.';
@@ -1670,6 +1749,36 @@ $('#fFuncionamento').onsubmit = async e => {
   } finally {
     $('#salvarFuncionamento').disabled = false;
     $('#salvarFuncionamento').textContent = '💾 Salvar funcionamento';
+  }
+};
+
+
+$('#cfgLembreteDiaAtivo').onchange = () => { $('#cfgLembreteDiaHora').disabled = !$('#cfgLembreteDiaAtivo').checked; };
+$('#cfgLembreteHorasAtivo').onchange = () => { $('#cfgLembreteHoras').disabled = !$('#cfgLembreteHorasAtivo').checked; };
+$('#atualizarLembretes').onclick = carregarLembretes;
+
+$('#fLembretes').onsubmit = async e => {
+  e.preventDefault();
+  $('#erroLembretes').classList.add('hide');
+  const payload = {
+    lembrete_dia_anterior_ativo: $('#cfgLembreteDiaAtivo').checked,
+    lembrete_dia_anterior_hora: $('#cfgLembreteDiaHora').value || '18:00',
+    lembrete_horas_antes_ativo: $('#cfgLembreteHorasAtivo').checked,
+    lembrete_horas_antes: Number($('#cfgLembreteHoras').value || 2)
+  };
+  try {
+    $('#salvarLembretes').disabled = true;
+    $('#salvarLembretes').textContent = 'Salvando...';
+    configLembretes = await api('/api/configuracoes/lembretes', {method:'PUT', body:JSON.stringify(payload)});
+    renderConfigLembretes();
+    await carregarLembretes();
+    toast('✅ Configuração de lembretes salva.');
+  } catch (x) {
+    $('#erroLembretes').textContent = x.message;
+    $('#erroLembretes').classList.remove('hide');
+  } finally {
+    $('#salvarLembretes').disabled = false;
+    $('#salvarLembretes').textContent = '💾 Salvar lembretes';
   }
 };
 

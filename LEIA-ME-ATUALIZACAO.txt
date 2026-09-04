@@ -1,34 +1,36 @@
-AUTOAGENDA V2.4.0 — CONFIRMAÇÃO DA AULA
+AUTOAGENDA V2.5.0 — LEMBRETES DE AULA
 
-Esta versão implementa a ETAPA 10 do roteiro.
+Esta versão implementa a ETAPA 11 do roteiro.
 
 NOVO
-- Campo de confirmação separado da situação operacional da aula.
-- Aguardando confirmação.
-- Confirmada.
-- Pediu reagendamento.
-- A confirmação aparece na agenda e no histórico.
-- Alteração manual pela tela Alterar aula.
-- Estrutura no PostgreSQL pronta para futura confirmação automática via WhatsApp:
-  confirmacao_status
-  confirmacao_origem
-  confirmacao_atualizada_em
-
-COMPATIBILIDADE
-- Registros antigos com status CONFIRMADA são reconhecidos como confirmação já realizada.
-- Aulas e histórico existentes não são apagados.
-- Migração é automática ao iniciar o servidor.
-- Não é necessário executar SQL manualmente.
+- Aba 🔔 Lembretes.
+- Contadores de lembretes pendentes, atrasados e próximos 7 dias.
+- Configuração de lembrete no dia anterior.
+- Horário configurável para o lembrete do dia anterior.
+- Configuração de lembrete algumas horas antes.
+- Quantidade de horas configurável (1 a 24).
+- Botão WhatsApp na fila de lembretes.
+- Botão para marcar o lembrete como enviado.
+- Registro no PostgreSQL do horário previsto, situação de envio e data/hora do envio.
+- Ao reagendar a data/horário da aula, os lembretes enviados são reiniciados para a nova marcação.
 
 IMPORTANTE
-- "Pediu reagendamento" não cancela a aula automaticamente.
-- Para efetivar o reagendamento, altere a situação da aula para CANCELADA e use o Reagendamento Inteligente já existente.
+- Nesta versão o AutoAgenda NÃO envia WhatsApp sozinho.
+- O envio continua manual e sem API paga.
+- A estrutura fica pronta para automação futura.
+- Aulas canceladas, realizadas, com falta ou arquivadas não entram na fila de lembretes.
+
+BANCO
+- Migração automática pelo server.js.
+- Não é necessário executar SQL manualmente.
+- Nenhum dado antigo é apagado.
 
 DEPLOY
-1. Substitua os arquivos indicados no GitHub.
-2. Faça Commit changes.
-3. Aguarde o Render concluir o deploy.
-4. Pressione Ctrl+F5.
-5. Confirme no topo: AutoAgenda V2.4.0.
+1. Use o ZIP "Somente_Arquivos_Para_Substituir" para atualizar o GitHub.
+2. Mantenha a mesma estrutura de pastas.
+3. Faça Commit changes.
+4. Aguarde o Render concluir o deploy.
+5. Pressione Ctrl+F5.
+6. Confirme no topo: AutoAgenda V2.5.0.
 
 Não altere DATABASE_URL, AUTOAGENDA_USER ou AUTOAGENDA_PASSWORD.

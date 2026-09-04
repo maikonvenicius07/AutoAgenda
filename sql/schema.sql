@@ -1,4 +1,4 @@
--- AutoAgenda V2.4.0
+-- AutoAgenda V2.5.0
 -- Schema compatível com o server.js atual.
 -- O servidor cria/migra automaticamente; este arquivo serve para referência e execução manual controlada.
 
@@ -91,6 +91,10 @@ CREATE TABLE IF NOT EXISTS autoagenda.configuracoes (
   hora_encerramento TIME NOT NULL DEFAULT '20:00',
   duracao_padrao_minutos INTEGER NOT NULL DEFAULT 50 CHECK (duracao_padrao_minutos BETWEEN 10 AND 240),
   intervalo_minutos INTEGER NOT NULL DEFAULT 0 CHECK (intervalo_minutos BETWEEN 0 AND 120),
+  lembrete_dia_anterior_ativo BOOLEAN NOT NULL DEFAULT TRUE,
+  lembrete_dia_anterior_hora TIME NOT NULL DEFAULT '18:00',
+  lembrete_horas_antes_ativo BOOLEAN NOT NULL DEFAULT TRUE,
+  lembrete_horas_antes INTEGER NOT NULL DEFAULT 2 CHECK (lembrete_horas_antes BETWEEN 1 AND 24),
   atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
@@ -133,6 +137,12 @@ CREATE TABLE IF NOT EXISTS autoagenda.aulas (
   confirmacao_origem VARCHAR(20) NOT NULL DEFAULT 'MANUAL'
     CHECK (confirmacao_origem IN ('MANUAL','WHATSAPP','SISTEMA')),
   confirmacao_atualizada_em TIMESTAMP,
+  lembrete_dia_anterior_em TIMESTAMP,
+  lembrete_dia_anterior_enviado BOOLEAN NOT NULL DEFAULT FALSE,
+  lembrete_dia_anterior_enviado_em TIMESTAMP,
+  lembrete_horas_antes_em TIMESTAMP,
+  lembrete_horas_antes_enviado BOOLEAN NOT NULL DEFAULT FALSE,
+  lembrete_horas_antes_enviado_em TIMESTAMP,
   observacoes TEXT,
   plan_id INTEGER REFERENCES autoagenda.planos_aula(id) ON DELETE SET NULL,
   numero_plano INTEGER,
@@ -168,6 +178,19 @@ ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS reposicao_de_id INTEGER;
 ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS confirmacao_status VARCHAR(30) NOT NULL DEFAULT 'AGUARDANDO';
 ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS confirmacao_origem VARCHAR(20) NOT NULL DEFAULT 'MANUAL';
 ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS confirmacao_atualizada_em TIMESTAMP;
+
+ALTER TABLE autoagenda.configuracoes ADD COLUMN IF NOT EXISTS lembrete_dia_anterior_ativo BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE autoagenda.configuracoes ADD COLUMN IF NOT EXISTS lembrete_dia_anterior_hora TIME NOT NULL DEFAULT '18:00';
+ALTER TABLE autoagenda.configuracoes ADD COLUMN IF NOT EXISTS lembrete_horas_antes_ativo BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE autoagenda.configuracoes ADD COLUMN IF NOT EXISTS lembrete_horas_antes INTEGER NOT NULL DEFAULT 2;
+ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS lembrete_dia_anterior_em TIMESTAMP;
+ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS lembrete_dia_anterior_enviado BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS lembrete_dia_anterior_enviado_em TIMESTAMP;
+ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS lembrete_horas_antes_em TIMESTAMP;
+ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS lembrete_horas_antes_enviado BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS lembrete_horas_antes_enviado_em TIMESTAMP;
+CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_lembrete_dia ON autoagenda.aulas(lembrete_dia_anterior_em);
+CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_lembrete_horas ON autoagenda.aulas(lembrete_horas_antes_em);
 
 UPDATE autoagenda.aulas
 SET confirmacao_status = 'CONFIRMADA', confirmacao_origem = 'SISTEMA',

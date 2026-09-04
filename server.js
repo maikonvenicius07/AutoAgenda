@@ -7,7 +7,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '2.4.0';
+const APP_VERSION = '2.5.0';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -288,6 +288,11 @@ async function initDatabase() {
           CHECK (duracao_padrao_minutos BETWEEN 10 AND 240),
         intervalo_minutos INTEGER NOT NULL DEFAULT 0
           CHECK (intervalo_minutos BETWEEN 0 AND 120),
+        lembrete_dia_anterior_ativo BOOLEAN NOT NULL DEFAULT TRUE,
+        lembrete_dia_anterior_hora TIME NOT NULL DEFAULT '18:00',
+        lembrete_horas_antes_ativo BOOLEAN NOT NULL DEFAULT TRUE,
+        lembrete_horas_antes INTEGER NOT NULL DEFAULT 2
+          CHECK (lembrete_horas_antes BETWEEN 1 AND 24),
         atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
       )
     `);
@@ -336,6 +341,12 @@ async function initDatabase() {
         confirmacao_origem VARCHAR(20) NOT NULL DEFAULT 'MANUAL'
           CHECK (confirmacao_origem IN ('MANUAL','WHATSAPP','SISTEMA')),
         confirmacao_atualizada_em TIMESTAMP,
+        lembrete_dia_anterior_em TIMESTAMP,
+        lembrete_dia_anterior_enviado BOOLEAN NOT NULL DEFAULT FALSE,
+        lembrete_dia_anterior_enviado_em TIMESTAMP,
+        lembrete_horas_antes_em TIMESTAMP,
+        lembrete_horas_antes_enviado BOOLEAN NOT NULL DEFAULT FALSE,
+        lembrete_horas_antes_enviado_em TIMESTAMP,
         observacoes TEXT,
         criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
         atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
@@ -416,6 +427,21 @@ async function initDatabase() {
     await client.query("ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS confirmacao_status VARCHAR(30) NOT NULL DEFAULT 'AGUARDANDO'");
     await client.query("ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS confirmacao_origem VARCHAR(20) NOT NULL DEFAULT 'MANUAL'");
     await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS confirmacao_atualizada_em TIMESTAMP');
+
+    // V2.5 — estrutura de lembretes, ainda com envio manual pelo WhatsApp.
+    await client.query("ALTER TABLE autoagenda.configuracoes ADD COLUMN IF NOT EXISTS lembrete_dia_anterior_ativo BOOLEAN NOT NULL DEFAULT TRUE");
+    await client.query("ALTER TABLE autoagenda.configuracoes ADD COLUMN IF NOT EXISTS lembrete_dia_anterior_hora TIME NOT NULL DEFAULT '18:00'");
+    await client.query("ALTER TABLE autoagenda.configuracoes ADD COLUMN IF NOT EXISTS lembrete_horas_antes_ativo BOOLEAN NOT NULL DEFAULT TRUE");
+    await client.query("ALTER TABLE autoagenda.configuracoes ADD COLUMN IF NOT EXISTS lembrete_horas_antes INTEGER NOT NULL DEFAULT 2");
+
+    await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS lembrete_dia_anterior_em TIMESTAMP');
+    await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS lembrete_dia_anterior_enviado BOOLEAN NOT NULL DEFAULT FALSE');
+    await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS lembrete_dia_anterior_enviado_em TIMESTAMP');
+    await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS lembrete_horas_antes_em TIMESTAMP');
+    await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS lembrete_horas_antes_enviado BOOLEAN NOT NULL DEFAULT FALSE');
+    await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS lembrete_horas_antes_enviado_em TIMESTAMP');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_lembrete_dia ON autoagenda.aulas(lembrete_dia_anterior_em)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_aulas_lembrete_horas ON autoagenda.aulas(lembrete_horas_antes_em)');
 
     await client.query(`
       UPDATE autoagenda.aulas
@@ -703,6 +729,64 @@ async function obterConfigFuncionamento(client) {
     duracao_padrao_minutos: 50,
     intervalo_minutos: 0
   };
+}
+
+
+async function obterConfigLembretes(client) {
+  const r = await client.query(`
+    SELECT lembrete_dia_anterior_ativo,
+           TO_CHAR(lembrete_dia_anterior_hora, 'HH24:MI') AS lembrete_dia_anterior_hora,
+           lembrete_horas_antes_ativo, lembrete_horas_antes
+    FROM autoagenda.configuracoes
+    WHERE id = 1
+  `);
+  const x = r.rows[0] || {};
+  return {
+    lembrete_dia_anterior_ativo: x.lembrete_dia_anterior_ativo !== false,
+    lembrete_dia_anterior_hora: String(x.lembrete_dia_anterior_hora || '18:00').slice(0,5),
+    lembrete_horas_antes_ativo: x.lembrete_horas_antes_ativo !== false,
+    lembrete_horas_antes: Math.max(1, Math.min(24, Number(x.lembrete_horas_antes || 2)))
+  };
+}
+
+function normalizarConfiguracaoLembretes(payload = {}) {
+  const horaDia = String(payload.lembrete_dia_anterior_hora || '18:00').slice(0,5);
+  if (!/^\d{2}:\d{2}$/.test(horaDia) || !Number.isFinite(minutosDoHorario(horaDia))) {
+    throw erroHttp(400, 'Informe um horário válido para o lembrete do dia anterior.');
+  }
+  const horas = Number(payload.lembrete_horas_antes ?? 2);
+  if (!Number.isInteger(horas) || horas < 1 || horas > 24) {
+    throw erroHttp(400, 'O lembrete antecipado deve ficar entre 1 e 24 horas antes.');
+  }
+  return {
+    lembrete_dia_anterior_ativo: payload.lembrete_dia_anterior_ativo !== false,
+    lembrete_dia_anterior_hora: horaDia,
+    lembrete_horas_antes_ativo: payload.lembrete_horas_antes_ativo !== false,
+    lembrete_horas_antes: horas
+  };
+}
+
+async function sincronizarAgendamentoLembretes(client) {
+  await client.query(`
+    UPDATE autoagenda.aulas a
+    SET lembrete_dia_anterior_em = CASE
+          WHEN c.lembrete_dia_anterior_ativo
+           AND a.arquivada = FALSE
+           AND a.status IN ('AGENDADA','CONFIRMADA')
+          THEN (a.data_aula - 1) + c.lembrete_dia_anterior_hora
+          ELSE NULL
+        END,
+        lembrete_horas_antes_em = CASE
+          WHEN c.lembrete_horas_antes_ativo
+           AND a.arquivada = FALSE
+           AND a.status IN ('AGENDADA','CONFIRMADA')
+          THEN (a.data_aula + a.hora_inicio) - (c.lembrete_horas_antes * INTERVAL '1 hour')
+          ELSE NULL
+        END
+    FROM autoagenda.configuracoes c
+    WHERE c.id = 1
+      AND a.data_aula >= $1::date
+  `, [hojeApp()]);
 }
 
 function avaliarHorarioFuncionamento(config, dados) {
@@ -1876,6 +1960,138 @@ app.put('/api/configuracoes/funcionamento', async (req, res) => {
   } finally {
     client.release();
   }
+});
+
+
+// ---------- V2.5 — Lembretes ----------
+app.get('/api/configuracoes/lembretes', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    res.json(await obterConfigLembretes(client));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao consultar configuração de lembretes.' });
+  } finally { client.release(); }
+});
+
+app.put('/api/configuracoes/lembretes', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const cfg = normalizarConfiguracaoLembretes(req.body || {});
+    await client.query('BEGIN');
+    const r = await client.query(`
+      UPDATE autoagenda.configuracoes
+      SET lembrete_dia_anterior_ativo=$1,
+          lembrete_dia_anterior_hora=$2::time,
+          lembrete_horas_antes_ativo=$3,
+          lembrete_horas_antes=$4,
+          atualizado_em=NOW()
+      WHERE id=1
+      RETURNING lembrete_dia_anterior_ativo,
+                TO_CHAR(lembrete_dia_anterior_hora,'HH24:MI') AS lembrete_dia_anterior_hora,
+                lembrete_horas_antes_ativo, lembrete_horas_antes
+    `,[cfg.lembrete_dia_anterior_ativo,cfg.lembrete_dia_anterior_hora,cfg.lembrete_horas_antes_ativo,cfg.lembrete_horas_antes]);
+    await sincronizarAgendamentoLembretes(client);
+    await client.query('COMMIT');
+    res.json(r.rows[0] || cfg);
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch {}
+    console.error(error);
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao salvar lembretes.' });
+  } finally { client.release(); }
+});
+
+app.get('/api/lembretes', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await sincronizarAgendamentoLembretes(client);
+    const agora = agoraApp();
+    const agoraTexto = `${agora.data}T${agora.hora}`;
+    const r = await client.query(`
+      WITH itens AS (
+        SELECT a.id AS aula_id, 'DIA_ANTERIOR'::text AS tipo,
+               TO_CHAR(a.lembrete_dia_anterior_em,'YYYY-MM-DD\"T\"HH24:MI') AS lembrete_em,
+               a.lembrete_dia_anterior_enviado AS enviado,
+               TO_CHAR(a.lembrete_dia_anterior_enviado_em,'YYYY-MM-DD\"T\"HH24:MI') AS enviado_em,
+               TO_CHAR(a.data_aula,'YYYY-MM-DD') AS data_aula,
+               TO_CHAR(a.hora_inicio,'HH24:MI') AS hora_inicio,
+               a.status, a.confirmacao_status,
+               al.nome AS aluno_nome, al.whatsapp AS aluno_whatsapp,
+               i.nome AS instrutor_nome, v.nome AS veiculo_nome, l.nome AS local_nome
+        FROM autoagenda.aulas a
+        JOIN autoagenda.alunos al ON al.id=a.aluno_id
+        JOIN autoagenda.instrutores i ON i.id=a.instrutor_id
+        JOIN autoagenda.veiculos v ON v.id=a.veiculo_id
+        JOIN autoagenda.locais l ON l.id=a.local_id
+        WHERE a.lembrete_dia_anterior_em IS NOT NULL
+          AND a.lembrete_dia_anterior_enviado=FALSE
+          AND a.data_aula >= $1::date
+          AND a.arquivada=FALSE
+          AND a.status IN ('AGENDADA','CONFIRMADA')
+        UNION ALL
+        SELECT a.id, 'HORAS_ANTES'::text,
+               TO_CHAR(a.lembrete_horas_antes_em,'YYYY-MM-DD\"T\"HH24:MI'),
+               a.lembrete_horas_antes_enviado,
+               TO_CHAR(a.lembrete_horas_antes_enviado_em,'YYYY-MM-DD\"T\"HH24:MI'),
+               TO_CHAR(a.data_aula,'YYYY-MM-DD'),
+               TO_CHAR(a.hora_inicio,'HH24:MI'),
+               a.status, a.confirmacao_status,
+               al.nome, al.whatsapp, i.nome, v.nome, l.nome
+        FROM autoagenda.aulas a
+        JOIN autoagenda.alunos al ON al.id=a.aluno_id
+        JOIN autoagenda.instrutores i ON i.id=a.instrutor_id
+        JOIN autoagenda.veiculos v ON v.id=a.veiculo_id
+        JOIN autoagenda.locais l ON l.id=a.local_id
+        WHERE a.lembrete_horas_antes_em IS NOT NULL
+          AND a.lembrete_horas_antes_enviado=FALSE
+          AND a.data_aula >= $1::date
+          AND a.arquivada=FALSE
+          AND a.status IN ('AGENDADA','CONFIRMADA')
+      )
+      SELECT * FROM itens ORDER BY lembrete_em, aula_id, tipo LIMIT 200
+    `,[hojeApp()]);
+    const itens = r.rows.map(x => ({...x, atrasado: String(x.lembrete_em) < agoraTexto}));
+    const limite = new Date(`${agora.data}T${agora.hora}:00`);
+    limite.setDate(limite.getDate()+7);
+    const limite7 = `${limite.getFullYear()}-${String(limite.getMonth()+1).padStart(2,'0')}-${String(limite.getDate()).padStart(2,'0')}T${String(limite.getHours()).padStart(2,'0')}:${String(limite.getMinutes()).padStart(2,'0')}`;
+    res.json({
+      agora: agoraTexto,
+      itens,
+      resumo: {
+        pendentes: itens.length,
+        atrasados: itens.filter(x => x.atrasado).length,
+        proximos_7_dias: itens.filter(x => String(x.lembrete_em) >= agoraTexto && String(x.lembrete_em) <= limite7).length
+      }
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error:'Erro ao consultar lembretes.' });
+  } finally { client.release(); }
+});
+
+app.patch('/api/aulas/:id/lembretes/:tipo', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const id = Number(req.params.id);
+    const tipo = String(req.params.tipo || '').toUpperCase();
+    const enviado = req.body?.enviado !== false;
+    if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error:'Aula inválida.' });
+    if (!['DIA_ANTERIOR','HORAS_ANTES'].includes(tipo)) return res.status(400).json({ error:'Tipo de lembrete inválido.' });
+    const coluna = tipo === 'DIA_ANTERIOR' ? 'lembrete_dia_anterior' : 'lembrete_horas_antes';
+    const r = await client.query(`
+      UPDATE autoagenda.aulas
+      SET ${coluna}_enviado=$1,
+          ${coluna}_enviado_em=CASE WHEN $1 THEN NOW() ELSE NULL END,
+          atualizado_em=NOW()
+      WHERE id=$2
+      RETURNING id, ${coluna}_enviado AS enviado, ${coluna}_enviado_em AS enviado_em
+    `,[enviado,id]);
+    if (!r.rowCount) return res.status(404).json({ error:'Aula não encontrada.' });
+    res.json(r.rows[0]);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error:'Erro ao atualizar lembrete.' });
+  } finally { client.release(); }
 });
 
 // ---------- Instrutores ----------
@@ -3238,6 +3454,10 @@ app.put('/api/aulas/:id', async (req, res) => {
       UPDATE autoagenda.aulas
       SET aluno_id=$1, instrutor_id=$2, veiculo_id=$3, local_id=$4,
           data_aula=$5, hora_inicio=$6, duracao_minutos=$7,
+          lembrete_dia_anterior_enviado=CASE WHEN data_aula IS DISTINCT FROM $5::date OR hora_inicio IS DISTINCT FROM $6::time THEN FALSE ELSE lembrete_dia_anterior_enviado END,
+          lembrete_dia_anterior_enviado_em=CASE WHEN data_aula IS DISTINCT FROM $5::date OR hora_inicio IS DISTINCT FROM $6::time THEN NULL ELSE lembrete_dia_anterior_enviado_em END,
+          lembrete_horas_antes_enviado=CASE WHEN data_aula IS DISTINCT FROM $5::date OR hora_inicio IS DISTINCT FROM $6::time THEN FALSE ELSE lembrete_horas_antes_enviado END,
+          lembrete_horas_antes_enviado_em=CASE WHEN data_aula IS DISTINCT FROM $5::date OR hora_inicio IS DISTINCT FROM $6::time THEN NULL ELSE lembrete_horas_antes_enviado_em END,
           aulas_unidades=$8, status=$9,
           confirmacao_status=$10,
           confirmacao_origem=CASE WHEN confirmacao_status IS DISTINCT FROM $10 THEN 'MANUAL' ELSE confirmacao_origem END,
@@ -3366,6 +3586,10 @@ app.put('/api/aulas/:id/serie', async (req, res) => {
       await client.query(`
         UPDATE autoagenda.aulas
         SET instrutor_id=$1,veiculo_id=$2,local_id=$3,data_aula=$4,hora_inicio=$5,duracao_minutos=$6,
+            lembrete_dia_anterior_enviado=CASE WHEN data_aula IS DISTINCT FROM $4::date OR hora_inicio IS DISTINCT FROM $5::time THEN FALSE ELSE lembrete_dia_anterior_enviado END,
+            lembrete_dia_anterior_enviado_em=CASE WHEN data_aula IS DISTINCT FROM $4::date OR hora_inicio IS DISTINCT FROM $5::time THEN NULL ELSE lembrete_dia_anterior_enviado_em END,
+            lembrete_horas_antes_enviado=CASE WHEN data_aula IS DISTINCT FROM $4::date OR hora_inicio IS DISTINCT FROM $5::time THEN FALSE ELSE lembrete_horas_antes_enviado END,
+            lembrete_horas_antes_enviado_em=CASE WHEN data_aula IS DISTINCT FROM $4::date OR hora_inicio IS DISTINCT FROM $5::time THEN NULL ELSE lembrete_horas_antes_enviado_em END,
             aulas_unidades=$7,status=CASE WHEN $8 THEN $9 ELSE status END,
             confirmacao_status=CASE WHEN $8 THEN $10 ELSE confirmacao_status END,
             confirmacao_origem=CASE WHEN $8 AND confirmacao_status IS DISTINCT FROM $10 THEN 'MANUAL' ELSE confirmacao_origem END,

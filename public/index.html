@@ -14,7 +14,7 @@
       document.documentElement.dataset.theme = 'light';
     }
   </script>
-  <link rel="stylesheet" href="style.css?v=2.4.0">
+  <link rel="stylesheet" href="style.css?v=2.5.0">
 </head>
 <body>
 <header>
@@ -37,6 +37,7 @@
     <button class="tab" data-tab="agenda">📅 Agenda diária</button>
     <button class="tab" data-tab="semana">🗓️ Agenda semanal</button>
     <button class="tab" data-tab="planos">🔁 Planos</button>
+    <button class="tab" data-tab="lembretes">🔔 Lembretes</button>
     <button class="tab" data-tab="configuracoes">⚙️ Configurações</button>
   </nav>
 
@@ -139,6 +140,23 @@
     </div>
     <div id="listaPlanos" class="grid"></div>
   </section>
+  <section id="lembretes" class="panel">
+    <div class="head">
+      <div>
+        <h2>🔔 Lembretes de aula</h2>
+        <p>Acompanhe os lembretes programados. Nesta versão, o envio continua manual pelo WhatsApp.</p>
+      </div>
+      <button type="button" class="secondary mini" id="atualizarLembretes">↻ Atualizar</button>
+    </div>
+    <div class="reminder-summary">
+      <div><span>Pendentes</span><b id="lemPendentes">0</b></div>
+      <div><span>Atrasados</span><b id="lemAtrasados">0</b></div>
+      <div><span>Próximos 7 dias</span><b id="lemProximos7">0</b></div>
+    </div>
+    <div class="reminder-note">📲 Ao enviar pelo WhatsApp, volte ao AutoAgenda e clique em <b>Marcar como enviado</b>. A automação de envio ficará para uma etapa futura.</div>
+    <div id="listaLembretes" class="reminder-list"></div>
+  </section>
+
   <section id="configuracoes" class="panel">
     <div class="head">
       <div>
@@ -196,6 +214,27 @@
           <button type="submit" id="salvarFuncionamento">💾 Salvar funcionamento</button>
         </div>
         <div id="erroFuncionamento" class="erro hide"></div>
+      </form>
+    </article>
+
+    <article class="card reminder-config-card">
+      <div class="head compact">
+        <div>
+          <h3>🔔 Configuração de lembretes</h3>
+          <p>Defina quando o AutoAgenda deve sinalizar que uma aula precisa de lembrete.</p>
+        </div>
+        <span id="cfgLembretesResumo" class="remaining-badge">Carregando...</span>
+      </div>
+      <form id="fLembretes" class="reminder-config-form">
+        <label class="check-line reminder-check"><input id="cfgLembreteDiaAtivo" type="checkbox"> Lembrete no dia anterior</label>
+        <label>Horário no dia anterior<input id="cfgLembreteDiaHora" type="time" required></label>
+        <label class="check-line reminder-check"><input id="cfgLembreteHorasAtivo" type="checkbox"> Lembrete algumas horas antes</label>
+        <label>Quantidade de horas antes<input id="cfgLembreteHoras" type="number" min="1" max="24" step="1" required></label>
+        <div class="config-rule-note reminder-config-note">
+          Nesta versão, o AutoAgenda apenas organiza e acompanha os lembretes. O envio pelo WhatsApp continua manual e sem API paga.
+        </div>
+        <button type="submit" id="salvarLembretes">💾 Salvar lembretes</button>
+        <div id="erroLembretes" class="erro hide"></div>
       </form>
     </article>
 
@@ -542,6 +581,6 @@
 </div>
 
 <div id="toast" class="toast hide"></div>
-<script src="app.js?v=2.4.0"></script>
+<script src="app.js?v=2.5.0"></script>
 </body>
 </html>

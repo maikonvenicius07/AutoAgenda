@@ -1,4 +1,4 @@
-# AutoAgenda V2.4.0
+# AutoAgenda V2.5.0
 
 Sistema de organização de aulas práticas para autoescola, com backend Node/Express, PostgreSQL e deploy no Render.
 
@@ -13,37 +13,32 @@ Sistema de organização de aulas práticas para autoescola, com backend Node/Ex
 - busca dos 5 próximos horários livres;
 - reagendamento inteligente com vínculo entre aula original e reposição;
 - histórico completo do aluno;
-- envio manual de mensagem pronta pelo WhatsApp (`wa.me`);
-- controle de saldo de aulas;
-- preservação do histórico por arquivamento, sem exclusão física das aulas;
-- autenticação básica obrigatória em produção;
-- bloqueio temporário após tentativas repetidas de login.
+- WhatsApp da aula e envio do plano completo;
+- confirmação da aula: aguardando, confirmada ou pediu reagendamento;
+- lembretes no dia anterior e algumas horas antes;
+- painel de lembretes pendentes/atrasados;
+- controle manual de lembrete enviado, preparado para futura automação;
+- modo claro/escuro;
+- controle de saldo e preservação do histórico.
 
-## Segurança
+## V2.5.0 — Lembretes
 
-Em produção, configure no Render:
+A ETAPA 11 adiciona uma área **🔔 Lembretes** e configuração em **⚙️ Configurações**.
 
-- `DATABASE_URL`
-- `NODE_ENV=production`
-- `APP_TIMEZONE=America/Porto_Velho`
-- `AUTOAGENDA_USER`
-- `AUTOAGENDA_PASSWORD`
+É possível definir:
+- se haverá lembrete no dia anterior;
+- o horário do lembrete no dia anterior;
+- se haverá lembrete algumas horas antes;
+- quantas horas antes.
 
-Nunca grave senhas ou a `DATABASE_URL` no GitHub. O arquivo `.env.example` contém somente exemplos.
+Cada aula futura agendada/confirmada recebe os horários previstos dos lembretes. A tela mostra pendentes, atrasados e os próximos 7 dias. O envio continua manual pelo WhatsApp nesta versão; após enviar, o usuário pode marcar o lembrete como enviado.
+
+Se uma aula for reagendada para outra data/horário, os controles de envio dos lembretes são reiniciados para a nova marcação.
 
 ## Banco
 
-O servidor cria e migra automaticamente o schema `autoagenda`. A V2.3.1 inclui a estrutura de vínculo de reposição (`reposicao_de_id`) sem apagar dados antigos.
+A migração é automática. Não execute SQL manualmente no Render.
 
 ## Próxima etapa
 
-ETAPA 10 — Confirmação da aula: aguardando confirmação, confirmada e pediu reagendamento.
-
-
-## V2.4.0 — Confirmação da aula
-- Confirmação separada da situação operacional da aula.
-- Estados: Aguardando confirmação, Confirmada e Pediu reagendamento.
-- Badge de confirmação na Agenda e no Histórico.
-- Alteração manual pelo formulário da aula.
-- Banco preparado com origem e data/hora da confirmação para futura automação via WhatsApp.
-- Compatibilidade com registros antigos em que `status = CONFIRMADA`.
+**ETAPA 12 — Dashboard**: ampliar o painel com aulas da semana, realizadas no mês, faltas, cancelamentos, reposições, taxa de ocupação, horários livres e alunos próximos de concluir o pacote.
