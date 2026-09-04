@@ -14,7 +14,7 @@
       document.documentElement.dataset.theme = 'light';
     }
   </script>
-  <link rel="stylesheet" href="style.css?v=2.8.0">
+  <link rel="stylesheet" href="style.css?v=2.9.0">
 </head>
 <body>
 <header>
@@ -40,6 +40,7 @@
     <button class="tab" data-tab="lembretes">🔔 Lembretes</button>
     <button class="tab" data-tab="relatorios">📑 Relatórios</button>
     <button class="tab" data-tab="financeiro">💰 Financeiro</button>
+    <button class="tab" data-tab="backup">💾 Backup</button>
     <button class="tab" data-tab="configuracoes">⚙️ Configurações</button>
   </nav>
 
@@ -227,7 +228,7 @@
         <button type="button" class="secondary" id="relMesAtual">Mês atual</button>
         <button type="button" id="gerarRelatorio">📊 Gerar relatório</button>
       </div>
-      <div class="reports-note">📥 A estrutura desta tela já separa os dados por período, instrutor, veículo e horário para facilitar a futura exportação em Excel, prevista para uma etapa posterior.</div>
+      <div class="reports-note">📥 Para baixar os dados do AutoAgenda em CSV, Excel ou JSON, utilize a nova aba <b>Backup</b>. Esta tela continua focada na análise por período.</div>
     </div>
 
     <div class="stats stats4 reports-kpis">
@@ -301,6 +302,75 @@
     </div>
 
     <div id="listaFinanceiro" class="finance-list"></div>
+  </section>
+
+  <section id="backup" class="panel">
+    <div class="head backup-head">
+      <div>
+        <h2>💾 Backup / Exportar dados</h2>
+        <p>Baixe cópias dos dados do AutoAgenda para conferência, arquivo e futura restauração.</p>
+      </div>
+      <button type="button" class="secondary mini" id="backupAtualizar">↻ Atualizar resumo</button>
+    </div>
+
+    <div class="backup-security-note">🔐 <b>Segurança:</b> os arquivos podem conter dados pessoais de alunos e instrutores. Guarde-os em local seguro. DATABASE_URL, usuário, senha, tokens e outras credenciais <b>não são exportados</b>.</div>
+
+    <div class="stats stats4 backup-kpis">
+      <div><span>Alunos</span><strong id="backupQtdAlunos">0</strong><small>ativos e inativos</small></div>
+      <div><span>Aulas</span><strong id="backupQtdAulas">0</strong><small>inclui histórico</small></div>
+      <div><span>Planos</span><strong id="backupQtdPlanos">0</strong><small>ativos e encerrados</small></div>
+      <div><span>Financeiro</span><strong id="backupQtdFinanceiro">0</strong><small>inclui arquivados</small></div>
+    </div>
+
+    <article class="card backup-export-card">
+      <div class="head compact">
+        <div>
+          <h3>📦 Criar arquivo</h3>
+          <p>Escolha o conjunto de dados e o formato desejado.</p>
+        </div>
+        <span id="backupResumoBadge" class="remaining-badge">Carregando...</span>
+      </div>
+
+      <div class="backup-controls">
+        <label>Dados para exportar
+          <select id="backupEntidade">
+            <option value="completo" selected>Todos os dados — backup completo</option>
+            <option value="alunos">Alunos</option>
+            <option value="instrutores">Instrutores</option>
+            <option value="veiculos">Veículos</option>
+            <option value="locais">Locais</option>
+            <option value="aulas">Aulas</option>
+            <option value="planos">Planos</option>
+            <option value="financeiro">Financeiro</option>
+            <option value="configuracoes">Configurações</option>
+          </select>
+        </label>
+        <div class="backup-format-buttons">
+          <button type="button" class="secondary" id="backupCsv">📄 CSV</button>
+          <button type="button" class="secondary" id="backupExcel">📗 Excel</button>
+          <button type="button" id="backupJson">🧩 JSON</button>
+        </div>
+      </div>
+
+      <div class="backup-format-help" id="backupFormatoAjuda">
+        <b>Backup completo:</b> JSON é o formato recomendado para futura restauração. Excel cria uma planilha por conjunto de dados. No CSV completo, cada registro é consolidado com a identificação da entidade.
+      </div>
+    </article>
+
+    <div class="backup-grid">
+      <article class="card backup-info-card">
+        <h3>🧩 Backup completo JSON</h3>
+        <p>Inclui alunos, instrutores, indisponibilidades, veículos, locais, configurações, planos, aulas e financeiro, além da versão do AutoAgenda e data de geração.</p>
+        <button type="button" id="backupCompletoJson">⬇️ Baixar backup completo</button>
+      </article>
+      <article class="card backup-info-card">
+        <h3>📗 Exportação Excel</h3>
+        <p>Ao escolher “Todos os dados”, cada conjunto é colocado em uma aba separada para facilitar conferência e arquivamento.</p>
+        <button type="button" class="secondary" id="backupCompletoExcel">⬇️ Exportar tudo em Excel</button>
+      </article>
+    </div>
+
+    <div class="backup-note">ℹ️ Esta etapa cria e baixa os backups. A restauração automática será implementada somente quando houver uma rotina própria de importação e validação, evitando sobrescrever dados por engano.</div>
   </section>
 
   <section id="configuracoes" class="panel">
@@ -764,6 +834,6 @@
 </div>
 
 <div id="toast" class="toast hide"></div>
-<script src="app.js?v=2.8.0"></script>
+<script src="app.js?v=2.9.0"></script>
 </body>
 </html>

@@ -37,6 +37,8 @@ let relatorioCarregado = false;
 let financeiroData = { itens: [], resumo: {} };
 let financeiroCarregado = false;
 let financeiroMostrarArquivados = false;
+let backupData = { contagens: {}, total_registros: 0 };
+let backupCarregado = false;
 let configInstrutores = [], configVeiculos = [], configLocais = [];
 let configFuncionamento = {
   dias_funcionamento: [0,1,2,3,4,5,6],
@@ -249,6 +251,7 @@ function abrirTab(id) {
   if (id === 'lembretes') carregarLembretes();
   if (id === 'relatorios') carregarRelatorios();
   if (id === 'financeiro') carregarFinanceiro();
+  if (id === 'backup') carregarBackupResumo();
 }
 $$('.tab').forEach(b => b.onclick = () => abrirTab(b.dataset.tab));
 $$('[data-close]').forEach(b => b.onclick = () => close(b.dataset.close));
@@ -1193,7 +1196,7 @@ async function health() {
   try {
     const h = await api('/api/health');
     const seguranca = h.security_ready ? ' · 🔒 acesso protegido' : ' · ⛔ proteção precisa ser configurada';
-    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '2.8.0'}${seguranca}.`;
+    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '2.9.0'}${seguranca}.`;
     $('#db').className = h.security_ready ? 'db ok' : 'db fail';
   } catch {
     $('#db').textContent = '🔴 Banco não conectado. Verifique DATABASE_URL no Render.';
@@ -2356,6 +2359,66 @@ function pedirEncerrarPlano(id, cancelarFuturas = false) {
 }
 
 
+
+// ========================= V2.9 — BACKUP / EXPORTAÇÃO =========================
+function renderBackupResumo() {
+  const c = backupData?.contagens || {};
+  if ($('#backupQtdAlunos')) $('#backupQtdAlunos').textContent = Number(c.alunos || 0);
+  if ($('#backupQtdAulas')) $('#backupQtdAulas').textContent = Number(c.aulas || 0);
+  if ($('#backupQtdPlanos')) $('#backupQtdPlanos').textContent = Number(c.planos || 0);
+  if ($('#backupQtdFinanceiro')) $('#backupQtdFinanceiro').textContent = Number(c.financeiro || 0);
+  if ($('#backupResumoBadge')) {
+    $('#backupResumoBadge').textContent = `${Number(backupData?.total_registros || 0)} registro(s) principais`;
+  }
+}
+
+async function carregarBackupResumo(forcar = false) {
+  if (backupCarregado && !forcar) return renderBackupResumo();
+  try {
+    if ($('#backupResumoBadge')) $('#backupResumoBadge').textContent = 'Atualizando...';
+    backupData = await api('/api/backup/resumo');
+    backupCarregado = true;
+    renderBackupResumo();
+  } catch (e) {
+    if ($('#backupResumoBadge')) $('#backupResumoBadge').textContent = 'Resumo indisponível';
+    toast(e.message || 'Erro ao carregar resumo do backup.');
+  }
+}
+
+function nomeEntidadeBackup(entidade) {
+  return ({
+    completo:'todos os dados', alunos:'alunos', instrutores:'instrutores', veiculos:'veículos',
+    locais:'locais', aulas:'aulas', planos:'planos', financeiro:'financeiro', configuracoes:'configurações'
+  })[entidade] || entidade;
+}
+
+function atualizarAjudaBackup() {
+  const entidade = $('#backupEntidade')?.value || 'completo';
+  const ajuda = $('#backupFormatoAjuda');
+  if (!ajuda) return;
+  if (entidade === 'completo') {
+    ajuda.innerHTML = '<b>Backup completo:</b> JSON é o formato recomendado para futura restauração. Excel cria uma aba por conjunto de dados. No CSV completo, cada registro é consolidado com a identificação da entidade.';
+  } else {
+    ajuda.innerHTML = `<b>${esc(nomeEntidadeBackup(entidade))}:</b> CSV e Excel são ideais para conferência; JSON preserva os nomes dos campos e a estrutura para processamento posterior.`;
+  }
+}
+
+function baixarBackup(formato, entidadeForcada = '') {
+  const entidade = entidadeForcada || $('#backupEntidade')?.value || 'completo';
+  const formatos = { csv:'CSV', xlsx:'Excel', json:'JSON' };
+  if (!formatos[formato]) return toast('Formato de exportação inválido.');
+  const url = `/api/backup/exportar?entidade=${encodeURIComponent(entidade)}&formato=${encodeURIComponent(formato)}`;
+  toast(`⬇️ Preparando ${formatos[formato]} de ${nomeEntidadeBackup(entidade)}...`);
+  // O servidor responde como attachment. O link usa a mesma origem e mantém a
+  // autenticação do AutoAgenda sem expor credenciais no JavaScript.
+  const a = document.createElement('a');
+  a.href = url;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
 // ========================= V2.8 — EVENTOS DO FINANCEIRO =========================
 $('#novoFinanceiro').onclick = () => novoLancamentoFinanceiro();
 $('#finAtualizar').onclick = () => { financeiroCarregado = false; carregarFinanceiro(true); };
@@ -2406,6 +2469,17 @@ $('#fFinanceiro').onsubmit = async e => {
     btn.textContent = '💾 Salvar lançamento';
   }
 };
+
+
+// ========================= V2.9 — EVENTOS DO BACKUP =========================
+if ($('#backupAtualizar')) $('#backupAtualizar').onclick = () => carregarBackupResumo(true);
+if ($('#backupEntidade')) $('#backupEntidade').onchange = atualizarAjudaBackup;
+if ($('#backupCsv')) $('#backupCsv').onclick = () => baixarBackup('csv');
+if ($('#backupExcel')) $('#backupExcel').onclick = () => baixarBackup('xlsx');
+if ($('#backupJson')) $('#backupJson').onclick = () => baixarBackup('json');
+if ($('#backupCompletoJson')) $('#backupCompletoJson').onclick = () => baixarBackup('json', 'completo');
+if ($('#backupCompletoExcel')) $('#backupCompletoExcel').onclick = () => baixarBackup('xlsx', 'completo');
+atualizarAjudaBackup();
 
 // ========================= NAVEGAÇÃO / INICIALIZAÇÃO =========================
 $('#relDataInicio').value = inicioMesISO();

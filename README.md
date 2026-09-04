@@ -1,4 +1,4 @@
-# AutoAgenda V2.8.0
+# AutoAgenda V2.9.0
 
 Sistema de organização de aulas práticas para autoescola, com backend Node/Express, PostgreSQL e deploy no Render.
 
@@ -14,50 +14,74 @@ Sistema de organização de aulas práticas para autoescola, com backend Node/Ex
 - reagendamento inteligente com vínculo entre aula original e reposição;
 - histórico completo do aluno;
 - WhatsApp da aula e envio do plano completo;
-- confirmação da aula: aguardando, confirmada ou pediu reagendamento;
-- lembretes no dia anterior e algumas horas antes;
-- Dashboard com indicadores e gráficos simples;
+- confirmação da aula;
+- lembretes de aula;
+- Dashboard;
 - relatórios por período;
-- financeiro simples por aluno;
+- financeiro simples;
+- backup/exportação em CSV, Excel e JSON;
 - modo claro/escuro;
-- controle de saldo e preservação do histórico.
+- preservação do histórico.
 
-## V2.8.0 — Financeiro simples
+## V2.9.0 — Backup / Exportação
 
-A ETAPA 14 adiciona a aba **💰 Financeiro** para um controle básico de pacotes e pagamentos.
+A ETAPA 15 adiciona a aba **💾 Backup**, voltada para cópia de segurança e exportação de dados.
 
-Cada lançamento permite registrar:
-- aluno;
-- pacote;
-- valor do pacote;
-- quantidade de aulas;
-- valor pago até o momento;
-- saldo financeiro calculado automaticamente;
-- data do pagamento;
-- vencimento;
-- forma de pagamento;
-- observações.
+É possível selecionar:
+- todos os dados;
+- alunos;
+- instrutores;
+- veículos;
+- locais;
+- aulas;
+- planos;
+- financeiro;
+- configurações.
 
-### Regra de separação
+### Formatos
 
-O módulo financeiro é propositalmente separado da lógica da agenda. Alterar um lançamento financeiro **não altera** aulas contratadas, planos, horários, presença, faltas ou saldo de aulas do aluno.
+**CSV** — indicado para conferência simples e abertura em planilhas. Nas exportações individuais, cada coluna do cadastro vira uma coluna do CSV. No backup completo, os registros são consolidados com a identificação da entidade.
 
-### Situações financeiras
+**Excel (.xlsx)** — nas exportações completas, cada conjunto de dados é criado em uma aba separada. A geração utiliza `exceljs`.
 
-A tela identifica automaticamente:
-- **Quitado** — valor pago igual ao valor do pacote;
-- **Parcial** — há pagamento, mas ainda existe saldo;
-- **Pendente** — ainda não existe pagamento registrado;
-- **Vencido** — existe saldo e a data de vencimento já passou.
+**JSON** — formato recomendado para o **backup completo**, pois preserva estrutura, nomes de campos, versão do AutoAgenda, data de geração e todos os registros necessários para uma futura rotina de restauração.
 
-Os lançamentos podem ser editados, arquivados e reativados sem exclusão física do histórico.
+### Conteúdo adicional do backup completo
+
+Além dos oito conjuntos principais do roteiro, o backup completo inclui:
+- indisponibilidades de instrutores;
+- indisponibilidades/manutenções de veículos.
+
+Esses dados são necessários para que uma futura restauração reproduza corretamente as regras de disponibilidade.
+
+## Segurança
+
+As exportações leem somente tabelas do schema PostgreSQL `autoagenda`.
+
+Nunca são exportados:
+- `DATABASE_URL`;
+- `AUTOAGENDA_USER`;
+- `AUTOAGENDA_PASSWORD`;
+- tokens;
+- segredos;
+- credenciais do Render.
+
+Os arquivos exportados podem conter dados pessoais cadastrados no sistema, como CPF, telefone e e-mail. Devem ser armazenados em local seguro.
 
 ## Banco
 
-A V2.8.0 cria automaticamente a tabela `autoagenda.financeiro` e seus índices. Não é necessário executar SQL manualmente.
+A V2.9.0 não cria novas tabelas nem colunas. Não é necessário executar SQL manualmente.
 
-O saldo financeiro não é armazenado como valor independente: ele é calculado como `valor_pacote - valor_pago`, reduzindo risco de divergência.
+A coleta do backup completo utiliza uma transação PostgreSQL somente leitura com snapshot consistente, reduzindo o risco de juntar dados de momentos diferentes durante a geração do arquivo.
+
+## Dependências
+
+- Node.js >= 20
+- Express 4.21.2
+- pg 8.13.1
+- dotenv 16.4.7
+- exceljs 4.4.0
 
 ## Próxima etapa
 
-**ETAPA 15 — Backup / Exportação**: exportar alunos, instrutores, veículos, locais, aulas, planos, financeiro e configurações em CSV/Excel/JSON, além de preparar backup completo para futura restauração, sem incluir credenciais.
+**ETAPA 16 — Login individual**, com usuários próprios, senha com hash seguro e sessões protegidas.

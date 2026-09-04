@@ -7,7 +7,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '2.8.0';
+const APP_VERSION = '2.9.0';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -3527,6 +3527,276 @@ app.patch('/api/financeiro/:id/situacao', async (req, res) => {
   } catch (error) {
     console.error('Erro ao alterar situação financeira:', error);
     res.status(500).json({ error: 'Erro ao alterar situação financeira.' });
+  }
+});
+
+
+// ========================= V2.9 — BACKUP / EXPORTAÇÃO =========================
+// As exportações usam somente tabelas do schema autoagenda. Variáveis de ambiente,
+// usuários/senhas do Render, DATABASE_URL, tokens e credenciais nunca entram nos arquivos.
+const EXPORTACOES = {
+  alunos: { tabela: 'alunos', nome: 'Alunos', aba: 'Alunos' },
+  instrutores: { tabela: 'instrutores', nome: 'Instrutores', aba: 'Instrutores' },
+  veiculos: { tabela: 'veiculos', nome: 'Veículos', aba: 'Veiculos' },
+  locais: { tabela: 'locais', nome: 'Locais', aba: 'Locais' },
+  aulas: { tabela: 'aulas', nome: 'Aulas', aba: 'Aulas' },
+  planos: { tabela: 'planos_aula', nome: 'Planos', aba: 'Planos' },
+  financeiro: { tabela: 'financeiro', nome: 'Financeiro', aba: 'Financeiro' },
+  configuracoes: { tabela: 'configuracoes', nome: 'Configurações', aba: 'Configuracoes' }
+};
+
+const EXPORTACOES_SUPORTE = {
+  instrutor_indisponibilidades: { tabela: 'instrutor_indisponibilidades', nome: 'Indisponibilidades de instrutores', aba: 'Indisp_Instrutores' },
+  veiculo_indisponibilidades: { tabela: 'veiculo_indisponibilidades', nome: 'Indisponibilidades de veículos', aba: 'Indisp_Veiculos' }
+};
+
+const EXPORTACOES_COMPLETAS = { ...EXPORTACOES, ...EXPORTACOES_SUPORTE };
+let ExcelJSLazy = null;
+
+function excelJS() {
+  if (!ExcelJSLazy) ExcelJSLazy = require('exceljs');
+  return ExcelJSLazy;
+}
+
+function valorSeguroPlanilha(valor) {
+  if (valor === null || valor === undefined) return '';
+  if (Array.isArray(valor) || (typeof valor === 'object' && !(valor instanceof Date))) {
+    return JSON.stringify(valor);
+  }
+  return valor;
+}
+
+function textoSeguroCsv(valor) {
+  let texto = valorSeguroPlanilha(valor);
+  if (texto instanceof Date) texto = texto.toISOString();
+  texto = String(texto ?? '');
+  // Evita que campos textuais sejam interpretados como fórmulas ao abrir o CSV em planilhas.
+  if (/^[=+\-@]/.test(texto)) texto = `'${texto}`;
+  return `"${texto.replace(/"/g, '""')}"`;
+}
+
+async function carregarTabelaBackup(client, chave, definicao) {
+  const colunasQ = await client.query(`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema='autoagenda' AND table_name=$1
+    ORDER BY ordinal_position
+  `, [definicao.tabela]);
+
+  // row_to_json preserva DATE/TIME/TIMESTAMP como texto de PostgreSQL, evitando mudança
+  // acidental de data por fuso horário no Node durante o backup.
+  const dadosQ = await client.query(`
+    SELECT row_to_json(x) AS registro
+    FROM (SELECT * FROM autoagenda.${definicao.tabela} ORDER BY id) x
+  `);
+
+  return {
+    chave,
+    tabela: definicao.tabela,
+    nome: definicao.nome,
+    aba: definicao.aba,
+    colunas: colunasQ.rows.map(x => x.column_name),
+    registros: dadosQ.rows.map(x => x.registro)
+  };
+}
+
+async function coletarBackup(entidade = 'completo') {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    const selecionadas = entidade === 'completo'
+      ? EXPORTACOES_COMPLETAS
+      : { [entidade]: EXPORTACOES[entidade] };
+
+    const conjuntos = {};
+    for (const [chave, definicao] of Object.entries(selecionadas)) {
+      conjuntos[chave] = await carregarTabelaBackup(client, chave, definicao);
+    }
+    await client.query('COMMIT');
+    return conjuntos;
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch {}
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+function metadadosBackup(entidade) {
+  return {
+    tipo: entidade === 'completo' ? 'AUTOAGENDA_BACKUP_COMPLETO' : 'AUTOAGENDA_EXPORTACAO',
+    versao_backup: 1,
+    app_version: APP_VERSION,
+    schema: 'autoagenda',
+    entidade,
+    gerado_em: new Date().toISOString(),
+    timezone_aplicacao: APP_TIMEZONE,
+    credenciais_incluidas: false
+  };
+}
+
+function payloadJsonBackup(entidade, conjuntos) {
+  const estrutura = {};
+  const dados = {};
+  for (const [chave, conjunto] of Object.entries(conjuntos)) {
+    estrutura[chave] = { tabela: conjunto.tabela, colunas: conjunto.colunas };
+    dados[chave] = conjunto.registros;
+  }
+  return { ...metadadosBackup(entidade), estrutura, dados };
+}
+
+function csvDeConjunto(conjunto) {
+  const colunas = conjunto.colunas.length
+    ? conjunto.colunas
+    : [...new Set(conjunto.registros.flatMap(r => Object.keys(r || {})))];
+  const linhas = [colunas.map(textoSeguroCsv).join(';')];
+  for (const registro of conjunto.registros) {
+    linhas.push(colunas.map(c => textoSeguroCsv(registro?.[c])).join(';'));
+  }
+  return `sep=;\r\n${linhas.join('\r\n')}\r\n`;
+}
+
+function csvCompleto(conjuntos) {
+  const linhas = ['sep=;', '"entidade";"registro_json"'];
+  for (const [chave, conjunto] of Object.entries(conjuntos)) {
+    for (const registro of conjunto.registros) {
+      linhas.push(`${textoSeguroCsv(chave)};${textoSeguroCsv(JSON.stringify(registro))}`);
+    }
+    if (!conjunto.registros.length) linhas.push(`${textoSeguroCsv(chave)};${textoSeguroCsv('{}')}`);
+  }
+  return `${linhas.join('\r\n')}\r\n`;
+}
+
+async function excelDeConjuntos(conjuntos) {
+  const ExcelJS = excelJS();
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = 'AutoAgenda';
+  workbook.lastModifiedBy = 'AutoAgenda';
+  workbook.created = new Date();
+  workbook.modified = new Date();
+  workbook.subject = `Exportação AutoAgenda V${APP_VERSION}`;
+
+  for (const conjunto of Object.values(conjuntos)) {
+    const ws = workbook.addWorksheet(String(conjunto.aba || conjunto.nome).slice(0, 31), {
+      views: [{ state: 'frozen', ySplit: 1 }]
+    });
+    const colunas = conjunto.colunas.length
+      ? conjunto.colunas
+      : [...new Set(conjunto.registros.flatMap(r => Object.keys(r || {})))];
+
+    if (!colunas.length) {
+      ws.addRow(['Sem colunas disponíveis']);
+      continue;
+    }
+
+    ws.columns = colunas.map(coluna => ({ header: coluna, key: coluna, width: Math.min(32, Math.max(12, String(coluna).length + 2)) }));
+    for (const registro of conjunto.registros) {
+      const linha = {};
+      for (const coluna of colunas) linha[coluna] = valorSeguroPlanilha(registro?.[coluna]);
+      ws.addRow(linha);
+    }
+
+    const header = ws.getRow(1);
+    header.font = { bold: true };
+    header.alignment = { vertical: 'middle', horizontal: 'left' };
+    header.height = 22;
+    for (const cell of header.cells) {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFD400' } };
+      cell.border = { bottom: { style: 'thin', color: { argb: 'FFB59A00' } } };
+    }
+
+    if (conjunto.registros.length) ws.autoFilter = { from: 'A1', to: header.getCell(colunas.length).address };
+
+    // Ajuste simples com limite para observações e textos longos não abrirem colunas gigantes.
+    colunas.forEach((coluna, i) => {
+      let maior = String(coluna).length;
+      for (const registro of conjunto.registros.slice(0, 250)) {
+        maior = Math.max(maior, String(valorSeguroPlanilha(registro?.[coluna]) ?? '').length);
+      }
+      ws.getColumn(i + 1).width = Math.min(40, Math.max(12, maior + 2));
+      ws.getColumn(i + 1).alignment = { vertical: 'top', wrapText: maior > 28 };
+    });
+  }
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  return Buffer.from(buffer);
+}
+
+function nomeArquivoBackup(entidade, formato) {
+  const data = hojeApp();
+  const rotulo = entidade === 'completo' ? 'backup-completo' : `exportacao-${entidade}`;
+  return `AutoAgenda-${rotulo}-${data}.${formato}`;
+}
+
+app.get('/api/backup/resumo', async (req, res) => {
+  try {
+    const r = await query(`
+      SELECT
+        (SELECT COUNT(*)::int FROM autoagenda.alunos) AS alunos,
+        (SELECT COUNT(*)::int FROM autoagenda.instrutores) AS instrutores,
+        (SELECT COUNT(*)::int FROM autoagenda.veiculos) AS veiculos,
+        (SELECT COUNT(*)::int FROM autoagenda.locais) AS locais,
+        (SELECT COUNT(*)::int FROM autoagenda.aulas) AS aulas,
+        (SELECT COUNT(*)::int FROM autoagenda.planos_aula) AS planos,
+        (SELECT COUNT(*)::int FROM autoagenda.financeiro) AS financeiro,
+        (SELECT COUNT(*)::int FROM autoagenda.configuracoes) AS configuracoes
+    `);
+    const contagens = r.rows[0] || {};
+    const totalRegistros = Object.values(contagens).reduce((soma, n) => soma + Number(n || 0), 0);
+    res.json({
+      version: APP_VERSION,
+      gerado_em: new Date().toISOString(),
+      total_registros: totalRegistros,
+      contagens,
+      formatos: ['csv','xlsx','json'],
+      backup_completo_disponivel: true,
+      credenciais_incluidas: false
+    });
+  } catch (error) {
+    console.error('Erro ao carregar resumo de backup:', error);
+    res.status(500).json({ error: 'Erro ao carregar resumo de backup.' });
+  }
+});
+
+app.get('/api/backup/exportar', async (req, res) => {
+  const entidade = String(req.query.entidade || 'completo').trim().toLowerCase();
+  const formato = String(req.query.formato || 'json').trim().toLowerCase();
+
+  if (entidade !== 'completo' && !EXPORTACOES[entidade]) {
+    return res.status(400).json({ error: 'Conjunto de dados inválido para exportação.' });
+  }
+  if (!['csv','xlsx','json'].includes(formato)) {
+    return res.status(400).json({ error: 'Formato inválido. Use CSV, Excel ou JSON.' });
+  }
+
+  try {
+    const conjuntos = await coletarBackup(entidade);
+    const arquivo = nomeArquivoBackup(entidade, formato);
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Disposition', `attachment; filename="${arquivo}"`);
+
+    if (formato === 'json') {
+      res.type('application/json; charset=utf-8');
+      return res.send(JSON.stringify(payloadJsonBackup(entidade, conjuntos), null, 2));
+    }
+
+    if (formato === 'csv') {
+      const csv = entidade === 'completo'
+        ? csvCompleto(conjuntos)
+        : csvDeConjunto(conjuntos[entidade]);
+      res.type('text/csv; charset=utf-8');
+      return res.send(`\uFEFF${csv}`);
+    }
+
+    const arquivoExcel = await excelDeConjuntos(conjuntos);
+    res.type('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    return res.send(arquivoExcel);
+  } catch (error) {
+    console.error('Erro ao exportar backup:', error);
+    const mensagem = String(error?.code || '').toUpperCase() === 'MODULE_NOT_FOUND'
+      ? 'Exportação Excel indisponível. Verifique a instalação das dependências no Render.'
+      : 'Erro ao gerar o arquivo de backup/exportação.';
+    if (!res.headersSent) return res.status(500).json({ error: mensagem });
   }
 });
 

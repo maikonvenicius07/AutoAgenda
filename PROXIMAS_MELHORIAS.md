@@ -1,14 +1,14 @@
 # Próximas melhorias — AutoAgenda
 
-Versão atual consolidada: **V2.8.0**.
+Versão atual consolidada: **V2.9.0**.
 
-Concluído até aqui: **ETAPAS 1 a 14** do roteiro principal.
+Concluído até aqui: **ETAPAS 1 a 15** do roteiro principal.
 
-## Próxima etapa
+## Concluído nesta versão
 
 **ETAPA 15 — Backup e Exportação**
 
-Criar a opção **Backup / Exportar dados**, permitindo exportar:
+A nova área **💾 Backup** permite exportar:
 - alunos;
 - instrutores;
 - veículos;
@@ -18,15 +18,28 @@ Criar a opção **Backup / Exportar dados**, permitindo exportar:
 - financeiro;
 - configurações.
 
-Formatos previstos no roteiro:
+Formatos disponíveis:
 - CSV;
-- Excel;
+- Excel (.xlsx);
 - JSON.
 
-Também preparar um backup completo para futura restauração.
+O backup completo também inclui tabelas auxiliares de indisponibilidade de instrutores e veículos, preservando dados necessários para uma futura restauração.
 
-Regra de segurança: nunca exportar `DATABASE_URL`, senhas, tokens ou credenciais.
+Credenciais do Render e variáveis de ambiente não fazem parte das exportações.
 
-Depois seguem:
-- ETAPA 16 — Login individual;
-- ETAPA 17 — Permissões por usuário.
+## Próxima etapa
+
+**ETAPA 16 — Login individual**
+
+Substituir futuramente o login básico por usuários individuais, com:
+- nome;
+- login;
+- e-mail;
+- senha armazenada com hash seguro;
+- perfil;
+- ativo/inativo;
+- sessões seguras;
+- proteção das rotas do backend.
+
+Depois segue:
+- ETAPA 17 — Permissões por usuário (Administrador e Instrutor).

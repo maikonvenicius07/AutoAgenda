@@ -1,43 +1,47 @@
-AUTOAGENDA V2.8.0 — FINANCEIRO SIMPLES
+AUTOAGENDA V2.9.0 — BACKUP / EXPORTAÇÃO
 
-Esta versão implementa a ETAPA 14 do roteiro.
+ETAPA 15 do roteiro principal.
 
-NOVO
-- Nova aba 💰 Financeiro.
-- Botão 💰 Financeiro também nos cartões dos alunos.
-- Cadastro de pacote financeiro por aluno.
-- Valor do pacote.
-- Quantidade de aulas do pacote.
-- Valor pago acumulado.
-- Saldo financeiro calculado automaticamente.
-- Data do pagamento.
-- Data de vencimento.
-- Forma de pagamento: PIX, dinheiro, cartão, transferência, boleto ou outro.
-- Observações.
-- Situações automáticas: Quitado, Parcial, Pendente e Vencido.
-- Resumo com total dos pacotes, recebido, a receber e vencido.
-- Filtro por aluno.
-- Arquivamento e reativação de lançamentos sem apagar o histórico.
+NOVIDADES
+- Nova aba: 💾 Backup.
+- Exportação de alunos, instrutores, veículos, locais, aulas, planos, financeiro e configurações.
+- Formatos: CSV, Excel (.xlsx) e JSON.
+- Backup completo JSON preparado para futura rotina de restauração.
+- Exportação Excel completa com uma aba por conjunto de dados.
+- Backup completo inclui também indisponibilidades de instrutores e veículos.
+- Resumo com contagens de alunos, aulas, planos e lançamentos financeiros.
 
-REGRA IMPORTANTE
-- O financeiro é separado da agenda.
-- Alterar valor, pagamento ou quantidade de aulas no Financeiro NÃO altera o cadastro de aulas contratadas.
-- Não cria, exclui, cancela ou reagenda aulas.
-- O saldo financeiro é calculado como valor do pacote menos valor pago.
+SEGURANÇA
+- DATABASE_URL não é exportada.
+- AUTOAGENDA_USER e AUTOAGENDA_PASSWORD não são exportados.
+- Senhas, tokens e credenciais do ambiente não são exportados.
+- Os arquivos podem conter CPF, telefone, e-mail e outros dados pessoais cadastrados. Guarde-os em local seguro.
 
 BANCO
-- Nova tabela: autoagenda.financeiro.
-- A criação/migração é automática ao iniciar o servidor.
-- Não execute SQL manualmente.
-- Nenhum dado existente é apagado.
+- Nenhuma nova tabela ou coluna nesta versão.
+- Não é necessário executar SQL manualmente.
 
-DEPLOY
-1. Use o ZIP "Somente_Arquivos_Para_Substituir" para atualizar o GitHub.
-2. Mantenha exatamente a mesma estrutura de pastas.
-3. Faça Commit changes.
-4. Aguarde o Render concluir o deploy.
-5. Pressione Ctrl+F5.
-6. Confirme no topo: AutoAgenda V2.8.0.
-7. Abra 💰 Financeiro e faça um lançamento de teste.
+DEPENDÊNCIA NOVA
+- exceljs 4.4.0, usada somente para gerar arquivos .xlsx.
+- O Render instalará a dependência a partir do package.json durante o deploy.
 
-Não altere DATABASE_URL, AUTOAGENDA_USER ou AUTOAGENDA_PASSWORD.
+ARQUIVOS ALTERADOS
+- server.js
+- package.json
+- public/app.js
+- public/index.html
+- public/style.css
+- sql/schema.sql (somente identificação da versão)
+- README.md
+- PROXIMAS_MELHORIAS.md
+- LEIA-ME-ATUALIZACAO.txt
+- CHECKLIST_V2.9.md
+- RELATORIO_DE_TESTES_V2.9.md
+
+ATUALIZAÇÃO NO GITHUB
+1. Substitua/adicone os arquivos mantendo as mesmas pastas.
+2. Faça Commit changes.
+3. Aguarde o deploy do Render ficar Live.
+4. Pressione Ctrl+F5 no AutoAgenda.
+5. Confirme no topo: AutoAgenda V2.9.0.
+6. Abra 💾 Backup e teste primeiro o Backup completo JSON e depois o Excel.
