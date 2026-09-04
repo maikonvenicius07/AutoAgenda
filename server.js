@@ -7,7 +7,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '1.9.0';
+const APP_VERSION = '2.0.0';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -19,6 +19,16 @@ function hojeApp() {
   }).formatToParts(new Date());
   const map = Object.fromEntries(parts.map(p => [p.type, p.value]));
   return `${map.year}-${map.month}-${map.day}`;
+}
+
+function agoraApp() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: APP_TIMEZONE,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false
+  }).formatToParts(new Date());
+  const map = Object.fromEntries(parts.map(p => [p.type, p.value]));
+  return { data: `${map.year}-${map.month}-${map.day}`, hora: `${map.hour}:${map.minute}` };
 }
 
 if (!process.env.DATABASE_URL) {
@@ -2145,6 +2155,113 @@ app.delete('/api/locais/:id/permanente', async (req, res) => {
     console.error(error);
     res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao excluir local.' });
   } finally { client.release(); }
+});
+
+
+// ========================= V2.0 — ENCONTRAR HORÁRIO LIVRE =========================
+app.get('/api/horarios-livres', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const alunoId = Number(req.query.aluno_id);
+    const instrutorId = Number(req.query.instrutor_id);
+    const veiculoId = Number(req.query.veiculo_id);
+    const localId = Number(req.query.local_id);
+    const dataInicioSolicitada = String(req.query.data_inicio || hojeApp()).slice(0, 10);
+    const limite = Math.min(10, Math.max(1, Number(req.query.limite || 5)));
+    const diasBusca = Math.min(60, Math.max(1, Number(req.query.dias_busca || 30)));
+    const config = await obterConfigFuncionamento(client);
+    const duracao = validarInteiroPositivo(req.query.duracao_minutos, Number(config.duracao_padrao_minutos || 50), 240);
+    const unidades = Math.min(4, validarInteiroPositivo(req.query.aulas_unidades, 1, 4));
+
+    if (!alunoId || !instrutorId || !veiculoId || !localId) {
+      throw erroHttp(400, 'Informe aluno, instrutor, veículo e local para procurar horários livres.');
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dataInicioSolicitada)) throw erroHttp(400, 'Data inicial inválida.');
+
+    await validarRecursosAtivos(client, { aluno_id: alunoId, instrutor_id: instrutorId, veiculo_id: veiculoId, local_id: localId });
+    const saldo = await saldoAluno(client, alunoId);
+    if (!saldo) throw erroHttp(404, 'Aluno não encontrado ou inativo.');
+    if (unidades > Number(saldo.disponiveis || 0)) {
+      throw erroHttp(409, `O aluno possui somente ${saldo.disponiveis} aula(s) disponível(is).`);
+    }
+
+    // Falha cedo se o veículo estiver globalmente em manutenção/indisponível/inativo.
+    const veiculo = await obterVeiculoDisponibilidade(client, veiculoId);
+    const situacao = veiculo.ativo === false ? 'INATIVO' : normalizarSituacaoVeiculo(veiculo.situacao);
+    if (situacao !== 'DISPONIVEL') {
+      const nomes = { INATIVO:'inativo', MANUTENCAO:'em manutenção', INDISPONIVEL:'indisponível' };
+      throw erroHttp(400, `O veículo selecionado está ${nomes[situacao] || 'indisponível'}.`);
+    }
+
+    const hoje = hojeApp();
+    let dataInicio = dataInicioSolicitada < hoje ? hoje : dataInicioSolicitada;
+    const agora = agoraApp();
+    const resultados = [];
+    const abertura = minutosDoHorario(config.hora_abertura);
+    const encerramento = minutosDoHorario(config.hora_encerramento);
+    const passo = Math.max(5, Number(config.duracao_padrao_minutos || 50) + Number(config.intervalo_minutos || 0));
+
+    for (let d = 0; d < diasBusca && resultados.length < limite; d++) {
+      const dt = dateOnlyUTC(dataInicio);
+      dt.setUTCDate(dt.getUTCDate() + d);
+      const data = isoDateUTC(dt);
+      if (!(config.dias_funcionamento || []).map(Number).includes(diaSemanaDaData(data))) continue;
+
+      for (let min = abertura; min + duracao <= encerramento && resultados.length < limite; min += passo) {
+        const horaInicio = horarioDeMinutos(min);
+        if (data === agora.data && min <= minutosDoHorario(agora.hora)) continue;
+
+        const candidato = {
+          aluno_id: alunoId,
+          instrutor_id: instrutorId,
+          veiculo_id: veiculoId,
+          data_aula: data,
+          hora_inicio: horaInicio,
+          duracao_minutos: duracao,
+          aulas_unidades: unidades
+        };
+
+        if (!avaliarHorarioFuncionamento(config, candidato).ok) continue;
+        try {
+          await validarDisponibilidadeInstrutor(client, instrutorId, candidato, config);
+          await validarDisponibilidadeVeiculo(client, veiculoId, candidato);
+        } catch (error) {
+          if ([400,404].includes(error.statusCode)) continue;
+          throw error;
+        }
+
+        const conflito = await verificarConflito(client, candidato, [], config.intervalo_minutos);
+        if (conflito.rowCount) continue;
+
+        resultados.push({
+          data_aula: data,
+          hora_inicio: horaInicio,
+          duracao_minutos: duracao,
+          aulas_unidades: unidades
+        });
+      }
+    }
+
+    res.json({
+      resultados,
+      encontrados: resultados.length,
+      limite,
+      dias_busca: diasBusca,
+      data_inicio: dataInicio,
+      saldo,
+      configuracao: {
+        hora_abertura: config.hora_abertura,
+        hora_encerramento: config.hora_encerramento,
+        duracao_padrao_minutos: config.duracao_padrao_minutos,
+        intervalo_minutos: config.intervalo_minutos
+      }
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao procurar horários livres.' });
+  } finally {
+    client.release();
+  }
 });
 
 // ========================= PLANOS AUTOMÁTICOS =========================

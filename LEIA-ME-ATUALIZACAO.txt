@@ -1,10 +1,17 @@
-AUTOAGENDA V1.9.0 — DISPONIBILIDADE DOS VEÍCULOS
+AUTOAGENDA V2.0 — ENCONTRAR HORÁRIO LIVRE
 
-1. Substitua os arquivos do repositório pelos desta versão.
+1. Substitua os arquivos da versão anterior pelos desta pasta.
 2. Não altere DATABASE_URL, AUTOAGENDA_USER ou AUTOAGENDA_PASSWORD.
-3. Faça Commit changes.
-4. Aguarde o Render concluir o deploy.
-5. Pressione Ctrl+F5.
-6. Teste Configurações > Veículos.
+3. Faça commit no GitHub e aguarde o deploy do Render.
+4. Faça Ctrl+F5.
+5. Confirme no topo AutoAgenda V2.0.0.
 
-Não é necessário executar schema.sql manualmente.
+TESTE PRINCIPAL
+- Clique em 🔎 Encontrar horário livre.
+- Escolha aluno, instrutor, veículo, local e data inicial.
+- Clique em procurar os 5 próximos horários.
+- Escolha um resultado.
+- Confirme que Nova aula abre preenchida.
+- Salve a aula e confirme que aparece na agenda.
+
+A busca respeita funcionamento, disponibilidade do instrutor, folgas, disponibilidade/manutenção do veículo, conflitos existentes, duração, intervalo e saldo do aluno.

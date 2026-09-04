@@ -16,7 +16,7 @@
       <small>Sua aula. Seu horário. Tudo organizado.</small>
     </div>
   </div>
-  <button id="novaAula">+ Nova aula</button>
+  <div class="header-actions"><button type="button" class="secondary" id="encontrarHorarioHeader">🔎 Horário livre</button><button id="novaAula">+ Nova aula</button></div>
 </header>
 
 <main>
@@ -80,6 +80,7 @@
       </div>
       <div class="agenda-tools">
         <input id="filtroData" type="date">
+        <button type="button" class="secondary" id="encontrarHorarioAgenda">🔎 Encontrar horário livre</button>
         <button type="button" id="novaAulaAgenda">+ Nova aula</button>
       </div>
     </div>
@@ -240,6 +241,32 @@
     <div id="erroAluno" class="erro hide"></div>
     <button id="salvarAluno">Salvar aluno</button>
   </form>
+</div>
+
+
+<!-- V2.0 — ENCONTRAR HORÁRIO LIVRE -->
+<div id="mHorarioLivre" class="modal hide">
+  <div class="box search-slot-box">
+    <button type="button" class="x" data-close="mHorarioLivre">✕</button>
+    <h2>🔎 Encontrar horário livre</h2>
+    <p class="modal-text">O AutoAgenda procura os próximos horários compatíveis com aluno, instrutor, veículo, funcionamento, folgas, manutenção e aulas já existentes.</p>
+    <div class="form-2">
+      <label>Aluno<select id="hAluno" required></select></label>
+      <label>Instrutor<select id="hInstrutor" required></select></label>
+    </div>
+    <div class="form-2">
+      <label>Veículo<select id="hVeiculo" required></select></label>
+      <label>Local para a aula<select id="hLocal" required></select></label>
+    </div>
+    <div class="form-2">
+      <label>Procurar a partir de<input id="hDataInicio" type="date" required></label>
+      <label>Duração (minutos)<input id="hDuracao" type="number" min="10" max="240" step="5" value="50" required></label>
+    </div>
+    <label>Aulas consumidas<select id="hUnidades"><option value="1">1 aula</option><option value="2">2 aulas</option><option value="3">3 aulas</option><option value="4">4 aulas</option></select></label>
+    <button type="button" id="buscarHorariosLivres">🔎 Procurar os 5 próximos horários</button>
+    <div id="erroHorarioLivre" class="erro hide"></div>
+    <div id="resultadoHorariosLivres" class="free-slot-results"></div>
+  </div>
 </div>
 
 <!-- MODAL AULA MANUAL / EDIÇÃO -->

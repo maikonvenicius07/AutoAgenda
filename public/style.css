@@ -113,3 +113,15 @@ nav{grid-template-columns:repeat(6,1fr)}
 
 /* V1.9 — disponibilidade dos veículos */
 .availability-grid select{width:100%;padding:10px;border:1px solid #ccc;border-radius:8px;background:#fff;font:inherit}
+
+
+/* ========================= V2.0 ENCONTRAR HORÁRIO LIVRE ========================= */
+.header-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.search-slot-box{max-width:720px}
+.free-slot-results{display:grid;gap:8px;margin-top:12px}
+.free-slot-summary{padding:10px 12px;border-radius:9px;background:#edf8f0;border:1px solid #c6e6ce;color:#245c35;font-size:12px}
+.free-slot-option{display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:14px;text-align:left;background:#fff;border:1px solid #deded9;border-left:5px solid var(--yellow);border-radius:10px;padding:12px 14px;color:#111;transition:.15s}
+.free-slot-option:hover{transform:translateY(-1px);box-shadow:0 5px 14px #00000012;border-color:#d4bd40}
+.free-slot-option span{display:grid;gap:2px}.free-slot-option span b{font-size:14px}.free-slot-option span small{font-size:11px;color:#777}
+.free-slot-option strong{font-size:21px}.free-slot-option em{font-style:normal;font-size:11px;font-weight:900;color:#554600}
+@media(max-width:650px){.header-actions{width:100%}.header-actions button{flex:1}.free-slot-option{grid-template-columns:1fr auto}.free-slot-option em{grid-column:1/-1;text-align:right}}

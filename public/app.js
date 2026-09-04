@@ -181,6 +181,7 @@ function studentHtml(a) {
 
     <div class="actions-row">
       ${ativo ? `
+        <button type="button" class="mini secondary" data-find-slot-aluno="${a.id}">🔎 Horário livre</button>
         <button type="button" class="mini plan" data-plan-aluno="${a.id}">📅 Montar agenda</button>
         <button type="button" class="mini edit" data-edit-aluno="${a.id}">✏️ Editar</button>
         <button type="button" class="mini delete" data-del-aluno="${a.id}">⏸️ Desativar</button>
@@ -542,6 +543,7 @@ function bindDynamic() {
   $$('[data-del-aluno]').forEach(b => b.onclick = () => pedirExcluirAluno(Number(b.dataset.delAluno)));
   $$('[data-reactivate-aluno]').forEach(b => b.onclick = () => reativarAluno(Number(b.dataset.reactivateAluno)));
   $$('[data-plan-aluno]').forEach(b => b.onclick = () => abrirPlano(Number(b.dataset.planAluno)));
+  $$('[data-find-slot-aluno]').forEach(b => b.onclick = () => abrirBuscaHorario({ aluno_id:Number(b.dataset.findSlotAluno) }));
   $$('[data-edit-aula]').forEach(b => b.onclick = () => editarAula(Number(b.dataset.editAula)));
   $$('[data-del-aula]').forEach(b => b.onclick = () => pedirExcluirAula(Number(b.dataset.delAula)));
   $$('[data-repor-aula]').forEach(b => b.onclick = () => reporAula(Number(b.dataset.reporAula)));
@@ -707,6 +709,91 @@ $('#fAluno').onsubmit = async e => {
     $('#erroAluno').classList.remove('hide');
   }
 };
+
+
+// ========================= V2.0 — ENCONTRAR HORÁRIO LIVRE =========================
+function preencherBuscaHorario() {
+  $('#hAluno').innerHTML = alunos.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('');
+  $('#hInstrutor').innerHTML = instrutores.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('');
+  $('#hVeiculo').innerHTML = veiculos.map(x => `<option value="${x.id}">${esc(x.nome)}${x.placa ? ' · ' + esc(x.placa) : ''}</option>`).join('');
+  $('#hLocal').innerHTML = locais.map(x => `<option value="${x.id}">${esc(x.nome)}</option>`).join('');
+}
+
+function abrirBuscaHorario(prefill = {}) {
+  if (!alunos.length) return toast('Cadastre um aluno primeiro.');
+  if (!instrutores.length || !veiculos.length || !locais.length) {
+    toast('Cadastre pelo menos um instrutor, um veículo e um local em Configurações.');
+    abrirTab('configuracoes');
+    return;
+  }
+  preencherBuscaHorario();
+  $('#hDataInicio').value = prefill.data || proximaDataFuncionamento(iso());
+  $('#hDuracao').value = String(prefill.duracao || Number(configFuncionamento.duracao_padrao_minutos || 50));
+  $('#hUnidades').value = String(prefill.unidades || 1);
+  if (prefill.aluno_id) $('#hAluno').value = String(prefill.aluno_id);
+  if (prefill.instrutor_id) $('#hInstrutor').value = String(prefill.instrutor_id);
+  if (prefill.veiculo_id) $('#hVeiculo').value = String(prefill.veiculo_id);
+  if (prefill.local_id) $('#hLocal').value = String(prefill.local_id);
+  $('#erroHorarioLivre').classList.add('hide');
+  $('#resultadoHorariosLivres').innerHTML = '<div class="empty small-empty">Escolha os dados e clique em procurar.</div>';
+  open('mHorarioLivre');
+}
+
+async function procurarHorariosLivres() {
+  const params = new URLSearchParams({
+    aluno_id: $('#hAluno').value,
+    instrutor_id: $('#hInstrutor').value,
+    veiculo_id: $('#hVeiculo').value,
+    local_id: $('#hLocal').value,
+    data_inicio: $('#hDataInicio').value,
+    duracao_minutos: $('#hDuracao').value,
+    aulas_unidades: $('#hUnidades').value,
+    limite: '5',
+    dias_busca: '30'
+  });
+  $('#erroHorarioLivre').classList.add('hide');
+  $('#resultadoHorariosLivres').innerHTML = '<div class="empty small-empty">🔎 Procurando horários...</div>';
+  $('#buscarHorariosLivres').disabled = true;
+  try {
+    const r = await api('/api/horarios-livres?' + params.toString());
+    if (!r.resultados?.length) {
+      $('#resultadoHorariosLivres').innerHTML = `<div class="empty"><b>Nenhum horário livre encontrado nos próximos ${Number(r.dias_busca || 30)} dias.</b><br><small>Tente outro instrutor, veículo ou data inicial.</small></div>`;
+      return;
+    }
+    $('#resultadoHorariosLivres').innerHTML = `
+      <div class="free-slot-summary">✅ ${r.encontrados} horário(s) encontrado(s) · saldo do aluno: <b>${Number(r.saldo?.disponiveis || 0)}</b> aula(s)</div>
+      ${r.resultados.map((x, idx) => `<button type="button" class="free-slot-option" data-free-slot-index="${idx}">
+        <span><b>${fmtData(x.data_aula)}</b><small>${['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'][diaSemanaISO(x.data_aula)]}</small></span>
+        <strong>${hora(x.hora_inicio)}</strong>
+        <em>Agendar →</em>
+      </button>`).join('')}`;
+    $$('[data-free-slot-index]').forEach(b => b.onclick = () => {
+      const x = r.resultados[Number(b.dataset.freeSlotIndex)];
+      const prefill = {
+        aluno_id: Number($('#hAluno').value),
+        instrutor_id: Number($('#hInstrutor').value),
+        veiculo_id: Number($('#hVeiculo').value),
+        local_id: Number($('#hLocal').value),
+        data: x.data_aula,
+        hora: x.hora_inicio,
+        duracao: Number(x.duracao_minutos),
+        unidades: Number(x.aulas_unidades)
+      };
+      close('mHorarioLivre');
+      novaAula(prefill);
+    });
+  } catch (e) {
+    $('#erroHorarioLivre').textContent = e.message;
+    $('#erroHorarioLivre').classList.remove('hide');
+    $('#resultadoHorariosLivres').innerHTML = '';
+  } finally {
+    $('#buscarHorariosLivres').disabled = false;
+  }
+}
+
+$('#encontrarHorarioHeader').onclick = () => abrirBuscaHorario();
+$('#encontrarHorarioAgenda').onclick = () => abrirBuscaHorario({ data: $('#filtroData').value || iso() });
+$('#buscarHorariosLivres').onclick = procurarHorariosLivres;
 
 // ========================= AULA MANUAL / EDIÇÃO =========================
 function novaAula(prefill = null) {

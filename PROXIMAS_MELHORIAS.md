@@ -1,8 +1,7 @@
-# Próximas melhorias
+# Próximas melhorias — AutoAgenda
 
-Após aprovar a V1.9:
+Versão atual: **V2.0 — Encontrar horário livre**.
 
-1. **Encontrar horário livre**: procurar automaticamente os próximos 5 horários considerando aluno, instrutor, veículo, funcionamento, disponibilidade e conflitos.
-2. Reagendamento inteligente.
-3. Histórico completo do aluno.
-4. WhatsApp simples via `wa.me`.
+Próxima etapa do roteiro: **ETAPA 7 — Reagendamento inteligente**.
+
+Objetivo: quando uma aula for cancelada ou marcada como falta, oferecer de 3 a 5 horários livres usando o mesmo motor de disponibilidade da V2.0, preservar a aula original no histórico e vincular a nova aula como reposição.

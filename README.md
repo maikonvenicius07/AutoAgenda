@@ -1,26 +1,15 @@
-# AutoAgenda V1.9 — Disponibilidade dos Veículos
+# AutoAgenda V2.0 — Encontrar Horário Livre
 
-Versão baseada na V1.8.1.
+Evolução da V1.9 com busca inteligente dos próximos horários disponíveis.
 
-## Novidades
-- Situação do veículo: **Disponível, Manutenção, Indisponível e Inativo**.
-- Períodos específicos de manutenção/indisponibilidade.
-- Veículos não disponíveis deixam de aparecer em novas aulas e planos.
-- O backend bloqueia uso direto de veículo indisponível.
-- Plano automático valida cada ocorrência contra bloqueios do veículo.
-- Edição, reagendamento e alteração de status respeitam a disponibilidade.
-- Sugestão de horário considera instrutor e veículo.
-- Aulas existentes não são apagadas ou remarcadas automaticamente.
-- Ao cadastrar bloqueio, o sistema informa aulas futuras já existentes no período.
+## Novidade principal
+- Botão **🔎 Encontrar horário livre** no cabeçalho, Agenda e cartão do aluno.
+- Busca os 5 próximos horários considerando aluno, instrutor, veículo, horário de funcionamento, disponibilidade individual do instrutor, folgas, manutenção/indisponibilidade do veículo, duração, intervalo e aulas existentes.
+- Ao escolher um resultado, abre **Nova aula** já preenchida para confirmação.
+- Busca é somente leitura: a aula só é criada após o usuário confirmar no formulário normal.
 
-## Banco
-Migração automática:
-- `autoagenda.veiculos.situacao`
-- `autoagenda.veiculo_indisponibilidades`
+## Segurança
+Mantém a autenticação básica obrigatória em produção com `AUTOAGENDA_USER` e `AUTOAGENDA_PASSWORD`. Nunca grave credenciais no GitHub.
 
-Não execute `schema.sql` manualmente no deploy normal.
-
-## Variáveis do Render
-Mantenha `DATABASE_URL`, `NODE_ENV`, `APP_TIMEZONE`, `AUTOAGENDA_USER` e `AUTOAGENDA_PASSWORD`.
-
-**Versão 1.9.0**
+## Atualização
+Substitua os arquivos da versão anterior, faça commit e aguarde o Render. Não é necessária alteração manual do PostgreSQL nesta etapa.
