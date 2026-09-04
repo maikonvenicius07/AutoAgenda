@@ -2,7 +2,7 @@
 
 ## Situação atual
 
-Versão: **V3.0.0 — Login individual**
+Versão: **V3.1.0 — Níveis de acesso**
 
 Etapas concluídas:
 1. Configurações;
@@ -20,29 +20,36 @@ Etapas concluídas:
 13. Relatórios;
 14. Financeiro simples;
 15. Backup / Exportação;
-16. Login individual.
+16. Login individual;
+17. Níveis de acesso.
 
-## Próximo passo — ETAPA 17
+## Roteiro principal concluído
 
-### Níveis de acesso
+A V3.1 fecha a sequência planejada inicialmente para o AutoAgenda.
 
-Aplicar permissões reais por perfil.
+### Administrador
+Acesso integral ao sistema.
 
-**Administrador**
-- alunos;
-- agenda;
-- configurações;
-- instrutores;
-- veículos;
-- financeiro;
-- relatórios;
-- backup;
-- usuários.
+### Instrutor
+Acesso restrito à própria agenda, aos alunos relacionados às suas aulas,
+à alteração de status/confirmação e ao reagendamento autorizado.
 
-**Instrutor**
-- sua própria agenda;
-- alunos relacionados às suas aulas;
-- status das aulas;
-- reagendamento autorizado.
+As permissões são aplicadas também no backend, evitando que um instrutor
+acesse módulos administrativos apenas digitando uma rota manualmente.
 
-A V3.0 já grava o perfil do usuário e deixa a estrutura pronta. A próxima versão deverá aplicar as restrições no frontend e, principalmente, no backend.
+## Próximo passo recomendado
+
+Antes de iniciar novas funcionalidades:
+
+**Auditoria técnica final da V3.1**
+- permissões e tentativas de acesso indevido;
+- integridade das consultas SQL;
+- conflitos de agenda;
+- segurança das sessões;
+- código duplicado/morto;
+- tratamento de erros;
+- desempenho;
+- compatibilidade Render/PostgreSQL;
+- revisão do Backup/Exportação.
+
+Depois da auditoria, podemos definir a próxima fase do AutoAgenda.

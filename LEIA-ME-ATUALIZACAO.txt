@@ -1,33 +1,54 @@
-AUTOAGENDA V3.0.0 — LOGIN INDIVIDUAL
+AUTOAGENDA V3.1.0 — NÍVEIS DE ACESSO
 ======================================
 
 O que mudou
 -----------
-- Sai a autenticação básica do navegador.
-- Entra uma tela própria de login do AutoAgenda.
-- Senhas armazenadas somente com hash scrypt.
-- Sessões seguras com cookie HttpOnly.
-- Novas tabelas autoagenda.usuarios e autoagenda.sessoes.
-- Nova aba "Usuários" para administradores.
-- Usuários podem ser ativados/desativados e ter a senha alterada.
-- Sessões são revogadas quando o usuário é desativado.
+- Permissões reais para Administrador e Instrutor.
+- O perfil Instrutor passa a ser vinculado a um cadastro de instrutor.
+- O backend filtra agenda, aulas e alunos pelo instrutor autenticado.
+- O Instrutor pode alterar status/confirmação das próprias aulas.
+- O Instrutor pode reagendar aula cancelada da própria agenda.
+- Módulos administrativos ficam bloqueados no backend e ocultos no frontend.
+- Administrador continua com acesso integral.
 
 MIGRAÇÃO IMPORTANTE
 -------------------
-NÃO apague AUTOAGENDA_USER e AUTOAGENDA_PASSWORD do Render agora.
-
-Na primeira execução da V3.0, se não houver usuário no banco, essas variáveis
-serão usadas para criar o primeiro administrador, com a senha já convertida
-para hash seguro.
-
-Depois do deploy:
-1. aguarde o Render ficar Live;
-2. abra o AutoAgenda;
-3. a nova tela de login deverá aparecer;
-4. use o MESMO usuário e senha que você já utilizava;
-5. confirme no topo "AutoAgenda V3.0.0";
-6. abra "Usuários" e confira a conta Administrador AutoAgenda.
-
 Não é necessário executar SQL manualmente.
 
-Próxima etapa: V3.1 — Níveis de acesso (Administrador e Instrutor).
+O servidor adiciona automaticamente:
+- autoagenda.usuarios.instrutor_id;
+- chave estrangeira para autoagenda.instrutores;
+- índice único para evitar duas contas de Instrutor no mesmo cadastro.
+
+SE JÁ EXISTE USUÁRIO COM PERFIL INSTRUTOR
+------------------------------------------
+Na V3.0 esse perfil ainda não tinha vínculo operacional.
+
+Depois do deploy da V3.1:
+1. entre com uma conta Administrador;
+2. abra "Usuários";
+3. edite cada usuário com perfil "Instrutor";
+4. selecione "Instrutor vinculado";
+5. salve.
+
+Sem esse vínculo, a conta de Instrutor poderá fazer login, mas o backend
+bloqueará o acesso à agenda por segurança.
+
+TESTE RÁPIDO
+------------
+Administrador:
+- deve continuar vendo todos os módulos.
+
+Instrutor:
+- deve ver somente Alunos, Agenda diária e Agenda semanal;
+- deve ver somente suas próprias aulas;
+- deve ver somente alunos relacionados às suas aulas;
+- pode atualizar situação/confirmação da própria aula;
+- pode reagendar aula cancelada;
+- não pode acessar Configurações, Financeiro, Backup, Relatórios ou Usuários.
+
+Confirme no topo:
+AutoAgenda V3.1.0
+
+As 17 etapas do roteiro principal estão concluídas.
+Próximo passo recomendado: auditoria técnica final da V3.1.

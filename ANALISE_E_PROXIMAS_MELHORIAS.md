@@ -1,22 +1,38 @@
-# Análise — AutoAgenda V3.0.0
+# Análise — AutoAgenda V3.1.0
 
-A V3.0 foi construída sobre a V2.9.1 estável, sem recriar o projeto.
+A V3.1 foi construída sobre a V3.0 estável, preservando login individual e todas as funcionalidades existentes.
 
 ## Alteração principal
 
-Substituição da autenticação HTTP Basic por login individual persistido no PostgreSQL.
+Aplicação efetiva dos níveis de acesso.
 
-## Compatibilidade preservada
+O perfil deixou de ser apenas informativo: o backend agora filtra dados e bloqueia operações conforme `ADMIN` ou `INSTRUTOR`.
 
-As funcionalidades de agenda, alunos, planos, WhatsApp, confirmação, lembretes,
-Dashboard, relatórios, financeiro e backup permanecem com as mesmas rotas funcionais.
+## Arquitetura adotada
 
-## Migração
+- `ADMIN`: acesso integral;
+- `INSTRUTOR`: acesso operacional restrito;
+- `autoagenda.usuarios.instrutor_id`: vínculo entre a conta de login e o cadastro de instrutor;
+- autorização de backend por rota/operação;
+- filtro adicional nas consultas de alunos e aulas;
+- frontend adapta menus e ações ao perfil, sem substituir a validação do servidor.
 
-As tabelas `usuarios` e `sessoes` são criadas automaticamente.
-As variáveis `AUTOAGENDA_USER` e `AUTOAGENDA_PASSWORD` são usadas apenas para
-bootstrap do primeiro administrador quando a tabela de usuários estiver vazia.
+## Riscos tratados
 
-## Próxima melhoria
+- acesso direto a rotas administrativas por URL;
+- leitura da agenda de outro instrutor;
+- leitura de aluno sem relação com o instrutor;
+- edição completa de aula por instrutor;
+- criação de aula avulsa por instrutor;
+- reagendamento usando outro instrutor;
+- exportação/financeiro/configurações acessíveis ao perfil errado;
+- duas contas de Instrutor vinculadas ao mesmo cadastro operacional.
 
-ETAPA 17 — aplicar permissões de módulo e de dados conforme o perfil do usuário.
+## Compatibilidade
+
+A migração é automática e não apaga dados.
+Usuários `INSTRUTOR` existentes na V3.0 podem estar sem vínculo e precisam ser editados pelo administrador uma única vez.
+
+## Próximo passo
+
+Auditoria técnica final da V3.1 antes de iniciar uma nova fase de funcionalidades.

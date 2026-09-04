@@ -65,6 +65,14 @@ let ultimoPreviewPlano = null;
 let aulaEdicaoAtual = null;
 let historicoWhatsAppPorAula = new Map();
 
+const usuarioAdmin = () => usuarioAtual?.perfil === 'ADMIN';
+const usuarioInstrutor = () => usuarioAtual?.perfil === 'INSTRUTOR';
+const tabsInstrutor = new Set(['alunos','agenda','semana']);
+
+function tabPermitidaAoUsuario(id) {
+  return usuarioAdmin() || tabsInstrutor.has(String(id || ''));
+}
+
 const iso = () => {
   const d = new Date(), o = d.getTimezoneOffset();
   return new Date(d - o * 60000).toISOString().slice(0, 10);
@@ -239,21 +247,41 @@ function mostrarLogin(mensagem = '', setupRequired = false) {
 function liberarApp(usuario) {
   usuarioAtual = usuario || null;
   document.body.classList.remove('auth-locked');
+  document.body.classList.toggle('role-instructor', usuarioInstrutor());
   $('#loginScreen')?.classList.add('hide');
   $('#loginSenha').value = '';
-  const admin = usuarioAtual?.perfil === 'ADMIN';
-  $('#tabUsuarios')?.classList.toggle('hide', !admin);
+
+  const admin = usuarioAdmin();
+  const perfilTexto = admin
+    ? 'Administrador'
+    : `Instrutor${usuarioAtual?.instrutor_nome ? ` · ${usuarioAtual.instrutor_nome}` : ' · vínculo pendente'}`;
+
   $('#usuarioSessaoNome').textContent = usuarioAtual?.nome || usuarioAtual?.login || 'Usuário';
-  $('#usuarioSessaoPerfil').textContent = admin ? 'Administrador' : 'Instrutor';
+  $('#usuarioSessaoPerfil').textContent = perfilTexto;
+
+  $$('.tab').forEach(tab => {
+    const permitida = admin || tabsInstrutor.has(tab.dataset.tab);
+    tab.classList.toggle('hide', !permitida);
+  });
+
+  const controlesAdmin = [
+    '#encontrarHorarioHeader', '#encontrarHorarioAgenda', '#novaAula', '#novaAulaAgenda',
+    '#novoAluno', '#toggleInativosAlunos'
+  ];
+  controlesAdmin.forEach(sel => $(sel)?.classList.toggle('hide', !admin));
 
   if (!admin) {
     usuariosData = [];
     usuariosCarregados = false;
+    mostrarInativosAlunos = false;
     if ($('#listaUsuarios')) $('#listaUsuarios').innerHTML = '';
-    if ($('#usuarios')?.classList.contains('active')) {
-      $$('.tab').forEach(x => x.classList.toggle('active', x.dataset.tab === 'painel'));
-      $$('.panel').forEach(p => p.classList.toggle('active', p.id === 'painel'));
-    }
+
+    // O instrutor entra diretamente na própria agenda; módulos administrativos ficam ocultos.
+    $$('.tab').forEach(x => x.classList.toggle('active', x.dataset.tab === 'agenda'));
+    $$('.panel').forEach(p => p.classList.toggle('active', p.id === 'agenda'));
+  } else if (![...$$('.tab.active')].some(x => !x.classList.contains('hide'))) {
+    $$('.tab').forEach(x => x.classList.toggle('active', x.dataset.tab === 'painel'));
+    $$('.panel').forEach(p => p.classList.toggle('active', p.id === 'painel'));
   }
 }
 
@@ -357,6 +385,9 @@ function open(id) { $('#' + id).classList.remove('hide'); }
 function close(id) { $('#' + id).classList.add('hide'); }
 
 function abrirTab(id) {
+  if (!tabPermitidaAoUsuario(id)) {
+    return toast('Seu perfil não possui acesso a este módulo.');
+  }
   $$('.tab').forEach(x => x.classList.toggle('active', x.dataset.tab === id));
   $$('.panel').forEach(p => p.classList.toggle('active', p.id === id));
   if (id === 'semana') carregarAulasSemana();
@@ -364,7 +395,7 @@ function abrirTab(id) {
   if (id === 'relatorios') carregarRelatorios();
   if (id === 'financeiro') carregarFinanceiro();
   if (id === 'backup') carregarBackupResumo();
-  if (id === 'usuarios' && usuarioAtual?.perfil === 'ADMIN') carregarUsuarios();
+  if (id === 'usuarios' && usuarioAdmin()) carregarUsuarios();
 }
 $$('.tab').forEach(b => b.onclick = () => abrirTab(b.dataset.tab));
 $$('[data-close]').forEach(b => b.onclick = () => close(b.dataset.close));
@@ -448,18 +479,20 @@ function studentHtml(a) {
     <small class="progress-text">${realizadas} realizada(s)${faltasPerdidas ? ` · ${faltasPerdidas} perdida(s) por falta sem justificativa` : ''} · ${contratadas} contratada(s)</small>
 
     <div class="actions-row">
-      ${ativo ? `
-        <button type="button" class="mini history-button" data-history-aluno="${a.id}">📚 Histórico</button>
-        <button type="button" class="mini secondary" data-find-slot-aluno="${a.id}">🔎 Horário livre</button>
-        <button type="button" class="mini plan" data-plan-aluno="${a.id}">📅 Montar agenda</button>
-        <button type="button" class="mini finance-button" data-finance-aluno="${a.id}">💰 Financeiro</button>
-        <button type="button" class="mini edit" data-edit-aluno="${a.id}">✏️ Editar</button>
-        <button type="button" class="mini delete" data-del-aluno="${a.id}">⏸️ Desativar</button>
-      ` : `
-        <button type="button" class="mini history-button" data-history-aluno="${a.id}">📚 Histórico</button>
-        <button type="button" class="mini finance-button" data-finance-aluno="${a.id}">💰 Financeiro</button>
-        <button type="button" class="mini plan" data-reactivate-aluno="${a.id}">▶️ Reativar aluno</button>
-      `}
+      ${usuarioInstrutor()
+        ? `<button type="button" class="mini history-button" data-history-aluno="${a.id}">📚 Histórico</button>`
+        : (ativo ? `
+          <button type="button" class="mini history-button" data-history-aluno="${a.id}">📚 Histórico</button>
+          <button type="button" class="mini secondary" data-find-slot-aluno="${a.id}">🔎 Horário livre</button>
+          <button type="button" class="mini plan" data-plan-aluno="${a.id}">📅 Montar agenda</button>
+          <button type="button" class="mini finance-button" data-finance-aluno="${a.id}">💰 Financeiro</button>
+          <button type="button" class="mini edit" data-edit-aluno="${a.id}">✏️ Editar</button>
+          <button type="button" class="mini delete" data-del-aluno="${a.id}">⏸️ Desativar</button>
+        ` : `
+          <button type="button" class="mini history-button" data-history-aluno="${a.id}">📚 Histórico</button>
+          <button type="button" class="mini finance-button" data-finance-aluno="${a.id}">💰 Financeiro</button>
+          <button type="button" class="mini plan" data-reactivate-aluno="${a.id}">▶️ Reativar aluno</button>
+        `)}
     </div>
   </article>`;
 }
@@ -492,8 +525,8 @@ function aulaHtml(x, comAcoes = false) {
     ${comAcoes ? `<div class="actions-row lesson-actions">
       ${reposicao}
       ${whatsapp}
-      <button type="button" class="mini edit" data-edit-aula="${x.id}">✏️ Alterar</button>
-      ${podeArquivar ? `<button type="button" class="mini delete" data-del-aula="${x.id}">🗃️ Arquivar</button>` : ''}
+      <button type="button" class="mini edit" data-edit-aula="${x.id}">${usuarioInstrutor() ? '📝 Status' : '✏️ Alterar'}</button>
+      ${usuarioAdmin() && podeArquivar ? `<button type="button" class="mini delete" data-del-aula="${x.id}">🗃️ Arquivar</button>` : ''}
     </div>` : (whatsapp ? `<div class="actions-row lesson-actions">${whatsapp}</div>` : '')}
   </div>`;
 }
@@ -659,7 +692,7 @@ function renderConfiguracoes() {
 
 function aulaSemanaHtml(a) {
   const cls = String(a.status || '').toLowerCase();
-  return `<div class="week-lesson ${cls}" data-week-edit="${a.id}" title="Clique para editar">
+  return `<div class="week-lesson ${cls}" data-week-edit="${a.id}" title="${usuarioInstrutor() ? 'Clique para atualizar o status' : 'Clique para editar'}">
     <div class="week-lesson-time">${hora(a.hora_inicio)}</div>
     <b>${esc(a.aluno_nome)}</b>
     <small>👨‍🏫 ${esc(a.instrutor_nome)}</small>
@@ -749,9 +782,11 @@ function renderSemana() {
       const conteudo = doSlot.length
         ? doSlot.map(aulaSemanaHtml).join('')
         : permitido.ok
-          ? `<button type="button" class="week-empty-slot" data-new-week-slot="1" data-week-date="${data}" data-week-time="${slot}" title="Criar aula em ${fmtData(data)} às ${slot}">
-               <span>＋</span><small>Livre</small>
-             </button>`
+          ? (usuarioInstrutor()
+              ? `<div class="week-closed-slot instructor-free" title="Horário livre na sua agenda"><span>•</span><small>Livre</small></div>`
+              : `<button type="button" class="week-empty-slot" data-new-week-slot="1" data-week-date="${data}" data-week-time="${slot}" title="Criar aula em ${fmtData(data)} às ${slot}">
+                   <span>＋</span><small>Livre</small>
+                 </button>`)
           : `<div class="week-closed-slot" title="${esc(permitido.motivo)}"><span>—</span><small>${diaAberto ? 'Fora do horário' : 'Fechado'}</small></div>`;
       return `<div class="week-slot ${data === hoje ? 'today' : ''} ${permitido.ok ? '' : 'closed'}" data-slot-date="${data}" data-slot-time="${slot}">${conteudo}</div>`;
     }).join('');
@@ -1280,28 +1315,56 @@ async function load() {
   try {
     const dataSelecionada = $('#filtroData').value || iso();
     const hoje = iso();
-    [alunos, instrutores, veiculos, locais, aulas, aulasHoje, planos, configInstrutores, configVeiculos, configLocais, configFuncionamento, configLembretes, lembretesData, resumoDashboard] = await Promise.all([
-      api('/api/alunos'),
-      api('/api/instrutores'),
-      api('/api/veiculos'),
-      api('/api/locais'),
-      api(`/api/aulas?data_inicio=${encodeURIComponent(dataSelecionada)}&data_fim=${encodeURIComponent(dataSelecionada)}`),
-      api(`/api/aulas?data_inicio=${encodeURIComponent(hoje)}&data_fim=${encodeURIComponent(hoje)}`),
-      api('/api/planos'),
-      api('/api/instrutores?incluir_inativos=1'),
-      api('/api/veiculos?incluir_inativos=1'),
-      api('/api/locais?incluir_inativos=1'),
-      api('/api/configuracoes/funcionamento'),
-      api('/api/configuracoes/lembretes'),
-      api('/api/lembretes'),
-      api('/api/dashboard/resumo').catch(e => { console.warn('Dashboard indisponível:', e); return {}; })
-    ]);
-    if (mostrarInativosAlunos) alunosTodos = await api('/api/alunos?incluir_inativos=1');
+
+    if (usuarioInstrutor()) {
+      // Perfil Instrutor: carrega somente os dados necessários para sua própria agenda.
+      [alunos, instrutores, veiculos, locais, aulas, aulasHoje, configFuncionamento] = await Promise.all([
+        api('/api/alunos'),
+        api('/api/instrutores'),
+        api('/api/veiculos'),
+        api('/api/locais'),
+        api(`/api/aulas?data_inicio=${encodeURIComponent(dataSelecionada)}&data_fim=${encodeURIComponent(dataSelecionada)}`),
+        api(`/api/aulas?data_inicio=${encodeURIComponent(hoje)}&data_fim=${encodeURIComponent(hoje)}`),
+        api('/api/configuracoes/funcionamento')
+      ]);
+
+      planos = [];
+      configInstrutores = [...instrutores];
+      configVeiculos = [...veiculos];
+      configLocais = [...locais];
+      lembretesData = { itens: [], resumo: { pendentes:0, atrasados:0, proximos_7_dias:0 } };
+      resumoDashboard = {};
+      relatorioData = {};
+      financeiroData = { itens: [], resumo: {} };
+      backupData = { contagens: {}, total_registros:0 };
+    } else {
+      [alunos, instrutores, veiculos, locais, aulas, aulasHoje, planos, configInstrutores, configVeiculos, configLocais, configFuncionamento, configLembretes, lembretesData, resumoDashboard] = await Promise.all([
+        api('/api/alunos'),
+        api('/api/instrutores'),
+        api('/api/veiculos'),
+        api('/api/locais'),
+        api(`/api/aulas?data_inicio=${encodeURIComponent(dataSelecionada)}&data_fim=${encodeURIComponent(dataSelecionada)}`),
+        api(`/api/aulas?data_inicio=${encodeURIComponent(hoje)}&data_fim=${encodeURIComponent(hoje)}`),
+        api('/api/planos'),
+        api('/api/instrutores?incluir_inativos=1'),
+        api('/api/veiculos?incluir_inativos=1'),
+        api('/api/locais?incluir_inativos=1'),
+        api('/api/configuracoes/funcionamento'),
+        api('/api/configuracoes/lembretes'),
+        api('/api/lembretes'),
+        api('/api/dashboard/resumo').catch(e => { console.warn('Dashboard indisponível:', e); return {}; })
+      ]);
+      if (mostrarInativosAlunos) alunosTodos = await api('/api/alunos?incluir_inativos=1');
+    }
+
     render();
     await carregarAulasSemana(true);
   } catch (e) {
     console.error(e);
-    toast(e.status === 503 ? 'Configure a proteção de acesso no Render.' : 'Erro ao carregar dados');
+    const msg = e?.data?.instructor_link_required
+      ? 'Conta de instrutor sem vínculo. O administrador precisa vincular esta conta a um instrutor.'
+      : (e.status === 503 ? 'Configure a proteção de acesso no Render.' : (e.message || 'Erro ao carregar dados'));
+    toast(msg);
   }
 }
 
@@ -1309,7 +1372,7 @@ async function health() {
   try {
     const h = await api('/api/health');
     const seguranca = h.security_ready ? ' · 🔐 login individual ativo' : ' · ⛔ login individual precisa ser inicializado';
-    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '3.0.0'}${seguranca}.`;
+    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '3.1.0'}${seguranca}.`;
     $('#db').className = h.security_ready ? 'db ok' : 'db fail';
   } catch {
     $('#db').textContent = '🔴 Banco não conectado. Verifique DATABASE_URL no Render.';
@@ -1638,6 +1701,9 @@ $('#buscarHorariosLivres').onclick = procurarHorariosLivres;
 
 // ========================= AULA MANUAL / EDIÇÃO =========================
 function novaAula(prefill = null) {
+  if (usuarioInstrutor() && !prefill?.reposicao) {
+    return toast('O perfil Instrutor pode reagendar aulas autorizadas, mas não criar aulas avulsas.');
+  }
   if (!alunos.length) return toast('Cadastre um aluno primeiro.');
   if (!instrutores.length || !veiculos.length || !locais.length) {
     toast('Cadastre pelo menos um instrutor, um veículo e um local em Configurações.');
@@ -1651,6 +1717,8 @@ function novaAula(prefill = null) {
   $('#aulaPlanId').value = '';
   $('#aulaReposicaoDeId').value = prefill?.reposicao_de_id || '';
   $('#aulaStatusOriginal').value = '';
+  ['#aAluno','#aInstrutor','#aVeiculo','#aLocal','#aData','#aHora','#aDur','#aUnidades','#aStatus','#aConfirmacao','#aObs']
+    .forEach(sel => { const el = $(sel); if (el) el.disabled = false; });
   $('#aAluno').disabled = false;
   const dataBase = prefill?.data || $('#filtroData').value || iso();
   $('#aData').value = prefill?.data ? dataBase : proximaDataFuncionamento(dataBase);
@@ -1711,7 +1779,21 @@ async function editarAula(id) {
       : '';
     $('#erroAula').classList.add('hide');
     $('#aplicarProximas').checked = false;
-    $('#serieBox').classList.toggle('hide', !a.plan_id);
+
+    if (usuarioInstrutor()) {
+      // O instrutor visualiza os dados da própria aula, mas altera somente situação e confirmação.
+      ['#aAluno','#aInstrutor','#aVeiculo','#aLocal','#aData','#aHora','#aDur','#aUnidades','#aObs']
+        .forEach(sel => { const el = $(sel); if (el) el.disabled = true; });
+      $('#aStatus').disabled = false;
+      $('#aConfirmacao').disabled = !['AGENDADA','CONFIRMADA'].includes(String(a.status || '').toUpperCase());
+      $('#serieBox').classList.add('hide');
+      $('#tituloAula').textContent = '📝 Atualizar status da aula';
+      $('#salvarAula').textContent = '💾 Salvar status';
+    } else {
+      ['#aAluno','#aInstrutor','#aVeiculo','#aLocal','#aData','#aHora','#aDur','#aUnidades','#aStatus','#aConfirmacao','#aObs']
+        .forEach(sel => { const el = $(sel); if (el) el.disabled = false; });
+      $('#serieBox').classList.toggle('hide', !a.plan_id);
+    }
     open('mAula');
   } catch (e) { toast(e.message); }
 }
@@ -1789,6 +1871,49 @@ $('#fAula').onsubmit = async e => {
   };
 
   try {
+    if (usuarioInstrutor() && id) {
+      const confirmacaoOriginal = confirmacaoStatusAula(aulaEdicaoAtual || {});
+      const statusMudou = String(payload.status || '') !== String(statusOriginal || '');
+      const confirmacaoMudou = String(payload.confirmacao_status || '') !== String(confirmacaoOriginal || '');
+
+      if (statusMudou) {
+        await api(`/api/aulas/${id}/status`, {
+          method:'PATCH',
+          body:JSON.stringify({ status: payload.status })
+        });
+      }
+
+      if (confirmacaoMudou && ['AGENDADA','CONFIRMADA'].includes(String(payload.status || '').toUpperCase())) {
+        await api(`/api/aulas/${id}/confirmacao`, {
+          method:'PATCH',
+          body:JSON.stringify({ confirmacao_status: payload.confirmacao_status })
+        });
+      }
+
+      const virouCancelada = String(statusOriginal).toUpperCase() !== 'CANCELADA'
+        && String(payload.status).toUpperCase() === 'CANCELADA';
+
+      close('mAula');
+      ['#aAluno','#aInstrutor','#aVeiculo','#aLocal','#aData','#aHora','#aDur','#aUnidades','#aStatus','#aConfirmacao','#aObs']
+        .forEach(sel => { const el = $(sel); if (el) el.disabled = false; });
+      await load();
+      toast('✅ Status da aula atualizado.');
+
+      if (virouCancelada) {
+        confirmar(
+          '↪️ Encontrar reposição?',
+          'A aula foi cancelada e permanece no histórico. Deseja procurar um novo horário para este aluno?',
+          () => reporAula(id),
+          'Procurar horários'
+        );
+      }
+      return;
+    }
+
+    if (usuarioInstrutor() && !id && !reposicaoDeId) {
+      throw new Error('O perfil Instrutor não pode criar aula avulsa.');
+    }
+
     let resposta = null;
     if (id && planId && $('#aplicarProximas').checked) {
       resposta = await api(`/api/aulas/${id}/serie`, { method: 'PUT', body: JSON.stringify(payload) });
@@ -2479,6 +2604,29 @@ function usuarioPerfilLabel(perfil) {
   return String(perfil || '').toUpperCase() === 'ADMIN' ? 'Administrador' : 'Instrutor';
 }
 
+function preencherInstrutoresUsuario(valor = null) {
+  const sel = $('#usuarioInstrutor');
+  if (!sel) return;
+  const atual = valor != null ? String(valor) : sel.value;
+  const opcoes = (configInstrutores || [])
+    .filter(i => i.ativo !== false || String(i.id) === atual)
+    .sort((a,b) => String(a.nome).localeCompare(String(b.nome), 'pt-BR'))
+    .map(i => `<option value="${Number(i.id)}">${esc(i.nome)}${i.ativo === false ? ' (inativo)' : ''}</option>`)
+    .join('');
+  sel.innerHTML = `<option value="">Selecione o instrutor</option>${opcoes}`;
+  if ([...sel.options].some(o => o.value === atual)) sel.value = atual;
+}
+
+function atualizarVinculoUsuario(valor = null) {
+  const instrutor = $('#usuarioPerfil')?.value === 'INSTRUTOR';
+  $('#usuarioInstrutorBox')?.classList.toggle('hide', !instrutor);
+  if ($('#usuarioInstrutor')) {
+    $('#usuarioInstrutor').required = instrutor;
+    preencherInstrutoresUsuario(valor);
+    if (!instrutor) $('#usuarioInstrutor').value = '';
+  }
+}
+
 function usuarioItemHtml(u) {
   const ativo = u.ativo !== false;
   const proprio = Number(u.id) === Number(usuarioAtual?.id);
@@ -2492,6 +2640,9 @@ function usuarioItemHtml(u) {
           ${!ativo ? '<span class="user-role inactive">Inativo</span>' : ''}
         </div>
         <p><b>Login:</b> ${esc(u.login)}${u.email ? ` · ${esc(u.email)}` : ''}</p>
+        ${String(u.perfil || '').toUpperCase() === 'INSTRUTOR'
+          ? `<small>👨‍🏫 Vinculado a: ${esc(u.instrutor_nome || 'nenhum instrutor — acesso operacional bloqueado')}</small>`
+          : '<small>🔑 Acesso administrativo completo</small>'}
         <small>Último acesso: ${u.ultimo_login_em ? new Date(u.ultimo_login_em).toLocaleString('pt-BR') : 'ainda não acessou'}</small>
       </div>
       <div class="actions-row">
@@ -2534,6 +2685,7 @@ function novoUsuario() {
   $('#usuarioId').value = '';
   $('#tituloUsuario').textContent = 'Novo usuário';
   $('#usuarioPerfil').value = 'INSTRUTOR';
+  atualizarVinculoUsuario();
   $('#usuarioSenha').required = true;
   $('#usuarioSenha2').required = true;
   $('#usuarioSenhaAjuda').textContent = 'Obrigatória no novo usuário. Deve conter pelo menos uma letra e um número.';
@@ -2551,6 +2703,7 @@ function editarUsuario(id) {
   $('#usuarioLogin').value = u.login || '';
   $('#usuarioEmail').value = u.email || '';
   $('#usuarioPerfil').value = u.perfil || 'INSTRUTOR';
+  atualizarVinculoUsuario(u.instrutor_id || '');
   $('#usuarioSenha').required = false;
   $('#usuarioSenha2').required = false;
   $('#usuarioSenhaAjuda').textContent = 'Deixe em branco para manter a senha atual. Ao trocar, use pelo menos uma letra e um número.';
@@ -2711,6 +2864,7 @@ $('#fLogin').onsubmit = async e => {
 };
 $('#sairSessao').onclick = sairSessao;
 $('#novoUsuario').onclick = novoUsuario;
+$('#usuarioPerfil').onchange = () => atualizarVinculoUsuario();
 
 $('#fUsuario').onsubmit = async e => {
   e.preventDefault();
@@ -2730,6 +2884,7 @@ $('#fUsuario').onsubmit = async e => {
     login: $('#usuarioLogin').value.trim(),
     email: $('#usuarioEmail').value.trim(),
     perfil: $('#usuarioPerfil').value,
+    instrutor_id: $('#usuarioPerfil').value === 'INSTRUTOR' ? Number($('#usuarioInstrutor').value || 0) : null,
     senha
   };
 

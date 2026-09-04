@@ -1,4 +1,4 @@
--- AutoAgenda V3.0.0
+-- AutoAgenda V3.1.0
 -- Schema compatível com o server.js atual.
 -- O servidor cria/migra automaticamente; este arquivo serve para referência e execução manual controlada.
 
@@ -59,6 +59,28 @@ CREATE TABLE IF NOT EXISTS autoagenda.instrutores (
   criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
   atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+-- V3.1 — vínculo opcional entre usuário e cadastro operacional do instrutor.
+ALTER TABLE autoagenda.usuarios
+ADD COLUMN IF NOT EXISTS instrutor_id INTEGER;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conname = 'fk_autoagenda_usuarios_instrutor'
+      AND conrelid = 'autoagenda.usuarios'::regclass
+  ) THEN
+    ALTER TABLE autoagenda.usuarios
+    ADD CONSTRAINT fk_autoagenda_usuarios_instrutor
+    FOREIGN KEY (instrutor_id) REFERENCES autoagenda.instrutores(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS ux_autoagenda_usuarios_instrutor
+ON autoagenda.usuarios(instrutor_id)
+WHERE instrutor_id IS NOT NULL AND perfil = 'INSTRUTOR';
 
 CREATE TABLE IF NOT EXISTS autoagenda.instrutor_indisponibilidades (
   id SERIAL PRIMARY KEY,

@@ -8,7 +8,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '3.0.0';
+const APP_VERSION = '3.1.0';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -202,9 +202,11 @@ async function autenticarSessao(req) {
     SELECT
       s.id AS sessao_id,
       s.expira_em,
-      u.id, u.nome, u.login, u.email, u.perfil, u.ativo
+      u.id, u.nome, u.login, u.email, u.perfil, u.ativo, u.instrutor_id,
+      i.nome AS instrutor_nome
     FROM autoagenda.sessoes s
     JOIN autoagenda.usuarios u ON u.id = s.usuario_id
+    LEFT JOIN autoagenda.instrutores i ON i.id = u.instrutor_id
     WHERE s.token_hash = $1
       AND s.revogada_em IS NULL
       AND s.expira_em > NOW()
@@ -228,7 +230,9 @@ async function autenticarSessao(req) {
     login: sessao.login,
     email: sessao.email,
     perfil: sessao.perfil,
-    ativo: sessao.ativo
+    ativo: sessao.ativo,
+    instrutor_id: sessao.instrutor_id ? Number(sessao.instrutor_id) : null,
+    instrutor_nome: sessao.instrutor_nome || null
   };
 }
 
@@ -323,7 +327,9 @@ app.get('/api/auth/status', async (req, res) => {
         nome: usuario.nome,
         login: usuario.login,
         email: usuario.email,
-        perfil: usuario.perfil
+        perfil: usuario.perfil,
+        instrutor_id: usuario.instrutor_id,
+        instrutor_nome: usuario.instrutor_nome
       }
     });
   } catch (error) {
@@ -352,9 +358,11 @@ app.post('/api/auth/login', async (req, res) => {
 
   try {
     const q = await query(`
-      SELECT id, nome, login, email, senha_hash, perfil, ativo
-      FROM autoagenda.usuarios
-      WHERE LOWER(login) = LOWER($1)
+      SELECT u.id, u.nome, u.login, u.email, u.senha_hash, u.perfil, u.ativo,
+             u.instrutor_id, i.nome AS instrutor_nome
+      FROM autoagenda.usuarios u
+      LEFT JOIN autoagenda.instrutores i ON i.id = u.instrutor_id
+      WHERE LOWER(u.login) = LOWER($1)
       LIMIT 1
     `, [login]);
 
@@ -406,7 +414,9 @@ app.post('/api/auth/login', async (req, res) => {
         nome: usuario.nome,
         login: usuario.login,
         email: usuario.email,
-        perfil: usuario.perfil
+        perfil: usuario.perfil,
+        instrutor_id: usuario.instrutor_id ? Number(usuario.instrutor_id) : null,
+        instrutor_nome: usuario.instrutor_nome || null
       }
     });
   } catch (error) {
@@ -435,9 +445,12 @@ app.post('/api/auth/logout', async (req, res) => {
 app.get('/api/usuarios', exigirAdmin, async (req, res) => {
   try {
     const r = await query(`
-      SELECT id, nome, login, email, perfil, ativo, ultimo_login_em, criado_em, atualizado_em
-      FROM autoagenda.usuarios
-      ORDER BY ativo DESC, nome, login
+      SELECT u.id, u.nome, u.login, u.email, u.perfil, u.ativo,
+             u.instrutor_id, i.nome AS instrutor_nome,
+             u.ultimo_login_em, u.criado_em, u.atualizado_em
+      FROM autoagenda.usuarios u
+      LEFT JOIN autoagenda.instrutores i ON i.id = u.instrutor_id
+      ORDER BY u.ativo DESC, u.nome, u.login
     `);
     res.json(r.rows);
   } catch (error) {
@@ -452,28 +465,58 @@ app.post('/api/usuarios', exigirAdmin, async (req, res) => {
   const email = String(req.body?.email || '').trim().toLowerCase() || null;
   const perfil = perfilUsuario(req.body?.perfil);
   const senha = String(req.body?.senha || '');
+  const instrutorId = perfil === 'INSTRUTOR' ? Number(req.body?.instrutor_id) : null;
 
   if (nome.length < 2 || nome.length > 150) return res.status(400).json({ error: 'Informe um nome válido.' });
   if (!validarLoginUsuario(login)) return res.status(400).json({ error: 'Login inválido. Use 3 a 60 caracteres: letras, números, ponto, hífen ou sublinhado.' });
   if (!perfil) return res.status(400).json({ error: 'Perfil inválido.' });
+  if (perfil === 'INSTRUTOR' && (!Number.isInteger(instrutorId) || instrutorId < 1)) {
+    return res.status(400).json({ error: 'Selecione o instrutor vinculado a esta conta.' });
+  }
   const erroSenha = validarSenhaNova(senha);
   if (erroSenha) return res.status(400).json({ error: erroSenha });
   if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'E-mail inválido.' });
 
+  const client = await pool.connect();
   try {
+    await client.query('BEGIN');
+    if (perfil === 'INSTRUTOR') {
+      const iq = await client.query('SELECT id, ativo FROM autoagenda.instrutores WHERE id=$1 FOR SHARE', [instrutorId]);
+      if (!iq.rowCount) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Instrutor vinculado não encontrado.' });
+      }
+      if (iq.rows[0].ativo === false) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'O instrutor vinculado está inativo.' });
+      }
+    }
+
     const senhaHash = await criarHashSenha(senha);
-    const r = await query(`
-      INSERT INTO autoagenda.usuarios (nome, login, email, senha_hash, perfil, ativo)
-      VALUES ($1,$2,$3,$4,$5,TRUE)
-      RETURNING id, nome, login, email, perfil, ativo, ultimo_login_em, criado_em, atualizado_em
-    `, [nome, login, email, senhaHash, perfil]);
-    res.status(201).json(r.rows[0]);
+    const r = await client.query(`
+      INSERT INTO autoagenda.usuarios (nome, login, email, senha_hash, perfil, instrutor_id, ativo)
+      VALUES ($1,$2,$3,$4,$5,$6,TRUE)
+      RETURNING id, nome, login, email, perfil, instrutor_id, ativo, ultimo_login_em, criado_em, atualizado_em
+    `, [nome, login, email, senhaHash, perfil, instrutorId]);
+    await client.query('COMMIT');
+
+    const usuario = r.rows[0];
+    if (usuario.instrutor_id) {
+      const iq = await query('SELECT nome FROM autoagenda.instrutores WHERE id=$1', [usuario.instrutor_id]);
+      usuario.instrutor_nome = iq.rows[0]?.nome || null;
+    } else {
+      usuario.instrutor_nome = null;
+    }
+    res.status(201).json(usuario);
   } catch (error) {
+    try { await client.query('ROLLBACK'); } catch {}
     if (error.code === '23505') {
-      return res.status(409).json({ error: 'Já existe usuário com este login ou e-mail.' });
+      return res.status(409).json({ error: 'Já existe usuário com este login, e-mail ou instrutor vinculado.' });
     }
     console.error('Erro ao criar usuário:', error);
     res.status(500).json({ error: 'Erro ao criar usuário.' });
+  } finally {
+    client.release();
   }
 });
 
@@ -484,11 +527,15 @@ app.put('/api/usuarios/:id', exigirAdmin, async (req, res) => {
   const email = String(req.body?.email || '').trim().toLowerCase() || null;
   const perfil = perfilUsuario(req.body?.perfil);
   const senha = String(req.body?.senha || '');
+  const instrutorId = perfil === 'INSTRUTOR' ? Number(req.body?.instrutor_id) : null;
 
   if (!Number.isInteger(id) || id <= 0) return res.status(400).json({ error: 'Usuário inválido.' });
   if (nome.length < 2 || nome.length > 150) return res.status(400).json({ error: 'Informe um nome válido.' });
   if (!validarLoginUsuario(login)) return res.status(400).json({ error: 'Login inválido. Use 3 a 60 caracteres: letras, números, ponto, hífen ou sublinhado.' });
   if (!perfil) return res.status(400).json({ error: 'Perfil inválido.' });
+  if (perfil === 'INSTRUTOR' && (!Number.isInteger(instrutorId) || instrutorId < 1)) {
+    return res.status(400).json({ error: 'Selecione o instrutor vinculado a esta conta.' });
+  }
   if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: 'E-mail inválido.' });
   if (senha) {
     const erroSenha = validarSenhaNova(senha);
@@ -499,7 +546,7 @@ app.put('/api/usuarios/:id', exigirAdmin, async (req, res) => {
   try {
     await client.query('BEGIN');
     const atualQ = await client.query(`
-      SELECT id, nome, login, perfil, ativo
+      SELECT id, nome, login, perfil, instrutor_id, ativo
       FROM autoagenda.usuarios
       WHERE id = $1
       FOR UPDATE
@@ -522,6 +569,18 @@ app.put('/api/usuarios/:id', exigirAdmin, async (req, res) => {
       }
     }
 
+    if (perfil === 'INSTRUTOR') {
+      const iq = await client.query('SELECT id, ativo FROM autoagenda.instrutores WHERE id=$1 FOR SHARE', [instrutorId]);
+      if (!iq.rowCount) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Instrutor vinculado não encontrado.' });
+      }
+      if (iq.rows[0].ativo === false) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'O instrutor vinculado está inativo.' });
+      }
+    }
+
     const senhaHash = senha ? await criarHashSenha(senha) : null;
     const r = await client.query(`
       UPDATE autoagenda.usuarios
@@ -529,13 +588,14 @@ app.put('/api/usuarios/:id', exigirAdmin, async (req, res) => {
           login = $2,
           email = $3,
           perfil = $4,
-          senha_hash = COALESCE($5, senha_hash),
+          instrutor_id = $5,
+          senha_hash = COALESCE($6, senha_hash),
           atualizado_em = NOW()
-      WHERE id = $6
-      RETURNING id, nome, login, email, perfil, ativo, ultimo_login_em, criado_em, atualizado_em
-    `, [nome, login, email, perfil, senhaHash, id]);
+      WHERE id = $7
+      RETURNING id, nome, login, email, perfil, instrutor_id, ativo, ultimo_login_em, criado_em, atualizado_em
+    `, [nome, login, email, perfil, instrutorId, senhaHash, id]);
 
-    if (senha) {
+    if (senha || perfil !== atual.perfil || Number(instrutorId || 0) !== Number(atual.instrutor_id || 0)) {
       await client.query(`
         UPDATE autoagenda.sessoes
         SET revogada_em = NOW()
@@ -546,11 +606,19 @@ app.put('/api/usuarios/:id', exigirAdmin, async (req, res) => {
     }
 
     await client.query('COMMIT');
-    res.json(r.rows[0]);
+
+    const usuario = r.rows[0];
+    if (usuario.instrutor_id) {
+      const iq = await query('SELECT nome FROM autoagenda.instrutores WHERE id=$1', [usuario.instrutor_id]);
+      usuario.instrutor_nome = iq.rows[0]?.nome || null;
+    } else {
+      usuario.instrutor_nome = null;
+    }
+    res.json(usuario);
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
     if (error.code === '23505') {
-      return res.status(409).json({ error: 'Já existe usuário com este login ou e-mail.' });
+      return res.status(409).json({ error: 'Já existe usuário com este login, e-mail ou instrutor vinculado.' });
     }
     console.error('Erro ao atualizar usuário:', error);
     res.status(500).json({ error: 'Erro ao atualizar usuário.' });
@@ -598,7 +666,7 @@ app.patch('/api/usuarios/:id/situacao', exigirAdmin, async (req, res) => {
       UPDATE autoagenda.usuarios
       SET ativo = $1, atualizado_em = NOW()
       WHERE id = $2
-      RETURNING id, nome, login, email, perfil, ativo, ultimo_login_em, criado_em, atualizado_em
+      RETURNING id, nome, login, email, perfil, instrutor_id, ativo, ultimo_login_em, criado_em, atualizado_em
     `, [ativo, id]);
 
     if (!ativo) {
@@ -696,6 +764,30 @@ async function initDatabase() {
         criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
         atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
       )
+    `);
+
+    // V3.1 — vínculo entre a conta de login e o cadastro operacional do instrutor.
+    // A coluna é adicionada somente depois da tabela de instrutores existir, mantendo migração segura.
+    await client.query(`ALTER TABLE autoagenda.usuarios ADD COLUMN IF NOT EXISTS instrutor_id INTEGER`);
+    await client.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conname = 'fk_autoagenda_usuarios_instrutor'
+            AND conrelid = 'autoagenda.usuarios'::regclass
+        ) THEN
+          ALTER TABLE autoagenda.usuarios
+          ADD CONSTRAINT fk_autoagenda_usuarios_instrutor
+          FOREIGN KEY (instrutor_id) REFERENCES autoagenda.instrutores(id) ON DELETE SET NULL;
+        END IF;
+      END $$;
+    `);
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_autoagenda_usuarios_instrutor
+      ON autoagenda.usuarios(instrutor_id)
+      WHERE instrutor_id IS NOT NULL AND perfil = 'INSTRUTOR'
     `);
 
     await client.query(`
@@ -1097,6 +1189,69 @@ app.get('/api/health', async (req, res) => {
     console.error(error);
     res.status(500).json({ ok: false, database: false, error: 'Falha ao conectar ao banco.' });
   }
+});
+
+// ========================= V3.1 — NÍVEIS DE ACESSO =========================
+function instrutorIdDaSessao(req) {
+  if (req.usuario?.perfil !== 'INSTRUTOR') return 0;
+  const id = Number(req.usuario?.instrutor_id || 0);
+  return Number.isInteger(id) && id > 0 ? id : 0;
+}
+
+function usuarioEhAdmin(req) {
+  return req.usuario?.perfil === 'ADMIN';
+}
+
+
+function rotaPermitidaAoInstrutor(req) {
+  const metodo = String(req.method || 'GET').toUpperCase();
+  const caminho = req.path;
+
+  if (metodo === 'GET') {
+    return caminho === '/api/alunos'
+      || /^\/api\/alunos\/\d+$/.test(caminho)
+      || /^\/api\/alunos\/\d+\/historico$/.test(caminho)
+      || caminho === '/api/instrutores'
+      || caminho === '/api/veiculos'
+      || caminho === '/api/locais'
+      || caminho === '/api/configuracoes/funcionamento'
+      || caminho === '/api/horarios-livres'
+      || caminho === '/api/aulas'
+      || /^\/api\/aulas\/\d+$/.test(caminho);
+  }
+
+  if (metodo === 'PATCH') {
+    return /^\/api\/aulas\/\d+\/(status|confirmacao)$/.test(caminho);
+  }
+
+  if (metodo === 'POST') {
+    return /^\/api\/aulas\/\d+\/reposicao$/.test(caminho);
+  }
+
+  return false;
+}
+
+// Permissões são aplicadas no backend; esconder botões no frontend é apenas uma camada de UX.
+// Administrador continua com acesso integral. Instrutor só alcança as rotas operacionais previstas.
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api/')) return next();
+  if (usuarioEhAdmin(req)) return next();
+  if (req.usuario?.perfil !== 'INSTRUTOR') {
+    return res.status(403).json({ error: 'Perfil sem permissão para esta operação.' });
+  }
+
+  const instrutorId = instrutorIdDaSessao(req);
+  if (!instrutorId) {
+    return res.status(403).json({
+      error: 'Esta conta de instrutor ainda não está vinculada a um cadastro de instrutor. Peça ao administrador para realizar o vínculo.',
+      instructor_link_required: true
+    });
+  }
+
+  if (!rotaPermitidaAoInstrutor(req)) {
+    return res.status(403).json({ error: 'Seu perfil de instrutor não possui permissão para este módulo ou operação.' });
+  }
+  next();
 });
 
 // ========================= UTILITÁRIOS =========================
@@ -1904,7 +2059,8 @@ async function desativarAlunoComHistorico(client, id) {
 
 app.get('/api/alunos', async (req, res) => {
   try {
-    const mostrarTodos = incluirInativos(req);
+    const instrutorEscopo = instrutorIdDaSessao(req);
+    const mostrarTodos = usuarioEhAdmin(req) ? incluirInativos(req) : false;
     const result = await query(`
       SELECT a.id, a.nome, a.whatsapp, a.email, a.categoria,
              a.aulas_contratadas, a.aulas_realizadas,
@@ -1933,8 +2089,14 @@ app.get('/api/alunos', async (req, res) => {
              ), 0)::int AS aulas_agendadas
       FROM autoagenda.alunos a
       WHERE ($2::boolean = TRUE OR a.ativo = TRUE)
+        AND ($3::int = 0 OR EXISTS (
+          SELECT 1
+          FROM autoagenda.aulas rel
+          WHERE rel.aluno_id = a.id
+            AND rel.instrutor_id = $3
+        ))
       ORDER BY a.ativo DESC, a.nome
-    `, [hojeApp(), mostrarTodos]);
+    `, [hojeApp(), mostrarTodos, instrutorEscopo]);
     res.json(result.rows);
   } catch (error) {
     console.error(error);
@@ -1946,13 +2108,18 @@ app.get('/api/alunos', async (req, res) => {
 app.get('/api/alunos/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
+    const instrutorEscopo = instrutorIdDaSessao(req);
     const result = await query(`
-      SELECT id, nome, cpf, whatsapp, email, categoria,
-             aulas_contratadas, aulas_realizadas, aulas_realizadas_anteriores,
-             observacoes, ativo, criado_em, atualizado_em
-      FROM autoagenda.alunos
-      WHERE id = $1
-    `, [id]);
+      SELECT a.id, a.nome, a.cpf, a.whatsapp, a.email, a.categoria,
+             a.aulas_contratadas, a.aulas_realizadas, a.aulas_realizadas_anteriores,
+             a.observacoes, a.ativo, a.criado_em, a.atualizado_em
+      FROM autoagenda.alunos a
+      WHERE a.id = $1
+        AND ($2::int = 0 OR EXISTS (
+          SELECT 1 FROM autoagenda.aulas rel
+          WHERE rel.aluno_id = a.id AND rel.instrutor_id = $2
+        ))
+    `, [id, instrutorEscopo]);
     if (!result.rowCount) return res.status(404).json({ error: 'Aluno não encontrado.' });
     res.json(result.rows[0]);
   } catch (error) {
@@ -1967,6 +2134,7 @@ app.get('/api/alunos/:id', async (req, res) => {
 app.get('/api/alunos/:id/historico', async (req, res) => {
   try {
     const id = Number(req.params.id);
+    const instrutorEscopo = instrutorIdDaSessao(req);
     if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: 'Aluno inválido.' });
 
     const alunoQ = await query(`
@@ -1976,9 +2144,13 @@ app.get('/api/alunos/:id/historico', async (req, res) => {
              CASE WHEN LENGTH(COALESCE(cpf,'')) = 11
                   THEN '***.***.***-' || RIGHT(cpf, 2)
                   ELSE NULL END AS cpf_mascarado
-      FROM autoagenda.alunos
-      WHERE id = $1
-    `, [id]);
+      FROM autoagenda.alunos al
+      WHERE al.id = $1
+        AND ($2::int = 0 OR EXISTS (
+          SELECT 1 FROM autoagenda.aulas rel
+          WHERE rel.aluno_id = al.id AND rel.instrutor_id = $2
+        ))
+    `, [id, instrutorEscopo]);
     if (!alunoQ.rowCount) return res.status(404).json({ error: 'Aluno não encontrado.' });
 
     const hoje = hojeApp();
@@ -2001,7 +2173,8 @@ app.get('/api/alunos/:id/historico', async (req, res) => {
           MAX(data_aula) FILTER (WHERE status='REALIZADA') AS ultima_realizada
         FROM autoagenda.aulas
         WHERE aluno_id=$1
-      `, [id, hoje]),
+          AND ($3::int = 0 OR instrutor_id=$3)
+      `, [id, hoje, instrutorEscopo]),
       query(`
         SELECT a.id, a.data_aula, a.hora_inicio, a.duracao_minutos,
                a.status, a.confirmacao_status, a.confirmacao_origem, a.confirmacao_atualizada_em,
@@ -2023,8 +2196,9 @@ app.get('/api/alunos/:id/historico', async (req, res) => {
         JOIN autoagenda.locais l ON l.id=a.local_id
         LEFT JOIN autoagenda.aulas origem ON origem.id=a.reposicao_de_id
         WHERE a.aluno_id=$1
+          AND ($2::int = 0 OR a.instrutor_id=$2)
         ORDER BY a.data_aula DESC, a.hora_inicio DESC, a.id DESC
-      `, [id]),
+      `, [id, instrutorEscopo]),
       query(`
         SELECT p.id, p.data_inicio, p.hora_inicio, p.duracao_base_minutos,
                p.aulas_por_encontro, p.total_aulas, p.dias_semana,
@@ -2039,8 +2213,9 @@ app.get('/api/alunos/:id/historico', async (req, res) => {
         JOIN autoagenda.veiculos v ON v.id=p.veiculo_id
         JOIN autoagenda.locais l ON l.id=p.local_id
         WHERE p.aluno_id=$1
+          AND ($2::int = 0 OR p.instrutor_id=$2)
         ORDER BY p.criado_em DESC, p.id DESC
-      `, [id])
+      `, [id, instrutorEscopo])
     ]);
 
     const aluno = alunoQ.rows[0];
@@ -2654,7 +2829,8 @@ app.patch('/api/aulas/:id/lembretes/:tipo', async (req, res) => {
 // ---------- Instrutores ----------
 app.get('/api/instrutores', async (req, res) => {
   try {
-    const mostrarTodos = incluirInativos(req);
+    const instrutorEscopo = instrutorIdDaSessao(req);
+    const mostrarTodos = usuarioEhAdmin(req) ? incluirInativos(req) : false;
     const result = await query(`
       SELECT i.id, i.nome, i.whatsapp, i.email, i.categorias, i.ativo,
              i.disponibilidade_personalizada,
@@ -2674,8 +2850,9 @@ app.get('/api/instrutores', async (req, res) => {
              ),0)::int AS indisponibilidades_futuras
       FROM autoagenda.instrutores i
       WHERE ($2::boolean = TRUE OR i.ativo = TRUE)
+        AND ($3::int = 0 OR i.id = $3)
       ORDER BY i.ativo DESC, i.nome
-    `, [hojeApp(), mostrarTodos]);
+    `, [hojeApp(), mostrarTodos, instrutorEscopo]);
     res.json(result.rows.map(normalizarInstrutorDisponibilidadeRow));
   } catch (error) {
     console.error(error);
@@ -2881,7 +3058,7 @@ app.delete('/api/instrutores/:id/permanente', async (req, res) => {
 // ---------- Veículos ----------
 app.get('/api/veiculos', async (req, res) => {
   try {
-    const mostrarTodos = incluirInativos(req);
+    const mostrarTodos = usuarioEhAdmin(req) ? incluirInativos(req) : false;
     const result = await query(`
       SELECT v.id, v.nome, v.placa, v.categoria, v.ativo,
              UPPER(COALESCE(v.situacao,'DISPONIVEL')) AS situacao,
@@ -3093,7 +3270,7 @@ app.delete('/api/veiculos/:id/permanente', async (req, res) => {
 // ---------- Locais ----------
 app.get('/api/locais', async (req, res) => {
   try {
-    const mostrarTodos = incluirInativos(req);
+    const mostrarTodos = usuarioEhAdmin(req) ? incluirInativos(req) : false;
     const result = await query(`
       SELECT l.id, l.nome, l.endereco, l.ativo,
              COALESCE((SELECT COUNT(*) FROM autoagenda.planos_aula p WHERE p.local_id=l.id AND p.ativo=TRUE),0)::int AS planos_ativos,
@@ -3198,7 +3375,8 @@ app.get('/api/horarios-livres', async (req, res) => {
   const client = await pool.connect();
   try {
     const alunoId = Number(req.query.aluno_id);
-    const instrutorId = Number(req.query.instrutor_id);
+    const instrutorEscopo = instrutorIdDaSessao(req);
+    const instrutorId = instrutorEscopo || Number(req.query.instrutor_id);
     const veiculoId = Number(req.query.veiculo_id);
     const localId = Number(req.query.local_id);
     const dataInicioSolicitada = String(req.query.data_inicio || hojeApp()).slice(0, 10);
@@ -3212,6 +3390,16 @@ app.get('/api/horarios-livres', async (req, res) => {
       throw erroHttp(400, 'Informe aluno, instrutor, veículo e local para procurar horários livres.');
     }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dataInicioSolicitada)) throw erroHttp(400, 'Data inicial inválida.');
+
+    if (instrutorEscopo) {
+      const rel = await client.query(`
+        SELECT 1
+        FROM autoagenda.aulas
+        WHERE aluno_id=$1 AND instrutor_id=$2
+        LIMIT 1
+      `, [alunoId, instrutorEscopo]);
+      if (!rel.rowCount) throw erroHttp(403, 'Este aluno não está relacionado às suas aulas.');
+    }
 
     await validarRecursosAtivos(client, { aluno_id: alunoId, instrutor_id: instrutorId, veiculo_id: veiculoId, local_id: localId });
     const saldo = await saldoAluno(client, alunoId);
@@ -4511,8 +4699,12 @@ function normalizarConfirmacaoStatus(valor, fallback = 'AGUARDANDO') {
 app.get('/whatsapp/aula/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
+    const instrutorEscopo = instrutorIdDaSessao(req);
     if (!Number.isInteger(id) || id < 1) {
       return res.status(400).type('text/plain; charset=utf-8').send('Aula inválida.');
+    }
+    if (req.usuario?.perfil === 'INSTRUTOR' && !instrutorEscopo) {
+      return res.status(403).type('text/plain; charset=utf-8').send('Conta de instrutor sem vínculo operacional.');
     }
 
     const result = await query(`
@@ -4530,7 +4722,8 @@ app.get('/whatsapp/aula/:id', async (req, res) => {
       LEFT JOIN autoagenda.veiculos v ON v.id = a.veiculo_id
       LEFT JOIN autoagenda.locais l ON l.id = a.local_id
       WHERE a.id = $1
-    `, [id]);
+        AND ($2::int = 0 OR a.instrutor_id = $2)
+    `, [id, instrutorEscopo]);
 
     if (!result.rowCount) {
       return res.status(404).type('text/plain; charset=utf-8').send('Aula não encontrada.');
@@ -4567,6 +4760,9 @@ app.get('/whatsapp/aula/:id', async (req, res) => {
 
 app.get('/whatsapp/plano/:id', async (req, res) => {
   try {
+    if (req.usuario?.perfil === 'INSTRUTOR') {
+      return res.status(403).type('text/plain; charset=utf-8').send('O envio do plano completo é restrito ao administrador.');
+    }
     const id = Number(req.params.id);
     if (!Number.isInteger(id) || id < 1) {
       return res.status(400).type('text/plain; charset=utf-8').send('Plano inválido.');
@@ -4656,9 +4852,15 @@ app.get('/whatsapp/plano/:id', async (req, res) => {
 app.get('/api/aulas', async (req, res) => {
   try {
     const { data_inicio, data_fim } = req.query;
-    const incluirArquivadas = ['1','true','sim'].includes(String(req.query?.incluir_arquivadas || '').toLowerCase());
+    const instrutorEscopo = instrutorIdDaSessao(req);
+    const incluirArquivadas = usuarioEhAdmin(req)
+      && ['1','true','sim'].includes(String(req.query?.incluir_arquivadas || '').toLowerCase());
     const params = [];
     const condicoes = [];
+    if (instrutorEscopo) {
+      params.push(instrutorEscopo);
+      condicoes.push(`a.instrutor_id = $${params.length}`);
+    }
     if (!incluirArquivadas) condicoes.push('a.arquivada = FALSE');
     if (data_inicio && data_fim) {
       params.push(data_inicio, data_fim);
@@ -4703,6 +4905,7 @@ app.get('/api/aulas', async (req, res) => {
 app.get('/api/aulas/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
+    const instrutorEscopo = instrutorIdDaSessao(req);
     const r = await query(`
       SELECT a.*, al.nome AS aluno_nome,
              i.nome AS instrutor_nome, v.nome AS veiculo_nome, v.placa AS veiculo_placa,
@@ -4723,7 +4926,8 @@ app.get('/api/aulas/:id', async (req, res) => {
       JOIN autoagenda.locais l ON l.id=a.local_id
       LEFT JOIN autoagenda.aulas origem ON origem.id=a.reposicao_de_id
       WHERE a.id=$1
-    `, [id]);
+        AND ($2::int = 0 OR a.instrutor_id=$2)
+    `, [id, instrutorEscopo]);
     if (!r.rowCount) return res.status(404).json({ error:'Aula não encontrada.' });
     res.json(r.rows[0]);
   } catch (error) {
@@ -4795,15 +4999,22 @@ app.post('/api/aulas/:id/reposicao', async (req, res) => {
   const client = await pool.connect();
   try {
     const origemId = Number(req.params.id);
+    const instrutorEscopo = instrutorIdDaSessao(req);
     const { instrutor_id, veiculo_id, local_id, data_aula, hora_inicio,
             duracao_minutos = null, aulas_unidades = null, observacoes = '' } = req.body || {};
+    const instrutorIdFinal = instrutorEscopo || Number(instrutor_id);
     if (!Number.isInteger(origemId) || origemId < 1) throw erroHttp(400, 'Aula original inválida.');
-    if (!instrutor_id || !veiculo_id || !local_id || !data_aula || !hora_inicio) {
+    if (!instrutorIdFinal || !veiculo_id || !local_id || !data_aula || !hora_inicio) {
       throw erroHttp(400, 'Preencha instrutor, veículo, local, data e horário da reposição.');
     }
 
     await client.query('BEGIN');
-    const origemQ = await client.query('SELECT * FROM autoagenda.aulas WHERE id=$1 FOR UPDATE', [origemId]);
+    const origemQ = await client.query(
+      `SELECT * FROM autoagenda.aulas
+       WHERE id=$1 AND ($2::int=0 OR instrutor_id=$2)
+       FOR UPDATE`,
+      [origemId, instrutorEscopo]
+    );
     if (!origemQ.rowCount) throw erroHttp(404, 'Aula original não encontrada.');
     const origem = origemQ.rows[0];
     if (String(origem.status || '').toUpperCase() !== 'CANCELADA') {
@@ -4832,7 +5043,7 @@ app.post('/api/aulas/:id/reposicao', async (req, res) => {
 
     const dados = {
       aluno_id: Number(origem.aluno_id),
-      instrutor_id: Number(instrutor_id),
+      instrutor_id: Number(instrutorIdFinal),
       veiculo_id: Number(veiculo_id),
       data_aula,
       hora_inicio,
@@ -4841,12 +5052,12 @@ app.post('/api/aulas/:id/reposicao', async (req, res) => {
     await bloquearChavesTransacao(client, chavesAgenda(dados));
     await validarRecursosAtivos(client, {
       aluno_id: Number(origem.aluno_id),
-      instrutor_id: Number(instrutor_id),
+      instrutor_id: Number(instrutorIdFinal),
       veiculo_id: Number(veiculo_id),
       local_id: Number(local_id)
     });
     await validarHorarioFuncionamento(client, dados, config);
-    await validarDisponibilidadeInstrutor(client, Number(instrutor_id), dados, config);
+    await validarDisponibilidadeInstrutor(client, Number(instrutorIdFinal), dados, config);
     await validarDisponibilidadeVeiculo(client, Number(veiculo_id), dados);
     await validarSaldoAula(client, {
       aluno_id: Number(origem.aluno_id),
@@ -4872,7 +5083,7 @@ app.post('/api/aulas/:id/reposicao', async (req, res) => {
       VALUES ($1,$2,$3,$4,$5,$6,$7,'AGENDADA',$8,$9,FALSE,$10)
       RETURNING *
     `, [
-      Number(origem.aluno_id), Number(instrutor_id), Number(veiculo_id), Number(local_id),
+      Number(origem.aluno_id), Number(instrutorIdFinal), Number(veiculo_id), Number(local_id),
       data_aula, String(hora_inicio).slice(0,5), duracaoFinal, observacoesFinal, unidadesFinal, origemId
     ]);
 
@@ -5151,7 +5362,11 @@ app.patch('/api/aulas/:id/confirmacao', async (req, res) => {
     if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error:'Aula inválida.' });
     if (!confirmacao) return res.status(400).json({ error:'Status de confirmação inválido.' });
     await client.query('BEGIN');
-    const atual = await client.query('SELECT * FROM autoagenda.aulas WHERE id=$1 FOR UPDATE',[id]);
+    const instrutorEscopo = instrutorIdDaSessao(req);
+    const atual = await client.query(
+      `SELECT * FROM autoagenda.aulas WHERE id=$1 AND ($2::int=0 OR instrutor_id=$2) FOR UPDATE`,
+      [id, instrutorEscopo]
+    );
     if (!atual.rowCount) { await client.query('ROLLBACK'); return res.status(404).json({ error:'Aula não encontrada.' }); }
     const aula = atual.rows[0];
     if (aula.arquivada) { await client.query('ROLLBACK'); return res.status(409).json({ error:'Aula arquivada não pode ter a confirmação alterada.' }); }
@@ -5182,7 +5397,11 @@ app.patch('/api/aulas/:id/status', async (req, res) => {
     if (!permitidos.includes(status)) return res.status(400).json({ error:'Status inválido.' });
 
     await client.query('BEGIN');
-    const q=await client.query('SELECT * FROM autoagenda.aulas WHERE id=$1 FOR UPDATE',[id]);
+    const instrutorEscopo = instrutorIdDaSessao(req);
+    const q=await client.query(
+      `SELECT * FROM autoagenda.aulas WHERE id=$1 AND ($2::int=0 OR instrutor_id=$2) FOR UPDATE`,
+      [id, instrutorEscopo]
+    );
     if (!q.rowCount) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error:'Aula não encontrada.' });
