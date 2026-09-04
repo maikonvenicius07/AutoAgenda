@@ -156,3 +156,104 @@ nav{grid-template-columns:repeat(6,1fr)}
 @media(max-width:800px){.history-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.history-plan{flex-direction:column}.history-plan-side{justify-items:start}.history-event{grid-template-columns:94px 1fr}}
 @media(max-width:520px){.history-summary{grid-template-columns:1fr 1fr}.history-heading{flex-direction:column}.history-event{grid-template-columns:1fr}.history-date{border-right:0;border-bottom:1px solid #ececea;padding:0 0 7px;grid-template-columns:1fr auto;align-items:center}.history-event-title{align-items:flex-start;flex-direction:column}}
 
+/* ========================= V2.3.6 — MODO ESCURO ========================= */
+html[data-theme="dark"]{color-scheme:dark;--muted:#b7b7b7;--border:#3b3b3b;--green:#59c77e;--blue:#7fb0ef}
+html[data-theme="dark"] body{background:#101010;color:#f2f2f2}
+html[data-theme="dark"] header{background:#0b0b0b}
+.theme-toggle{white-space:nowrap}
+html[data-theme="dark"] .theme-toggle{background:#2b2b2b;color:#fff;border:1px solid #474747}
+
+html[data-theme="dark"] .tab,
+html[data-theme="dark"] .stats>div,
+html[data-theme="dark"] .card,
+html[data-theme="dark"] .student,
+html[data-theme="dark"] .lesson,
+html[data-theme="dark"] .empty,
+html[data-theme="dark"] .box,
+html[data-theme="dark"] .config-item,
+html[data-theme="dark"] .week-filters,
+html[data-theme="dark"] .weekly-grid,
+html[data-theme="dark"] .week-slot,
+html[data-theme="dark"] .availability-section,
+html[data-theme="dark"] .availability-item,
+html[data-theme="dark"] .free-slot-option,
+html[data-theme="dark"] .history-metric,
+html[data-theme="dark"] .history-plan,
+html[data-theme="dark"] .history-event,
+html[data-theme="dark"] .preview-box{background:#1d1d1d;color:#f2f2f2;border-color:#3a3a3a}
+
+html[data-theme="dark"] .tab{color:#f2f2f2}
+html[data-theme="dark"] .tab.active{background:var(--yellow);color:#151515;border-color:var(--yellow)}
+html[data-theme="dark"] .secondary{background:#303030;color:#f4f4f4}
+html[data-theme="dark"] .mini.edit{background:#6a5a12;color:#fff6bf}
+html[data-theme="dark"] .history-button{background:#253750;color:#dceaff}
+html[data-theme="dark"] .remaining-badge{background:#53470d;border-color:#8b771a;color:#fff1a8}
+html[data-theme="dark"] .plan-badge{background:#253750;color:#cfe2ff}
+html[data-theme="dark"] .history-inactive-badge,
+html[data-theme="dark"] .history-archived{background:#333;color:#c8c8c8;border-color:#4a4a4a}
+
+html[data-theme="dark"] .student-numbers>div,
+html[data-theme="dark"] .history-note,
+html[data-theme="dark"] .week-time,
+html[data-theme="dark"] .week-slot.closed,
+html[data-theme="dark"] .week-closed-slot{background:#252525;color:#e8e8e8;border-color:#3a3a3a}
+html[data-theme="dark"] .progress{background:#363636}
+html[data-theme="dark"] .week-slot.today{background:#2b2818}
+html[data-theme="dark"] .week-empty-slot{color:#8f8f8f}
+html[data-theme="dark"] .week-empty-slot:hover{background:#393214;border-color:#8f7b23;color:#ffdf55}
+
+html[data-theme="dark"] .box input,
+html[data-theme="dark"] .box select,
+html[data-theme="dark"] .box textarea,
+html[data-theme="dark"] .week-filters input,
+html[data-theme="dark"] .week-filters select,
+html[data-theme="dark"] .funcionamento-grid input,
+html[data-theme="dark"] .availability-grid input,
+html[data-theme="dark"] .availability-grid select{background:#292929;color:#f4f4f4;border-color:#4a4a4a}
+html[data-theme="dark"] input::placeholder,
+html[data-theme="dark"] textarea::placeholder{color:#909090}
+
+html[data-theme="dark"] .head p,
+html[data-theme="dark"] .student p,
+html[data-theme="dark"] .student-numbers span,
+html[data-theme="dark"] .progress-text,
+html[data-theme="dark"] .lesson small,
+html[data-theme="dark"] .field-help,
+html[data-theme="dark"] .availability-title small,
+html[data-theme="dark"] .availability-item small,
+html[data-theme="dark"] .free-slot-option span small,
+html[data-theme="dark"] .history-metric span,
+html[data-theme="dark"] .history-metric small,
+html[data-theme="dark"] .history-section-title small,
+html[data-theme="dark"] .history-plan small,
+html[data-theme="dark"] .history-event-main>small,
+html[data-theme="dark"] .history-event-title span,
+html[data-theme="dark"] .modal-text{color:#b7b7b7}
+
+html[data-theme="dark"] .plan-help,
+html[data-theme="dark"] .config-note,
+html[data-theme="dark"] .config-rule-note{background:#302b15;color:#f0e4a5;border-color:#6c5d22}
+html[data-theme="dark"] .privacy-note{background:#1f2a38;color:#c7d5e8;border-color:#3c5878}
+html[data-theme="dark"] .series-box{background:#1f2a38;border-color:#3c5878}
+html[data-theme="dark"] .series-box small{color:#b8c9dd}
+html[data-theme="dark"] .weekdays{border-color:#3c3c3c}
+html[data-theme="dark"] .weekdays label{background:#292929;color:#f0f0f0}
+html[data-theme="dark"] .preview-row{border-color:#353535}
+html[data-theme="dark"] .preview-row small{color:#b7b7b7}
+html[data-theme="dark"] .preview-row.conflict{background:#3b2020}
+html[data-theme="dark"] .free-slot-summary{background:#183022;border-color:#315c40;color:#bce8c9}
+html[data-theme="dark"] .free-slot-option em{color:#f5cf43}
+html[data-theme="dark"] .history-section{border-color:#383838}
+html[data-theme="dark"] .history-date{border-color:#393939}
+
+html[data-theme="dark"] .db{background:#3a3213;color:#ffe894}
+html[data-theme="dark"] .db.ok{background:#173222;color:#8fe0aa}
+html[data-theme="dark"] .db.fail{background:#3b1d1d;color:#ffaaa3}
+html[data-theme="dark"] .db.warn{background:#3a3213;color:#ffe894;border-color:#6c5d22}
+html[data-theme="dark"] .erro{background:#3b1d1d;color:#ffaaa3}
+html[data-theme="dark"] .toast{background:#090909;color:#fff}
+
+@media(max-width:700px){
+  .theme-toggle{order:3;flex-basis:100%}
+}
+

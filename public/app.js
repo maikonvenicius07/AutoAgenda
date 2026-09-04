@@ -1,6 +1,35 @@
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
 
+// ========================= V2.3.6 — MODO ESCURO =========================
+const AUTOAGENDA_THEME_KEY = 'autoagenda-theme';
+
+function temaAtual() {
+  return document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light';
+}
+
+function atualizarBotaoTema() {
+  const botao = $('#alternarTema');
+  if (!botao) return;
+  const escuro = temaAtual() === 'dark';
+  botao.textContent = escuro ? '☀️ Modo claro' : '🌙 Modo escuro';
+  botao.setAttribute('aria-pressed', String(escuro));
+  botao.title = escuro ? 'Voltar para o modo claro' : 'Ativar o modo escuro';
+}
+
+function aplicarTema(tema, salvar = true) {
+  const valor = tema === 'dark' ? 'dark' : 'light';
+  document.documentElement.dataset.theme = valor;
+  if (salvar) {
+    try { localStorage.setItem(AUTOAGENDA_THEME_KEY, valor); } catch (_) {}
+  }
+  atualizarBotaoTema();
+}
+
+function alternarTema() {
+  aplicarTema(temaAtual() === 'dark' ? 'light' : 'dark');
+}
+
 let alunos = [], alunosTodos = [], instrutores = [], veiculos = [], locais = [], aulas = [], aulasHoje = [], aulasSemana = [], planos = [];
 let resumoDashboard = {};
 let configInstrutores = [], configVeiculos = [], configLocais = [];
@@ -1840,6 +1869,10 @@ $('#semanaProxima').onclick = () => {
   $('#filtroSemana').value = addDaysISO(inicioSemanaISO($('#filtroSemana').value || iso()), 7);
   carregarAulasSemana();
 };
+
+const botaoTema = $('#alternarTema');
+if (botaoTema) botaoTema.onclick = alternarTema;
+atualizarBotaoTema();
 
 health();
 load();
