@@ -7,7 +7,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '2.3.1';
+const APP_VERSION = '2.3.2';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -170,6 +170,18 @@ app.use(express.static(path.join(__dirname, 'public'), {
 
 async function query(text, params = []) {
   return pool.query(text, params);
+}
+
+function normalizarWhatsAppParaLink(valor) {
+  let d = String(valor || '').replace(/\D/g, '');
+  if (!d) return '';
+  if (d.startsWith('00')) d = d.slice(2);
+  if (d.startsWith('0') && (d.length === 11 || d.length === 12)) d = d.slice(1);
+  if (!d.startsWith('55')) {
+    if (d.length === 10 || d.length === 11) d = `55${d}`;
+    else return '';
+  }
+  return /^55\d{10,11}$/.test(d) ? d : '';
 }
 
 async function initDatabase() {
@@ -2703,6 +2715,66 @@ app.get('/api/dashboard/resumo', async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao carregar resumo do painel.' });
+  }
+});
+
+// ========================= V2.3.2 — WHATSAPP POR REDIRECIONAMENTO NO SERVIDOR =========================
+// O clique vai primeiro para uma rota do próprio AutoAgenda e só então o servidor
+// redireciona para wa.me. Isso elimina dependência de popup/window.open e garante
+// que o telefone utilizado seja sempre o valor atual salvo no PostgreSQL.
+app.get('/whatsapp/aula/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id < 1) {
+      return res.status(400).type('text/plain; charset=utf-8').send('Aula inválida.');
+    }
+
+    const result = await query(`
+      SELECT a.id, a.data_aula,
+             TO_CHAR(a.hora_inicio, 'HH24:MI') AS hora_inicio,
+             a.status, a.arquivada,
+             al.nome AS aluno_nome, al.whatsapp AS aluno_whatsapp,
+             i.nome AS instrutor_nome,
+             l.nome AS local_nome
+      FROM autoagenda.aulas a
+      JOIN autoagenda.alunos al ON al.id = a.aluno_id
+      JOIN autoagenda.instrutores i ON i.id = a.instrutor_id
+      JOIN autoagenda.locais l ON l.id = a.local_id
+      WHERE a.id = $1
+    `, [id]);
+
+    if (!result.rowCount) {
+      return res.status(404).type('text/plain; charset=utf-8').send('Aula não encontrada.');
+    }
+
+    const aula = result.rows[0];
+    if (aula.arquivada || !['AGENDADA', 'CONFIRMADA'].includes(String(aula.status || '').toUpperCase())) {
+      return res.status(400).type('text/plain; charset=utf-8')
+        .send('O WhatsApp de lembrete só está disponível para aulas agendadas ou confirmadas.');
+    }
+
+    const telefone = normalizarWhatsAppParaLink(aula.aluno_whatsapp);
+    if (!telefone) {
+      return res.status(400).type('text/plain; charset=utf-8')
+        .send('Este aluno não possui um WhatsApp válido cadastrado. Edite o aluno e informe o número com DDD, por exemplo: (69) 99999-9999.');
+    }
+
+    const dataBr = aula.data_aula
+      ? new Intl.DateTimeFormat('pt-BR', { timeZone: 'UTC' }).format(new Date(`${String(aula.data_aula).slice(0, 10)}T12:00:00Z`))
+      : '';
+    const texto = `Olá, ${aula.aluno_nome}! Seguem os dados da sua aula prática:\n\n` +
+      `📅 Data: ${dataBr}\n` +
+      `🕐 Horário: ${String(aula.hora_inicio || '').slice(0, 5)}\n` +
+      `👨‍🏫 Instrutor: ${aula.instrutor_nome || 'a definir'}\n` +
+      `📍 Local: ${aula.local_nome || 'a definir'}\n\n` +
+      'Até lá!';
+
+    const destino = `https://wa.me/${telefone}?text=${encodeURIComponent(texto)}`;
+    res.setHeader('Cache-Control', 'no-store');
+    return res.redirect(302, destino);
+  } catch (error) {
+    console.error('Erro ao abrir WhatsApp:', error);
+    return res.status(500).type('text/plain; charset=utf-8').send('Erro ao preparar o WhatsApp. Tente novamente.');
   }
 });
 

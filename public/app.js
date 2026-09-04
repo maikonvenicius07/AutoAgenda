@@ -56,11 +56,16 @@ const cpfMascarado = v => {
 
 // ========================= V2.3 — WHATSAPP SIMPLES (wa.me) =========================
 function numeroWhatsApp(v) {
-  const d = soDigitos(v);
+  let d = soDigitos(v);
   if (!d) return '';
+
+  // Aceita formatos brasileiros comuns: +55 (69)..., 55 69..., (69)... e 069...
+  if (d.startsWith('00')) d = d.slice(2);
+  if (d.startsWith('0') && (d.length === 11 || d.length === 12)) d = d.slice(1);
+
   if (d.startsWith('55') && (d.length === 12 || d.length === 13)) return d;
   if (d.length === 10 || d.length === 11) return `55${d}`;
-  return d;
+  return '';
 }
 
 function localizarAulaParaWhatsApp(id) {
@@ -97,16 +102,34 @@ function mensagemWhatsAppAula(aula, aluno) {
 Até lá!`;
 }
 
-function abrirWhatsAppAula(id) {
-  const aula = localizarAulaParaWhatsApp(id);
-  if (!aula) return toast('Não foi possível localizar esta aula para enviar o WhatsApp.');
-  if (!podeEnviarWhatsAppAula(aula)) return toast('O WhatsApp de lembrete só está disponível para aulas agendadas ou confirmadas.');
+function linkWhatsAppAula(aula) {
+  if (!aula || !podeEnviarWhatsAppAula(aula)) return '';
   const aluno = localizarAlunoDaAula(aula);
   const telefone = numeroWhatsApp(aula.aluno_whatsapp || aluno?.whatsapp || '');
-  if (!telefone) return toast('Este aluno não possui WhatsApp cadastrado.');
+  if (!telefone) return '';
   const texto = mensagemWhatsAppAula(aula, aluno);
-  window.open(`https://wa.me/${telefone}?text=${encodeURIComponent(texto)}`, '_blank', 'noopener,noreferrer');
+  return `https://wa.me/${telefone}?text=${encodeURIComponent(texto)}`;
 }
+
+function whatsappHtmlAula(aula, textoBotao = '📲 WhatsApp') {
+  if (!podeEnviarWhatsAppAula(aula)) return '';
+  const id = Number(aula?.id || 0);
+  if (!id) return '';
+  // Link para o próprio AutoAgenda. O servidor consulta o telefone no banco e faz
+  // um HTTP 302 para wa.me. Assim não dependemos de popup, cache de aluno ou window.open().
+  return `<a class="mini secondary" href="/whatsapp/aula/${id}" style="text-decoration:none;display:inline-flex;align-items:center;justify-content:center;font-weight:800">${textoBotao}</a>`;
+}
+
+function abrirWhatsAppAula(id) {
+  const aula = localizarAulaParaWhatsApp(id);
+  if (!aula) return alert('Não foi possível localizar esta aula para enviar o WhatsApp.');
+  if (!podeEnviarWhatsAppAula(aula)) return alert('O WhatsApp de lembrete só está disponível para aulas agendadas ou confirmadas.');
+  const n = Number(id || 0);
+  if (!n) return alert('Aula inválida.');
+  // Navegação direta e mesma origem: máxima compatibilidade com Chrome/Edge/mobile.
+  window.location.assign(`/whatsapp/aula/${n}`);
+}
+
 const minHora = h => {
   const [hh, mm] = hora(h).split(':').map(Number);
   return (Number.isFinite(hh) ? hh : 0) * 60 + (Number.isFinite(mm) ? mm : 0);
@@ -264,9 +287,7 @@ function aulaHtml(x, comAcoes = false) {
     ? `<span class="plan-badge replacement-badge">↪️ Reposição${x.reposicao_data_original ? ` da aula de ${fmtData(x.reposicao_data_original)}` : ''}</span>`
     : '';
   const podeArquivar = comAcoes && !['REALIZADA','FALTOU'].includes(x.status);
-  const whatsapp = podeEnviarWhatsAppAula(x)
-    ? `<button type="button" class="mini secondary" data-whatsapp-aula="${x.id}">📲 WhatsApp</button>`
-    : '';
+  const whatsapp = whatsappHtmlAula(x);
 
   return `<div class="lesson ${String(x.status || '').toLowerCase()}">
     <div class="lesson-time">${hora(x.hora_inicio)}</div>
@@ -831,7 +852,7 @@ function historicoAulaHtml(a) {
       <small>📍 ${esc(a.local_nome)}</small>
       <div class="history-badges">${plano}${origem}${gerou}${arquivada}</div>
       ${a.observacoes ? `<div class="history-note">📝 ${esc(a.observacoes).replace(/\n/g, '<br>')}</div>` : ''}
-      ${podeEnviarWhatsAppAula(a) ? `<div class="actions-row"><button type="button" class="mini secondary" data-whatsapp-aula="${a.id}">📲 Enviar WhatsApp</button></div>` : ''}
+      ${podeEnviarWhatsAppAula(a) ? `<div class="actions-row">${whatsappHtmlAula(a, '📲 Enviar WhatsApp')}</div>` : ''}
     </div>
   </div>`;
 }
