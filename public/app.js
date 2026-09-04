@@ -312,6 +312,7 @@ function aulaHtml(x, comAcoes = false) {
 const nomesDias = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
 function planoHtml(p) {
   const dias = (Array.isArray(p.dias_semana) ? p.dias_semana : []).map(d => nomesDias[Number(d)]).join(', ');
+  const whatsappPlano = `<a class="mini secondary" href="/whatsapp/plano/${Number(p.id)}" style="text-decoration:none;display:inline-flex;align-items:center;justify-content:center;font-weight:800">📲 Enviar plano completo</a>`;
   return `<article class="student plan-card ${p.ativo ? '' : 'inactive'}">
     <div class="student-top">
       <div>
@@ -328,10 +329,12 @@ function planoHtml(p) {
       <div><span>Por encontro</span><b>${p.aulas_por_encontro}</b></div>
       <div><span>Início</span><b class="small-value">${fmtData(p.data_inicio)}</b></div>
     </div>
-    ${p.ativo ? `<div class="actions-row">
-      <button type="button" class="mini secondary" data-encerrar-plano="${p.id}">⏹️ Encerrar e manter aulas</button>
-      <button type="button" class="mini delete" data-encerrar-cancelar="${p.id}">🗑️ Encerrar e cancelar futuras</button>
-    </div>` : ''}
+    <div class="actions-row">
+      ${whatsappPlano}
+      ${p.ativo ? `
+        <button type="button" class="mini secondary" data-encerrar-plano="${p.id}">⏹️ Encerrar e manter aulas</button>
+        <button type="button" class="mini delete" data-encerrar-cancelar="${p.id}">🗑️ Encerrar e cancelar futuras</button>` : ''}
+    </div>
   </article>`;
 }
 

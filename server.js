@@ -7,7 +7,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '2.3.4';
+const APP_VERSION = '2.3.5';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -2731,10 +2731,24 @@ app.get('/api/dashboard/resumo', async (req, res) => {
   }
 });
 
-// ========================= V2.3.4 — WHATSAPP: PLANO COMPLETO + REGRA DE FALTA =========================
-// Se a aula pertence a um plano, o WhatsApp recebe o cronograma completo do plano.
-// Se for uma aula avulsa, envia apenas os dados daquela aula.
-// Em ambos os casos a mensagem informa claramente a regra de falta sem justificativa.
+// ========================= V2.3.5 — WHATSAPP: AULA DO DIA + PLANO COMPLETO SEPARADOS =========================
+// Regra definida no AutoAgenda:
+// 1) Botões de WhatsApp exibidos nas aulas enviam SOMENTE os dados daquela aula do dia.
+// 2) Na aba "Planos automáticos", o botão "Enviar plano" envia o cronograma completo do plano.
+// 3) Toda mensagem termina com aviso claro: falta sem justificativa desconta a aula do pacote.
+
+const AVISO_FALTA_WHATSAPP =
+  '⚠️ *IMPORTANTE:* Se o aluno faltar sem justificativa, a aula será contabilizada como realizada para fins de saldo e será descontada do pacote. Portanto, o aluno perderá essa aula.';
+
+const ROTULO_STATUS_WHATSAPP = status => ({
+  AGENDADA: '⏳ Agendada',
+  CONFIRMADA: '✅ Confirmada',
+  REALIZADA: '🏁 Realizada',
+  REMARCADA: '🔄 Remarcada',
+  CANCELADA: '❌ Cancelada',
+  FALTOU: '🚫 Faltou — aula descontada'
+})[String(status || '').toUpperCase()] || String(status || '');
+
 app.get('/whatsapp/aula/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -2743,11 +2757,11 @@ app.get('/whatsapp/aula/:id', async (req, res) => {
     }
 
     const result = await query(`
-      SELECT a.id, a.plan_id, a.numero_plano,
+      SELECT a.id,
              TO_CHAR(a.data_aula, 'DD/MM/YYYY') AS data_br,
              TO_CHAR(a.hora_inicio, 'HH24:MI') AS hora_inicio,
-             a.status, a.arquivada, a.aulas_unidades,
-             al.nome AS aluno_nome, al.whatsapp AS aluno_whatsapp, al.categoria AS aluno_categoria,
+             a.status, a.arquivada,
+             al.nome AS aluno_nome, al.whatsapp AS aluno_whatsapp,
              i.nome AS instrutor_nome,
              v.nome AS veiculo_nome, v.placa AS veiculo_placa,
              l.nome AS local_nome
@@ -2775,90 +2789,107 @@ app.get('/whatsapp/aula/:id', async (req, res) => {
         .send('Este aluno não possui um WhatsApp válido cadastrado. Edite o aluno e informe o número com DDD, por exemplo: (69) 99999-9999.');
     }
 
-    const rotuloStatus = status => ({
-      AGENDADA: '⏳ Agendada',
-      CONFIRMADA: '✅ Confirmada',
-      REALIZADA: '🏁 Realizada',
-      REMARCADA: '🔄 Remarcada',
-      CANCELADA: '❌ Cancelada',
-      FALTOU: '🚫 Faltou — aula descontada'
-    })[String(status || '').toUpperCase()] || String(status || '');
-
-    const avisoFalta =
-      '⚠️ *IMPORTANTE:* Se o aluno faltar sem justificativa, a aula será contabilizada como realizada para fins de saldo e será descontada do pacote. Portanto, o aluno perderá essa aula.';
-
-    let texto = '';
-
-    if (aula.plan_id) {
-      const planoQ = await query(`
-        SELECT p.id, p.total_aulas, p.aulas_por_encontro,
-               i.nome AS instrutor_nome,
-               v.nome AS veiculo_nome, v.placa AS veiculo_placa,
-               l.nome AS local_nome
-        FROM autoagenda.planos_aula p
-        LEFT JOIN autoagenda.instrutores i ON i.id = p.instrutor_id
-        LEFT JOIN autoagenda.veiculos v ON v.id = p.veiculo_id
-        LEFT JOIN autoagenda.locais l ON l.id = p.local_id
-        WHERE p.id = $1
-      `, [aula.plan_id]);
-
-      const cronogramaQ = await query(`
-        SELECT a.id, a.plan_id, a.numero_plano, a.reposicao_de_id, a.excecao_plano,
-               TO_CHAR(a.data_aula, 'DD/MM/YYYY') AS data_br,
-               TO_CHAR(a.hora_inicio, 'HH24:MI') AS hora_inicio,
-               a.status, a.aulas_unidades,
-               i.nome AS instrutor_nome,
-               v.nome AS veiculo_nome, v.placa AS veiculo_placa,
-               l.nome AS local_nome
-        FROM autoagenda.aulas a
-        LEFT JOIN autoagenda.instrutores i ON i.id = a.instrutor_id
-        LEFT JOIN autoagenda.veiculos v ON v.id = a.veiculo_id
-        LEFT JOIN autoagenda.locais l ON l.id = a.local_id
-        WHERE a.arquivada = FALSE
-          AND (
-            a.plan_id = $1
-            OR a.reposicao_de_id IN (
-              SELECT origem.id
-              FROM autoagenda.aulas origem
-              WHERE origem.plan_id = $1
-            )
-          )
-        ORDER BY a.data_aula, a.hora_inicio, a.id
-      `, [aula.plan_id]);
-
-      const plano = planoQ.rows[0] || {};
-      const cronograma = cronogramaQ.rows;
-      const linhas = cronograma.map((x, idx) => {
-        const unidades = Math.max(1, Number(x.aulas_unidades || 1));
-        const detalheUnidades = unidades > 1 ? ` — ${unidades} aulas` : '';
-        const especial = x.reposicao_de_id ? ' ↪️ Reposição' : (x.excecao_plano ? ' • horário alterado' : '');
-        return `${idx + 1}. ${x.data_br} às ${String(x.hora_inicio || '').slice(0,5)}${detalheUnidades} — ${rotuloStatus(x.status)}${especial}`;
-      }).join('\n');
-
-      texto = `Olá, ${aula.aluno_nome}! Segue seu *plano completo de aulas práticas*:\n\n` +
-        `🚘 Categoria: ${aula.aluno_categoria || 'a definir'}\n` +
-        `📚 Total do plano: ${Number(plano.total_aulas || 0)} aula(s)\n` +
-        `👨‍🏫 Instrutor: ${plano.instrutor_nome || aula.instrutor_nome || 'a definir'}\n` +
-        `🚗 Veículo: ${plano.veiculo_nome || aula.veiculo_nome || 'a definir'}${plano.veiculo_placa || aula.veiculo_placa ? ` (${plano.veiculo_placa || aula.veiculo_placa})` : ''}\n` +
-        `📍 Local: ${plano.local_nome || aula.local_nome || 'a definir'}\n\n` +
-        `📅 *CRONOGRAMA COMPLETO*\n${linhas || `${aula.data_br} às ${aula.hora_inicio}`}\n\n` +
-        `${avisoFalta}`;
-    } else {
-      texto = `Olá, ${aula.aluno_nome}! Seguem os dados da sua aula prática:\n\n` +
-        `📅 Data: ${String(aula.data_br || '').trim()}\n` +
-        `🕐 Horário: ${String(aula.hora_inicio || '').slice(0,5)}\n` +
-        `👨‍🏫 Instrutor: ${aula.instrutor_nome || 'a definir'}\n` +
-        `🚗 Veículo: ${aula.veiculo_nome || 'a definir'}${aula.veiculo_placa ? ` (${aula.veiculo_placa})` : ''}\n` +
-        `📍 Local: ${aula.local_nome || 'a definir'}\n\n` +
-        `${avisoFalta}`;
-    }
+    const texto = `Olá, ${aula.aluno_nome}! Seguem os dados da sua aula prática:\n\n` +
+      `📅 Data: ${String(aula.data_br || '').trim()}\n` +
+      `🕐 Horário: ${String(aula.hora_inicio || '').slice(0,5)}\n` +
+      `👨‍🏫 Instrutor: ${aula.instrutor_nome || 'a definir'}\n` +
+      `🚗 Veículo: ${aula.veiculo_nome || 'a definir'}${aula.veiculo_placa ? ` (${aula.veiculo_placa})` : ''}\n` +
+      `📍 Local: ${aula.local_nome || 'a definir'}\n\n` +
+      `${AVISO_FALTA_WHATSAPP}`;
 
     const destino = `https://wa.me/${telefone}?text=${encodeURIComponent(texto)}`;
     res.setHeader('Cache-Control', 'no-store');
     return res.redirect(302, destino);
   } catch (error) {
-    console.error('Erro ao abrir WhatsApp:', error);
+    console.error('Erro ao abrir WhatsApp da aula:', error);
     return res.status(500).type('text/plain; charset=utf-8').send('Erro ao preparar o WhatsApp. Tente novamente.');
+  }
+});
+
+app.get('/whatsapp/plano/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id < 1) {
+      return res.status(400).type('text/plain; charset=utf-8').send('Plano inválido.');
+    }
+
+    const planoQ = await query(`
+      SELECT p.id, p.total_aulas, p.aulas_por_encontro, p.ativo,
+             TO_CHAR(p.data_inicio, 'DD/MM/YYYY') AS data_inicio_br,
+             al.nome AS aluno_nome, al.whatsapp AS aluno_whatsapp, al.categoria AS aluno_categoria,
+             i.nome AS instrutor_nome,
+             v.nome AS veiculo_nome, v.placa AS veiculo_placa,
+             l.nome AS local_nome
+      FROM autoagenda.planos_aula p
+      JOIN autoagenda.alunos al ON al.id = p.aluno_id
+      LEFT JOIN autoagenda.instrutores i ON i.id = p.instrutor_id
+      LEFT JOIN autoagenda.veiculos v ON v.id = p.veiculo_id
+      LEFT JOIN autoagenda.locais l ON l.id = p.local_id
+      WHERE p.id = $1
+    `, [id]);
+
+    if (!planoQ.rowCount) {
+      return res.status(404).type('text/plain; charset=utf-8').send('Plano não encontrado.');
+    }
+
+    const plano = planoQ.rows[0];
+    const telefone = normalizarWhatsAppParaLink(plano.aluno_whatsapp);
+    if (!telefone) {
+      return res.status(400).type('text/plain; charset=utf-8')
+        .send('Este aluno não possui um WhatsApp válido cadastrado. Edite o aluno e informe o número com DDD, por exemplo: (69) 99999-9999.');
+    }
+
+    const cronogramaQ = await query(`
+      SELECT a.id, a.plan_id, a.numero_plano, a.reposicao_de_id, a.excecao_plano,
+             TO_CHAR(a.data_aula, 'DD/MM/YYYY') AS data_br,
+             TO_CHAR(a.hora_inicio, 'HH24:MI') AS hora_inicio,
+             a.status, a.aulas_unidades,
+             i.nome AS instrutor_nome,
+             v.nome AS veiculo_nome, v.placa AS veiculo_placa,
+             l.nome AS local_nome
+      FROM autoagenda.aulas a
+      LEFT JOIN autoagenda.instrutores i ON i.id = a.instrutor_id
+      LEFT JOIN autoagenda.veiculos v ON v.id = a.veiculo_id
+      LEFT JOIN autoagenda.locais l ON l.id = a.local_id
+      WHERE a.arquivada = FALSE
+        AND (
+          a.plan_id = $1
+          OR a.reposicao_de_id IN (
+            SELECT origem.id
+            FROM autoagenda.aulas origem
+            WHERE origem.plan_id = $1
+          )
+        )
+      ORDER BY a.data_aula, a.hora_inicio, a.id
+    `, [id]);
+
+    const cronograma = cronogramaQ.rows;
+    if (!cronograma.length) {
+      return res.status(400).type('text/plain; charset=utf-8').send('Este plano ainda não possui aulas geradas para enviar.');
+    }
+
+    const linhas = cronograma.map((x, idx) => {
+      const unidades = Math.max(1, Number(x.aulas_unidades || 1));
+      const detalheUnidades = unidades > 1 ? ` — ${unidades} aulas` : '';
+      const especial = x.reposicao_de_id ? ' ↪️ Reposição' : (x.excecao_plano ? ' • horário alterado' : '');
+      return `${idx + 1}. ${x.data_br} às ${String(x.hora_inicio || '').slice(0,5)}${detalheUnidades} — ${ROTULO_STATUS_WHATSAPP(x.status)}${especial}`;
+    }).join('\n');
+
+    const texto = `Olá, ${plano.aluno_nome}! Segue seu *plano completo de aulas práticas*:\n\n` +
+      `🚘 Categoria: ${plano.aluno_categoria || 'a definir'}\n` +
+      `📚 Total do plano: ${Number(plano.total_aulas || 0)} aula(s)\n` +
+      `👨‍🏫 Instrutor: ${plano.instrutor_nome || 'a definir'}\n` +
+      `🚗 Veículo: ${plano.veiculo_nome || 'a definir'}${plano.veiculo_placa ? ` (${plano.veiculo_placa})` : ''}\n` +
+      `📍 Local: ${plano.local_nome || 'a definir'}\n\n` +
+      `📅 *CRONOGRAMA COMPLETO*\n${linhas}\n\n` +
+      `${AVISO_FALTA_WHATSAPP}`;
+
+    const destino = `https://wa.me/${telefone}?text=${encodeURIComponent(texto)}`;
+    res.setHeader('Cache-Control', 'no-store');
+    return res.redirect(302, destino);
+  } catch (error) {
+    console.error('Erro ao abrir WhatsApp do plano:', error);
+    return res.status(500).type('text/plain; charset=utf-8').send('Erro ao preparar o plano para WhatsApp. Tente novamente.');
   }
 });
 
