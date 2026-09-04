@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#111111">
+  <title>AutoAgenda</title>
+  <link rel="stylesheet" href="style.css?v=2.3.1">
+</head>
+<body>
+<header>
+  <div class="brand">
+    <img class="brand-car" src="assets/carro-autoescola.png" alt="Carro de autoescola">
+    <div>
+      <h1>AutoAgenda</h1>
+      <small>Sua aula. Seu horário. Tudo organizado.</small>
+    </div>
+  </div>
+  <div class="header-actions"><button type="button" class="secondary" id="encontrarHorarioHeader">🔎 Horário livre</button><button id="novaAula">+ Nova aula</button></div>
+</header>
+
+<main>
+  <div id="db" class="db">Verificando banco...</div>
+
+  <nav>
+    <button class="tab active" data-tab="painel">🏠 Painel</button>
+    <button class="tab" data-tab="alunos">👨‍🎓 Alunos</button>
+    <button class="tab" data-tab="agenda">📅 Agenda diária</button>
+    <button class="tab" data-tab="semana">🗓️ Agenda semanal</button>
+    <button class="tab" data-tab="planos">🔁 Planos</button>
+    <button class="tab" data-tab="configuracoes">⚙️ Configurações</button>
+  </nav>
+
+  <section id="painel" class="panel active">
+    <div class="hero">
+      <div class="hero-copy">
+        <b>INSTRUTOR • CATEGORIA AB</b>
+        <h2>Agenda inteligente para aulas práticas</h2>
+        <p>Cadastre o aluno uma vez, monte o plano de aulas e deixe o AutoAgenda reservar os próximos horários automaticamente.</p>
+      </div>
+      <img class="hero-car" src="assets/carro-autoescola.png" alt="Veículo de autoescola">
+    </div>
+
+    <div class="stats stats4">
+      <div><span>Alunos</span><strong id="sAlunos">0</strong></div>
+      <div><span>Aulas hoje</span><strong id="sHoje">0</strong></div>
+      <div><span>Aulas agendadas</span><strong id="sAgendadas">0</strong></div>
+      <div><span>Planos ativos</span><strong id="sPlanos">0</strong></div>
+    </div>
+
+    <div class="card">
+      <div class="head compact">
+        <div><h3>Agenda de hoje</h3><p>Visão rápida das aulas do dia.</p></div>
+        <button type="button" class="secondary mini" id="irAgenda">Ver agenda</button>
+      </div>
+      <div id="hoje"></div>
+    </div>
+  </section>
+
+  <section id="alunos" class="panel">
+    <div class="head">
+      <div>
+        <h2>Alunos</h2>
+        <p>Cadastre, edite e monte a agenda automática de cada aluno.</p>
+      </div>
+      <div class="agenda-tools">
+        <button type="button" class="secondary mini" id="toggleInativosAlunos">Mostrar inativos</button>
+        <button id="novoAluno">+ Novo aluno</button>
+      </div>
+    </div>
+    <div class="privacy-note">🔒 Na listagem, o CPF aparece mascarado. O número completo só é carregado quando você abre o cadastro para editar.</div>
+    <div id="listaAlunos" class="grid"></div>
+  </section>
+
+  <section id="agenda" class="panel">
+    <div class="head">
+      <div>
+        <h2>Agenda</h2>
+        <p>Altere uma aula isolada ou, se ela fizer parte de um plano, aplique a mudança também às próximas.</p>
+      </div>
+      <div class="agenda-tools">
+        <input id="filtroData" type="date">
+        <button type="button" class="secondary" id="encontrarHorarioAgenda">🔎 Encontrar horário livre</button>
+        <button type="button" id="novaAulaAgenda">+ Nova aula</button>
+      </div>
+    </div>
+    <div id="listaAgenda"></div>
+  </section>
+
+  <section id="semana" class="panel">
+    <div class="head">
+      <div>
+        <h2>Agenda semanal</h2>
+        <p>Veja os dias em colunas e os horários em linhas. Filtre por instrutor ou veículo e clique em um horário livre para criar a aula.</p>
+      </div>
+      <div class="week-toolbar">
+        <button type="button" class="secondary mini" id="semanaAnterior">← Semana anterior</button>
+        <button type="button" class="secondary mini" id="semanaHoje">Hoje</button>
+        <button type="button" class="secondary mini" id="semanaProxima">Próxima semana →</button>
+      </div>
+    </div>
+    <div class="week-filters card compact-card">
+      <label>Semana de referência<input id="filtroSemana" type="date"></label>
+      <label>Instrutor<select id="filtroInstrutorSemana"><option value="">Todos os instrutores</option></select></label>
+      <label>Veículo<select id="filtroVeiculoSemana"><option value="">Todos os veículos</option></select></label>
+      <div class="week-range"><span>Período</span><b id="periodoSemana">—</b></div>
+    </div>
+    <div class="week-legend">
+      <span><i class="legend-dot agendada"></i> Agendada</span>
+      <span><i class="legend-dot confirmada"></i> Confirmada</span>
+      <span><i class="legend-dot realizada"></i> Realizada</span>
+      <span><i class="legend-dot cancelada"></i> Cancelada/Faltou</span>
+      <small id="weekHorarioInfo">Grade conforme o horário de funcionamento configurado.</small>
+    </div>
+    <div class="weekly-scroll">
+      <div id="agendaSemanal" class="weekly-grid"></div>
+    </div>
+  </section>
+
+  <section id="planos" class="panel">
+    <div class="head">
+      <div>
+        <h2>Planos automáticos</h2>
+        <p>Horários fixos gerados automaticamente para os alunos.</p>
+      </div>
+      <button type="button" id="novoPlano">+ Criar plano automático</button>
+    </div>
+    <div class="plan-help">
+      <b>Como funciona:</b> escolha um aluno, informe a data de início, os dias da semana e o horário. O AutoAgenda gera as próximas aulas automaticamente.
+    </div>
+    <div id="listaPlanos" class="grid"></div>
+  </section>
+  <section id="configuracoes" class="panel">
+    <div class="head">
+      <div>
+        <h2>Configurações</h2>
+        <p>Cadastre, edite, desative e reative os recursos usados nas aulas. Somente os ativos aparecem em novas marcações.</p>
+      </div>
+      <button type="button" class="mini secondary" id="toggleInativosConfig">Mostrar inativos</button>
+    </div>
+
+    <div class="config-summary">
+      <div><span>Instrutores ativos</span><b id="cfgQtdInstrutores">0</b></div>
+      <div><span>Veículos disponíveis</span><b id="cfgQtdVeiculos">0</b></div>
+      <div><span>Locais ativos</span><b id="cfgQtdLocais">0</b></div>
+    </div>
+    <div id="cfgInativosInfo" class="config-inactive-info">Nenhum recurso inativo.</div>
+
+    <article class="card funcionamento-card">
+      <div class="head compact">
+        <div>
+          <h3>🕒 Horário de funcionamento</h3>
+          <p>Defina quando novas aulas, planos automáticos e reagendamentos podem ser marcados.</p>
+        </div>
+        <span id="cfgFuncionamentoResumo" class="remaining-badge">Carregando...</span>
+      </div>
+
+      <form id="fFuncionamento" class="funcionamento-form">
+        <fieldset class="weekdays funcionamento-dias">
+          <legend>Dias de funcionamento</legend>
+          <label><input type="checkbox" name="cfgDia" value="0"> Dom</label>
+          <label><input type="checkbox" name="cfgDia" value="1"> Seg</label>
+          <label><input type="checkbox" name="cfgDia" value="2"> Ter</label>
+          <label><input type="checkbox" name="cfgDia" value="3"> Qua</label>
+          <label><input type="checkbox" name="cfgDia" value="4"> Qui</label>
+          <label><input type="checkbox" name="cfgDia" value="5"> Sex</label>
+          <label><input type="checkbox" name="cfgDia" value="6"> Sáb</label>
+        </fieldset>
+
+        <div class="funcionamento-grid">
+          <label>Abre às<input id="cfgHoraAbertura" type="time" required></label>
+          <label>Fecha às<input id="cfgHoraEncerramento" type="time" required></label>
+          <label>Duração padrão da aula
+            <input id="cfgDuracaoPadrao" type="number" min="10" max="240" step="5" required>
+          </label>
+          <label>Intervalo entre aulas
+            <input id="cfgIntervalo" type="number" min="0" max="120" step="5" required>
+            <small class="field-help">Use 0 se não houver intervalo.</small>
+          </label>
+        </div>
+
+        <div class="funcionamento-actions">
+          <div class="config-rule-note">
+            Aulas já existentes não serão apagadas nem remarcadas ao alterar esta configuração.
+            A nova regra vale para novas aulas, novos planos e reagendamentos.
+          </div>
+          <button type="submit" id="salvarFuncionamento">💾 Salvar funcionamento</button>
+        </div>
+        <div id="erroFuncionamento" class="erro hide"></div>
+      </form>
+    </article>
+
+    <div class="config-grid">
+      <article class="card config-card">
+        <div class="head compact">
+          <div><h3>👨‍🏫 Instrutores</h3><p>Nome, contato e categorias.</p></div>
+          <button type="button" class="mini" id="novoInstrutor">+ Adicionar</button>
+        </div>
+        <div id="listaInstrutoresConfig" class="config-list"></div>
+      </article>
+
+      <article class="card config-card">
+        <div class="head compact">
+          <div><h3>🚗 Veículos</h3><p>Veículos disponíveis para as aulas.</p></div>
+          <button type="button" class="mini" id="novoVeiculo">+ Adicionar</button>
+        </div>
+        <div id="listaVeiculosConfig" class="config-list"></div>
+      </article>
+
+      <article class="card config-card">
+        <div class="head compact">
+          <div><h3>📍 Locais</h3><p>Pontos de encontro e endereços.</p></div>
+          <button type="button" class="mini" id="novoLocal">+ Adicionar</button>
+        </div>
+        <div id="listaLocaisConfig" class="config-list"></div>
+      </article>
+    </div>
+
+    <div class="config-note">
+      <b>Proteção do histórico:</b> um recurso com plano ativo ou aula futura não pode ser desativado. Depois de desativado, ele pode ser reativado a qualquer momento. A exclusão definitiva só é permitida quando o cadastro nunca foi usado em nenhuma aula ou plano.
+    </div>
+  </section>
+</main>
+
+<!-- MODAL ALUNO -->
+<div id="mAluno" class="modal hide">
+  <form id="fAluno" class="box">
+    <button type="button" class="x" data-close="mAluno">✕</button>
+    <h2 id="tituloAluno">Novo aluno</h2>
+    <input id="alunoId" type="hidden">
+    <input id="nome" placeholder="Nome*" required>
+    <input id="cpf" inputmode="numeric" autocomplete="off" maxlength="14" placeholder="CPF* (000.000.000-00)" required>
+    <input id="whats" placeholder="WhatsApp*" required>
+    <input id="email" type="email" placeholder="E-mail">
+    <select id="cat">
+      <option>A</option><option selected>B</option><option>AB</option><option>C</option><option>D</option><option>E</option>
+    </select>
+    <label>Aulas contratadas<input id="contratadas" type="number" min="1" value="20"></label>
+    <label>Aulas realizadas antes de usar o AutoAgenda<input id="realizadas" type="number" min="0" value="0"></label>
+    <textarea id="obs" placeholder="Observações"></textarea>
+    <div id="erroAluno" class="erro hide"></div>
+    <button id="salvarAluno">Salvar aluno</button>
+  </form>
+</div>
+
+
+<!-- V2.2 — HISTÓRICO COMPLETO DO ALUNO -->
+<div id="mHistoricoAluno" class="modal hide">
+  <div class="box box-wide history-box">
+    <button type="button" class="x" data-close="mHistoricoAluno">✕</button>
+    <div class="history-heading">
+      <div>
+        <h2 id="historicoTitulo">📚 Histórico do aluno</h2>
+        <p id="historicoSubtitulo" class="modal-text">Carregando informações...</p>
+      </div>
+      <span id="historicoSituacao" class="remaining-badge">—</span>
+    </div>
+
+    <div id="historicoResumo" class="history-summary"></div>
+
+    <section class="history-section">
+      <div class="history-section-title">
+        <div><h3>🔁 Planos</h3><small>Planos ativos e encerrados vinculados ao aluno.</small></div>
+        <span id="historicoPlanosQtd" class="plan-badge">0</span>
+      </div>
+      <div id="historicoPlanos" class="history-plans"></div>
+    </section>
+
+    <section class="history-section">
+      <div class="history-section-title">
+        <div><h3>🗓️ Linha do tempo das aulas</h3><small>Ordem cronológica, das aulas mais recentes para as mais antigas.</small></div>
+        <span id="historicoAulasQtd" class="plan-badge">0</span>
+      </div>
+      <div id="historicoAulas" class="history-timeline"></div>
+    </section>
+
+    <div id="erroHistoricoAluno" class="erro hide"></div>
+  </div>
+</div>
+
+
+<!-- V2.1 — ENCONTRAR HORÁRIO LIVRE / REAGENDAMENTO INTELIGENTE -->
+<div id="mHorarioLivre" class="modal hide">
+  <div class="box search-slot-box">
+    <button type="button" class="x" data-close="mHorarioLivre">✕</button>
+    <h2 id="tituloHorarioLivre">🔎 Encontrar horário livre</h2>
+    <p class="modal-text" id="textoHorarioLivre">O AutoAgenda procura os próximos horários compatíveis com aluno, instrutor, veículo, funcionamento, folgas, manutenção e aulas já existentes.</p>
+    <input id="hOrigemAulaId" type="hidden">
+    <div class="form-2">
+      <label>Aluno<select id="hAluno" required></select></label>
+      <label>Instrutor<select id="hInstrutor" required></select></label>
+    </div>
+    <div class="form-2">
+      <label>Veículo<select id="hVeiculo" required></select></label>
+      <label>Local para a aula<select id="hLocal" required></select></label>
+    </div>
+    <div class="form-2">
+      <label>Procurar a partir de<input id="hDataInicio" type="date" required></label>
+      <label>Duração (minutos)<input id="hDuracao" type="number" min="10" max="240" step="5" value="50" required></label>
+    </div>
+    <label>Aulas consumidas<select id="hUnidades"><option value="1">1 aula</option><option value="2">2 aulas</option><option value="3">3 aulas</option><option value="4">4 aulas</option></select></label>
+    <button type="button" id="buscarHorariosLivres">🔎 Procurar os 5 próximos horários</button>
+    <div id="erroHorarioLivre" class="erro hide"></div>
+    <div id="resultadoHorariosLivres" class="free-slot-results"></div>
+  </div>
+</div>
+
+<!-- MODAL AULA MANUAL / EDIÇÃO -->
+<div id="mAula" class="modal hide">
+  <form id="fAula" class="box">
+    <button type="button" class="x" data-close="mAula">✕</button>
+    <h2 id="tituloAula">Nova aula</h2>
+    <input id="aulaId" type="hidden">
+    <input id="aulaPlanId" type="hidden">
+    <input id="aulaReposicaoDeId" type="hidden">
+    <input id="aulaStatusOriginal" type="hidden">
+    <div id="reposicaoBox" class="series-box hide"><b>↪️ Reposição</b><small id="reposicaoOrigemTexto">A nova aula ficará vinculada à aula original e o histórico será preservado.</small></div>
+    <label>Aluno<select id="aAluno" required></select></label>
+    <label>Instrutor<select id="aInstrutor" required></select></label>
+    <label>Veículo<select id="aVeiculo" required></select></label>
+    <label>Local<select id="aLocal" required></select></label>
+    <div class="form-2">
+      <label>Data<input id="aData" type="date" required></label>
+      <label>Horário<input id="aHora" type="time" value="08:00" required></label>
+    </div>
+    <div class="form-2">
+      <label>Duração (minutos)<input id="aDur" type="number" min="10" max="240" step="5" value="50" required></label>
+      <label>Aulas consumidas<select id="aUnidades"><option value="1">1 aula</option><option value="2">2 aulas</option><option value="3">3 aulas</option><option value="4">4 aulas</option></select></label>
+    </div>
+    <label>Status<select id="aStatus"><option value="AGENDADA">Agendada</option><option value="CONFIRMADA">Confirmada</option><option value="REALIZADA">Realizada</option><option value="CANCELADA">Cancelada</option><option value="FALTOU">Faltou</option></select></label>
+    <label>Observações<textarea id="aObs" placeholder="Observações da aula"></textarea></label>
+
+    <div id="serieBox" class="series-box hide">
+      <b>🔁 Esta aula faz parte de um plano automático.</b>
+      <label class="check-line"><input id="aplicarProximas" type="checkbox"> Aplicar a mudança de dia/horário, instrutor, veículo e local também às próximas aulas do plano</label>
+      <small>A duração e a quantidade de aulas da ocorrência atual podem ser ajustadas sem transformar automaticamente as demais ocorrências do plano.</small>
+    </div>
+
+    <div id="erroAula" class="erro hide"></div>
+    <button type="button" id="whatsappAula" class="secondary hide">📲 Enviar WhatsApp</button>
+    <button id="salvarAula">Agendar aula</button>
+  </form>
+</div>
+
+<!-- ESCOLHER ALUNO PARA NOVO PLANO -->
+<div id="mEscolherAlunoPlano" class="modal hide">
+  <div class="box">
+    <button type="button" class="x" data-close="mEscolherAlunoPlano">✕</button>
+    <h2>📅 Novo plano automático</h2>
+    <p class="modal-text">Escolha o aluno para quem deseja montar a agenda automática.</p>
+    <label>Aluno<select id="escolherAlunoPlano"></select></label>
+    <div class="plan-actions">
+      <button type="button" class="secondary" data-close="mEscolherAlunoPlano">Cancelar</button>
+      <button type="button" id="continuarNovoPlano">Continuar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL PLANO AUTOMÁTICO -->
+<div id="mPlano" class="modal hide">
+  <form id="fPlano" class="box box-wide">
+    <button type="button" class="x" data-close="mPlano">✕</button>
+    <h2>📅 Montar agenda automática</h2>
+    <input id="pAlunoId" type="hidden">
+
+    <div class="plan-student">
+      <span>Aluno</span>
+      <strong id="pAlunoNome">—</strong>
+      <small id="pAlunoResumo"></small>
+    </div>
+
+    <div class="form-2">
+      <label>Data de início<input id="pDataInicio" type="date" required></label>
+      <label>Horário fixo<input id="pHora" type="time" value="08:00" required></label>
+    </div>
+
+    <fieldset class="weekdays">
+      <legend>Dias da semana</legend>
+      <label><input type="checkbox" name="pDia" value="0"> Dom</label>
+      <label><input type="checkbox" name="pDia" value="1"> Seg</label>
+      <label><input type="checkbox" name="pDia" value="2"> Ter</label>
+      <label><input type="checkbox" name="pDia" value="3"> Qua</label>
+      <label><input type="checkbox" name="pDia" value="4"> Qui</label>
+      <label><input type="checkbox" name="pDia" value="5"> Sex</label>
+      <label><input type="checkbox" name="pDia" value="6"> Sáb</label>
+    </fieldset>
+
+    <div class="form-2">
+      <label>Duração de cada aula (minutos)<input id="pDuracao" type="number" min="10" max="240" step="5" value="50" required></label>
+      <label>Aulas por encontro<select id="pPorEncontro"><option value="1">1 aula por encontro</option><option value="2">2 aulas consecutivas</option></select></label>
+    </div>
+
+    <div class="form-2">
+      <label>Instrutor<select id="pInstrutor" required></select></label>
+      <label>Veículo<select id="pVeiculo" required></select></label>
+    </div>
+    <label>Local<select id="pLocal" required></select></label>
+    <label>Quantidade de aulas a programar<input id="pTotal" type="number" min="1" value="1" required><small class="field-help">O sistema limita automaticamente ao saldo de aulas disponível do aluno.</small></label>
+    <label>Observações<textarea id="pObs" placeholder="Ex.: plano regular de aulas práticas"></textarea></label>
+
+    <div class="plan-actions">
+      <button type="button" id="previewPlano" class="secondary">👁️ Ver prévia</button>
+      <button type="button" id="confirmarPlano" class="hide">✅ Confirmar agenda</button>
+    </div>
+
+    <div id="erroPlano" class="erro hide"></div>
+    <div id="previewBox" class="preview-box hide"></div>
+  </form>
+</div>
+
+<!-- MODAL INSTRUTOR -->
+<div id="mInstrutor" class="modal hide">
+  <form id="fInstrutor" class="box box-wide">
+    <button type="button" class="x" data-close="mInstrutor">✕</button>
+    <h2 id="tituloInstrutor">Novo instrutor</h2>
+    <input id="instrutorId" type="hidden">
+    <div class="form-2">
+      <label>Nome<input id="iNome" maxlength="150" required placeholder="Nome do instrutor"></label>
+      <label>WhatsApp<input id="iWhats" maxlength="30" placeholder="(69) 99999-9999"></label>
+      <label>E-mail<input id="iEmail" type="email" maxlength="180" placeholder="email@exemplo.com"></label>
+      <label>Categorias habilitadas<input id="iCategorias" maxlength="20" value="AB" placeholder="Ex.: AB"></label>
+    </div>
+
+    <section class="availability-section">
+      <div class="availability-title">
+        <div>
+          <h3>🗓️ Disponibilidade do instrutor</h3>
+          <small>Por padrão, o instrutor usa o horário geral da autoescola.</small>
+        </div>
+        <label class="check-line"><input id="iUsarHorarioGeral" type="checkbox" checked> Usar horário geral</label>
+      </div>
+
+      <div id="iDisponibilidadeBox" class="hide">
+        <fieldset class="weekdays">
+          <legend>Dias em que trabalha</legend>
+          <label><input type="checkbox" name="iDia" value="0"> Dom</label>
+          <label><input type="checkbox" name="iDia" value="1"> Seg</label>
+          <label><input type="checkbox" name="iDia" value="2"> Ter</label>
+          <label><input type="checkbox" name="iDia" value="3"> Qua</label>
+          <label><input type="checkbox" name="iDia" value="4"> Qui</label>
+          <label><input type="checkbox" name="iDia" value="5"> Sex</label>
+          <label><input type="checkbox" name="iDia" value="6"> Sáb</label>
+        </fieldset>
+        <div class="availability-grid">
+          <label>Início do trabalho<input id="iHoraInicio" type="time"></label>
+          <label>Fim do trabalho<input id="iHoraFim" type="time"></label>
+          <label>Início do intervalo<input id="iIntervaloInicio" type="time"></label>
+          <label>Fim do intervalo<input id="iIntervaloFim" type="time"></label>
+        </div>
+        <small class="field-help">O intervalo é opcional. Ex.: almoço das 12:00 às 14:00.</small>
+      </div>
+    </section>
+
+    <section id="iFolgasArea" class="availability-section hide">
+      <div class="availability-title">
+        <div>
+          <h3>🏖️ Folgas e indisponibilidades</h3>
+          <small>Cadastre férias, folgas ou dias específicos em que o instrutor não poderá dar aula.</small>
+        </div>
+      </div>
+      <div class="availability-grid">
+        <label>Data inicial<input id="iFolgaInicio" type="date"></label>
+        <label>Data final<input id="iFolgaFim" type="date"></label>
+        <label class="availability-motivo">Motivo<input id="iFolgaMotivo" maxlength="250" placeholder="Ex.: folga, férias, curso"></label>
+        <button type="button" id="iAdicionarFolga" class="secondary">+ Adicionar indisponibilidade</button>
+      </div>
+      <div id="iListaFolgas" class="availability-list"></div>
+    </section>
+
+    <div id="erroInstrutor" class="erro hide"></div>
+    <button>Salvar instrutor</button>
+  </form>
+</div>
+
+<!-- MODAL VEÍCULO -->
+<div id="mVeiculo" class="modal hide">
+  <form id="fVeiculo" class="box box-wide">
+    <button type="button" class="x" data-close="mVeiculo">✕</button>
+    <h2 id="tituloVeiculo">Novo veículo</h2>
+    <input id="veiculoId" type="hidden">
+    <div class="form-2">
+      <label>Nome do veículo<input id="vNome" maxlength="100" required placeholder="Ex.: Volkswagen Up"></label>
+      <label>Placa<input id="vPlaca" maxlength="15" placeholder="ABC1D23"></label>
+      <label>Categoria<select id="vCategoria"><option>A</option><option selected>B</option><option>AB</option><option>C</option><option>D</option><option>E</option></select></label>
+      <label>Situação<select id="vSituacao"><option value="DISPONIVEL" selected>Disponível</option><option value="MANUTENCAO">Manutenção</option><option value="INDISPONIVEL">Indisponível</option><option value="INATIVO">Inativo</option></select></label>
+    </div>
+    <p class="field-help">Veículos em manutenção, indisponíveis ou inativos não podem ser usados em novas aulas e planos.</p>
+
+    <section id="vIndisponibilidadesArea" class="availability-section hide">
+      <div class="availability-title"><div><h3>🔧 Manutenções e indisponibilidades</h3><small>Bloqueie períodos específicos sem apagar aulas existentes.</small></div></div>
+      <div class="availability-grid">
+        <label>Tipo<select id="vIndispTipo"><option value="MANUTENCAO">Manutenção</option><option value="INDISPONIVEL">Indisponível</option></select></label>
+        <label>Data inicial<input id="vIndispInicio" type="date"></label>
+        <label>Data final<input id="vIndispFim" type="date"></label>
+        <label class="availability-motivo">Motivo<input id="vIndispMotivo" maxlength="250" placeholder="Ex.: revisão, pneu, oficina"></label>
+        <button type="button" id="vAdicionarIndisp" class="secondary">+ Adicionar período</button>
+      </div>
+      <div id="vListaIndisp" class="availability-list"></div>
+    </section>
+
+    <div id="erroVeiculo" class="erro hide"></div>
+    <button>Salvar veículo</button>
+  </form>
+</div>
+
+<!-- MODAL LOCAL -->
+<div id="mLocal" class="modal hide">
+  <form id="fLocal" class="box">
+    <button type="button" class="x" data-close="mLocal">✕</button>
+    <h2 id="tituloLocal">Novo local</h2>
+    <input id="localId" type="hidden">
+    <label>Nome do local<input id="lNome" maxlength="150" required placeholder="Ex.: Ponto de encontro Centro"></label>
+    <label>Endereço<textarea id="lEndereco" maxlength="300" placeholder="Rua, número, bairro ou referência"></textarea></label>
+    <div id="erroLocal" class="erro hide"></div>
+    <button>Salvar local</button>
+  </form>
+</div>
+
+<!-- CONFIRMAÇÃO -->
+<div id="confirm" class="modal hide">
+  <div class="box confirm-box">
+    <h2 id="confirmTitulo">Confirmar</h2>
+    <p id="confirmTexto"></p>
+    <div class="confirm-actions">
+      <button type="button" id="confirmNao" class="secondary">Cancelar</button>
+      <button type="button" id="confirmSim" class="danger">Confirmar</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast hide"></div>
+<script src="app.js?v=2.3.1-wa1"></script>
+</body>
+</html>
