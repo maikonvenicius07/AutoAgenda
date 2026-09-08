@@ -1,4 +1,4 @@
-# AutoAgenda V3.1.1
+# AutoAgenda V3.1.2
 
 Sistema de organização de aulas práticas para autoescola, com backend Node/Express, PostgreSQL e deploy no Render.
 
@@ -20,6 +20,15 @@ Sistema de organização de aulas práticas para autoescola, com backend Node/Ex
 - login individual com senha em hash e sessão segura;
 - níveis de acesso Administrador e Instrutor.
 
+
+
+## V3.1.2 — Limpeza e organização do projeto
+
+- removidos `app.js` e `index.html` antigos da raiz; a aplicação atual usa somente `public/app.js` e `public/index.html`;
+- removidas da raiz 14 cópias idênticas de documentos já preservados em `docs/historico/`;
+- nenhuma funcionalidade da aplicação foi alterada;
+- estrutura ativa mantida em `server.js`, `public/`, `sql/`, `package.json` e `render.yaml`;
+- versão de manutenção atualizada para V3.1.2.
 
 ## V3.1.1 — Data de nascimento do aluno
 

@@ -1,77 +1,34 @@
-AUTOAGENDA V3.1.1 — DATA DE NASCIMENTO DO ALUNO
+AUTOAGENDA V3.1.2 — LIMPEZA E ORGANIZAÇÃO DO PROJETO
 
-NOVIDADE DESTA VERSÃO
-- Adicionado campo opcional Data de nascimento (aniversário) no cadastro de alunos.
-- O campo também pode ser alterado na edição do aluno.
-- A data é exibida no cartão e no histórico do aluno.
-- Datas futuras são rejeitadas.
-- Alunos antigos continuam funcionando normalmente com o campo em branco.
-- O banco é atualizado automaticamente no primeiro deploy com a coluna data_nascimento.
-- Backups CSV, Excel e JSON passam a incluir a nova coluna automaticamente.
+OBJETIVO DESTA VERSÃO
+- Realizar somente a Etapa 1 do plano de estabilização: limpeza e organização.
+- Nenhuma funcionalidade do AutoAgenda foi removida ou alterada.
 
-ARQUIVOS PRINCIPAIS ALTERADOS
-- server.js
-- public/index.html
-- public/app.js
-- sql/schema.sql
-- package.json
+ARQUIVOS ANTIGOS REMOVIDOS DA RAIZ
+- app.js
+- index.html
+
+MOTIVO
+O server.js publica a pasta public/ e entrega public/index.html.
+O comando npm run check valida public/app.js.
+Portanto, os arquivos app.js e index.html da raiz eram versões antigas e não participavam da aplicação atual.
+
+DOCUMENTOS DUPLICADOS REMOVIDOS DA RAIZ
+Foram removidas 14 cópias idênticas que já permaneciam preservadas em docs/historico/.
+O checklist V3.1.1 também foi transferido para docs/historico/ porque a versão corrente passou a ser V3.1.2.
+
+ARQUIVOS PRINCIPAIS ATUALIZADOS
+- package.json (versão 3.1.2)
+- server.js (identificação da versão)
+- public/app.js (fallback de versão)
 - README.md
 - LEIA-ME-ATUALIZACAO.txt
+- CHECKLIST_V3.1.2.md
 
-----------------------------------------
-HISTÓRICO DA V3.1.0
-----------------------------------------
-AUTOAGENDA V3.1.0 — NÍVEIS DE ACESSO
-======================================
+TESTES
+- npm run check
+- conferência de referências aos arquivos antigos
+- conferência dos documentos duplicados por SHA-256
 
-O que mudou
------------
-- Permissões reais para Administrador e Instrutor.
-- O perfil Instrutor passa a ser vinculado a um cadastro de instrutor.
-- O backend filtra agenda, aulas e alunos pelo instrutor autenticado.
-- O Instrutor pode alterar status/confirmação das próprias aulas.
-- O Instrutor pode reagendar aula cancelada da própria agenda.
-- Módulos administrativos ficam bloqueados no backend e ocultos no frontend.
-- Administrador continua com acesso integral.
-
-MIGRAÇÃO IMPORTANTE
--------------------
-Não é necessário executar SQL manualmente.
-
-O servidor adiciona automaticamente:
-- autoagenda.usuarios.instrutor_id;
-- chave estrangeira para autoagenda.instrutores;
-- índice único para evitar duas contas de Instrutor no mesmo cadastro.
-
-SE JÁ EXISTE USUÁRIO COM PERFIL INSTRUTOR
-------------------------------------------
-Na V3.0 esse perfil ainda não tinha vínculo operacional.
-
-Depois do deploy da V3.1:
-1. entre com uma conta Administrador;
-2. abra "Usuários";
-3. edite cada usuário com perfil "Instrutor";
-4. selecione "Instrutor vinculado";
-5. salve.
-
-Sem esse vínculo, a conta de Instrutor poderá fazer login, mas o backend
-bloqueará o acesso à agenda por segurança.
-
-TESTE RÁPIDO
-------------
-Administrador:
-- deve continuar vendo todos os módulos.
-
-Instrutor:
-- deve ver somente Alunos, Agenda diária e Agenda semanal;
-- deve ver somente suas próprias aulas;
-- deve ver somente alunos relacionados às suas aulas;
-- pode atualizar situação/confirmação da própria aula;
-- pode reagendar aula cancelada;
-- não pode acessar Configurações, Financeiro, Backup, Relatórios ou Usuários.
-
-Confirme no topo:
-AutoAgenda V3.1.0
-
-As 17 etapas do roteiro principal estão concluídas.
-Próximo passo recomendado: auditoria técnica final da V3.1.
+PRÓXIMA ETAPA PLANEJADA
+PROMPT 2 — Criar e validar o .gitignore.
