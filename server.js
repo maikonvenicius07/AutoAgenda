@@ -8,7 +8,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '3.1.5';
+const APP_VERSION = '3.1.6';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -45,6 +45,15 @@ app.disable('x-powered-by');
 
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
+// No Render há um proxy reverso na frente da aplicação.
+// Confiar em apenas um salto permite que req.ip represente o cliente sem
+// aceitar cegamente qualquer X-Forwarded-For enviado pelo navegador.
+if (IS_PRODUCTION) app.set('trust proxy', 1);
+
+// O AutoAgenda usa apenas parâmetros de consulta simples (chave=valor).
+// Evita o parser estendido de objetos/arrays aninhados e reduz superfície de ataque.
+app.set('query parser', 'simple');
+
 // V3.0 — login individual.
 // As variáveis antigas do Render continuam sendo usadas APENAS para criar o
 // primeiro administrador quando a tabela de usuários ainda está vazia.
@@ -63,9 +72,13 @@ const AUTH_WINDOW_MS = 10 * 60 * 1000;
 const AUTH_BLOCK_MS = 15 * 60 * 1000;
 const authAttempts = new Map();
 
+// Hash fictício: não é uma credencial. Serve apenas para executar o mesmo custo
+// de scrypt quando o login não existe, reduzindo diferença de tempo que poderia
+// ajudar na enumeração de usuários.
+const AUTH_DUMMY_PASSWORD_HASH = 'scrypt$16384$8$1$T6Bmx1TlqCzAWgkP5FCGCg==$GtP+wpFzAk2UKxJmS5vCJDwrvuIkGUGz8oNrPlnOoYywRz4TzGgXxWuiaHkhoKpmfPIoTkXzgbfpMtzmTU9pHQ==';
+
 function authClientKey(req) {
-  const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-  return forwarded || req.ip || req.socket?.remoteAddress || 'desconhecido';
+  return String(req.ip || req.socket?.remoteAddress || 'desconhecido');
 }
 
 function authState(req) {
@@ -87,6 +100,17 @@ function authState(req) {
 
 function registrarFalhaAuth(key) {
   const now = Date.now();
+
+  // Limpeza defensiva para impedir crescimento indefinido do mapa em caso de
+  // muitas origens diferentes tentando autenticar.
+  if (authAttempts.size > 5000) {
+    for (const [chave, item] of authAttempts) {
+      const terminouBloqueio = !item.blockedUntil || item.blockedUntil <= now;
+      const terminouJanela = (item.firstFailureAt || 0) + AUTH_WINDOW_MS <= now;
+      if (terminouBloqueio && terminouJanela) authAttempts.delete(chave);
+    }
+  }
+
   let state = authAttempts.get(key);
   if (!state || (state.firstFailureAt || 0) + AUTH_WINDOW_MS <= now) {
     state = { failures: 0, firstFailureAt: now, blockedUntil: 0 };
@@ -248,7 +272,12 @@ app.use((req, res, next) => {
   res.setHeader('Referrer-Policy', 'same-origin');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
   res.setHeader('Content-Security-Policy', "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+  if (req.path.startsWith('/api/') || req.path.startsWith('/whatsapp/')) {
+    res.setHeader('Cache-Control', 'no-store');
+  }
   if (IS_PRODUCTION) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   next();
 });
@@ -367,7 +396,9 @@ app.post('/api/auth/login', async (req, res) => {
     `, [login]);
 
     const usuario = q.rows[0];
-    const valido = usuario?.ativo === true && await verificarHashSenha(senha, usuario?.senha_hash || '');
+    const hashParaVerificar = usuario?.senha_hash || AUTH_DUMMY_PASSWORD_HASH;
+    const senhaConfere = await verificarHashSenha(senha, hashParaVerificar);
+    const valido = usuario?.ativo === true && senhaConfere;
     if (!valido) {
       registrarFalhaAuth(state.key);
       return res.status(401).json({ error: 'Login ou senha inválidos.' });
@@ -1210,6 +1241,7 @@ function rotaPermitidaAoInstrutor(req) {
   const caminho = req.path;
 
   if (metodo === 'GET') {
+    if (/^\/whatsapp\/aula\/\d+$/.test(caminho)) return true;
     return caminho === '/api/alunos'
       || /^\/api\/alunos\/\d+$/.test(caminho)
       || /^\/api\/alunos\/\d+\/historico$/.test(caminho)
@@ -1236,7 +1268,8 @@ function rotaPermitidaAoInstrutor(req) {
 // Permissões são aplicadas no backend; esconder botões no frontend é apenas uma camada de UX.
 // Administrador continua com acesso integral. Instrutor só alcança as rotas operacionais previstas.
 app.use((req, res, next) => {
-  if (!req.path.startsWith('/api/')) return next();
+  const rotaProtegidaPorPerfil = req.path.startsWith('/api/') || req.path.startsWith('/whatsapp/');
+  if (!rotaProtegidaPorPerfil) return next();
   if (usuarioEhAdmin(req)) return next();
   if (req.usuario?.perfil !== 'INSTRUTOR') {
     return res.status(403).json({ error: 'Perfil sem permissão para esta operação.' });
@@ -2114,13 +2147,18 @@ app.get('/api/alunos', async (req, res) => {
   }
 });
 
-// O CPF completo só é enviado quando o usuário abre um aluno específico para edição.
+// O CPF completo só é enviado ao ADMIN; o perfil INSTRUTOR recebe apenas a versão mascarada.
 app.get('/api/alunos/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
     const instrutorEscopo = instrutorIdDaSessao(req);
     const result = await query(`
-      SELECT a.id, a.nome, a.cpf, a.whatsapp, a.email, TO_CHAR(a.data_nascimento, 'YYYY-MM-DD') AS data_nascimento, a.categoria,
+      SELECT a.id, a.nome,
+             CASE WHEN $3::boolean THEN a.cpf ELSE NULL END AS cpf,
+             CASE WHEN LENGTH(COALESCE(a.cpf,'')) = 11
+                  THEN '***.***.***-' || RIGHT(a.cpf, 2)
+                  ELSE NULL END AS cpf_mascarado,
+             a.whatsapp, a.email, TO_CHAR(a.data_nascimento, 'YYYY-MM-DD') AS data_nascimento, a.categoria,
              a.aulas_contratadas, a.aulas_realizadas, a.aulas_realizadas_anteriores,
              a.observacoes, a.ativo, a.criado_em, a.atualizado_em
       FROM autoagenda.alunos a
@@ -2129,7 +2167,7 @@ app.get('/api/alunos/:id', async (req, res) => {
           SELECT 1 FROM autoagenda.aulas rel
           WHERE rel.aluno_id = a.id AND rel.instrutor_id = $2
         ))
-    `, [id, instrutorEscopo]);
+    `, [id, instrutorEscopo, usuarioEhAdmin(req)]);
     if (!result.rowCount) return res.status(404).json({ error: 'Aluno não encontrado.' });
     res.json(result.rows[0]);
   } catch (error) {

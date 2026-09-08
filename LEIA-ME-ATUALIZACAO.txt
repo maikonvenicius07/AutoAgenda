@@ -1,21 +1,14 @@
-AUTOAGENDA V3.1.5 — ALINHAMENTO DO SCHEMA.SQL
+AutoAgenda V3.1.6 — Auditoria de segurança e permissões
 
-Esta versão conclui o PROMPT 4 do roteiro de estabilização.
+Substitua/adicione no GitHub os arquivos deste pacote mantendo os mesmos caminhos.
+Não há arquivos para remover nesta etapa.
 
-ALTERAÇÕES:
-- sql/schema.sql atualizado para refletir as migrações atuais do server.js.
-- incluídas migrações de disponibilidade individual dos instrutores.
-- incluída migração e normalização da situação dos veículos.
-- nenhuma regra de negócio, tela ou permissão foi alterada.
-
-ARQUIVOS ALTERADOS/ADICIONADOS:
-- sql/schema.sql
-- server.js (somente identificação da versão)
-- package.json (somente versão)
-- package-lock.json (somente versão do projeto)
-- public/app.js (somente fallback de versão)
+Arquivos alterados/adicionados:
+- server.js
+- package.json
+- package-lock.json
 - README.md
-- CHECKLIST_V3.1.5.md
-- LEIA-ME-ATUALIZACAO.txt
+- CHECKLIST_V3.1.6.md
+- RELATORIO_AUDITORIA_SEGURANCA_V3.1.6.md
 
-NÃO HÁ ARQUIVOS PARA REMOVER DO GITHUB NESTA ETAPA.
+Depois do deploy, teste login ADMIN e INSTRUTOR e confirme /api/health na versão 3.1.6.

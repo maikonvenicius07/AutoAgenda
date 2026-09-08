@@ -1,4 +1,4 @@
-# AutoAgenda V3.1.5
+# AutoAgenda V3.1.6
 
 Sistema de organização de aulas práticas para autoescola, com backend Node/Express, PostgreSQL e deploy no Render.
 
@@ -22,6 +22,20 @@ Sistema de organização de aulas práticas para autoescola, com backend Node/Ex
 
 
 
+
+
+## V3.1.6 — Auditoria de segurança e permissões
+
+- reforçada a identificação do IP real no Render usando `trust proxy` limitado a um salto, sem confiar diretamente em `X-Forwarded-For` recebido do navegador;
+- login inválido agora executa o mesmo custo de `scrypt` mesmo quando o usuário não existe, reduzindo diferença de tempo útil para enumeração de logins;
+- incluída limpeza defensiva do controle em memória de tentativas de login;
+- respostas de `/api/` e `/whatsapp/` recebem `Cache-Control: no-store`;
+- adicionados `Cross-Origin-Opener-Policy` e `Cross-Origin-Resource-Policy`;
+- parser de query alterado para o modo simples, suficiente para os filtros atuais e com menor superfície de entrada;
+- permissões do perfil Instrutor passam a abranger também as rotas `/whatsapp/` na barreira central do backend;
+- a rota de aluno específico entrega CPF completo somente ao ADMIN; ao INSTRUTOR retorna apenas a versão mascarada;
+- mantidas as regras existentes de escopo das próprias aulas/alunos do instrutor;
+- nenhuma regra de agenda, saldo, planos ou financeiro foi alterada.
 
 ## V3.1.5 — Schema SQL alinhado às migrações atuais
 
