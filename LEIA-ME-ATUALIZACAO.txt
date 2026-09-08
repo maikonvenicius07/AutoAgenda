@@ -1,14 +1,20 @@
-AutoAgenda V3.1.6 — Auditoria de segurança e permissões
+AUTOAGENDA V3.1.7 — TESTES E ESTABILIZAÇÃO
 
-Substitua/adicione no GitHub os arquivos deste pacote mantendo os mesmos caminhos.
-Não há arquivos para remover nesta etapa.
+Esta versão conclui o PROMPT 6 do roteiro de estabilização na camada estática/estrutural.
 
-Arquivos alterados/adicionados:
-- server.js
-- package.json
-- package-lock.json
-- README.md
-- CHECKLIST_V3.1.6.md
-- RELATORIO_AUDITORIA_SEGURANCA_V3.1.6.md
+RESULTADOS:
+- npm run check: APROVADO.
+- npm run test:static: 32/32 APROVADOS.
+- 70 rotas encontradas e nenhuma duplicada.
+- IDs e referências locais da interface conferidos.
+- permissões, transações, conflitos, saldo, backup e modo escuro verificados estruturalmente.
 
-Depois do deploy, teste login ADMIN e INSTRUTOR e confirme /api/health na versão 3.1.6.
+CORREÇÕES:
+- identificadores de versão dos assets em public/index.html atualizados para V3.1.7.
+- fallback visual de versão em public/app.js atualizado para V3.1.7.
+- criado scripts/test-static.js para repetir a validação em versões futuras.
+
+IMPORTANTE:
+Os testes de integração que exigem PostgreSQL real e navegador devem ser feitos no Render usando CHECKLIST_V3.1.7.md. Eles não foram marcados como aprovados sem execução real.
+
+NÃO HÁ ARQUIVOS PARA REMOVER DO GITHUB NESTA ETAPA.

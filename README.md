@@ -1,4 +1,4 @@
-# AutoAgenda V3.1.6
+# AutoAgenda V3.1.7
 
 Sistema de organização de aulas práticas para autoescola, com backend Node/Express, PostgreSQL e deploy no Render.
 
@@ -23,6 +23,16 @@ Sistema de organização de aulas práticas para autoescola, com backend Node/Ex
 
 
 
+
+
+## V3.1.7 — Testes e estabilização da versão atual
+
+- adicionada validação estática reutilizável em `scripts/test-static.js` e comando `npm run test:static`;
+- conferidos arquivos essenciais, versões, rotas duplicadas, IDs do HTML, referências a arquivos locais, dependências declaradas e marcadores das funcionalidades principais;
+- corrigidos identificadores antigos de versão usados ao carregar `style.css` e `app.js`;
+- corrigido o texto de fallback da versão exibida na tela;
+- nenhuma regra de negócio ou funcionalidade do usuário foi alterada;
+- testes que exigem PostgreSQL real e sessão ativa no Render permanecem documentados para validação de integração.
 
 ## V3.1.6 — Auditoria de segurança e permissões
 
