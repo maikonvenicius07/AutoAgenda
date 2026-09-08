@@ -1,27 +1,29 @@
-AUTOAGENDA V3.1.3 — PROTEÇÃO DO REPOSITÓRIO COM .GITIGNORE
+AUTOAGENDA V3.1.4 — PACKAGE-LOCK.JSON E DEPENDÊNCIAS
 
 ETAPA EXECUTADA
-Prompt 2 — Criar e validar o .gitignore.
+Prompt 3 — package-lock.json e dependências.
 
 O QUE FOI FEITO
-- Adicionado .gitignore próprio para o AutoAgenda.
-- Protegidos .env, node_modules, logs, caches, temporários, arquivos de IDE/SO, bancos locais, chaves/certificados e pacotes de backup.
-- Mantida a possibilidade de versionar futuramente um .env.example sem credenciais.
-- Confirmado que os arquivos necessários ao Render continuam versionáveis.
-- Feita varredura por arquivos sensíveis: não foram encontrados valores privados ou credenciais reais no projeto analisado.
-- Nenhuma funcionalidade do AutoAgenda foi alterada.
+- Adicionado package-lock.json para tornar as instalações mais reproduzíveis.
+- Mantidas exatamente as dependências diretas já utilizadas: dotenv 16.4.7, express 4.21.2 e pg 8.13.1.
+- Confirmado que as três dependências são utilizadas pelo server.js.
+- Confirmado que crypto, path e zlib são módulos nativos do Node.js e não precisam constar no package.json.
+- Não houve atualização de bibliotecas e nenhuma funcionalidade foi alterada.
+- npm run check foi executado após a alteração.
+- npm install --package-lock-only --offline aceitou o lockfile.
+- npm ls --package-lock-only --all validou a árvore declarada.
 
 IMPORTANTE
-Não é necessário alterar DATABASE_URL, AUTOAGENDA_USER ou AUTOAGENDA_PASSWORD no Render por causa desta atualização.
+O ambiente de preparação desta versão não conseguiu acessar registry.npmjs.org. Por isso, o npm install com download real das dependências não pôde ser concluído nesta sessão. O package-lock.json foi validado estruturalmente e o deploy do Render deve servir como confirmação do install em ambiente com acesso ao registro npm.
 
 ARQUIVOS ADICIONADOS/ATUALIZADOS
-- .gitignore
-- server.js (somente identificação V3.1.3)
-- public/app.js (somente fallback de versão V3.1.3)
-- package.json (versão 3.1.3)
+- package-lock.json (novo)
+- package.json (versão 3.1.4; dependências mantidas)
+- server.js (somente identificação V3.1.4)
+- public/app.js (somente fallback de versão V3.1.4)
 - README.md
 - LEIA-ME-ATUALIZACAO.txt
-- CHECKLIST_V3.1.3.md
+- CHECKLIST_V3.1.4.md
 
 PRÓXIMA ETAPA
-Prompt 3 — package-lock.json e dependências.
+Prompt 4 — atualizar e alinhar o sql/schema.sql.

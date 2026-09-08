@@ -1,4 +1,4 @@
-# AutoAgenda V3.1.3
+# AutoAgenda V3.1.4
 
 Sistema de organização de aulas práticas para autoescola, com backend Node/Express, PostgreSQL e deploy no Render.
 
@@ -22,6 +22,18 @@ Sistema de organização de aulas práticas para autoescola, com backend Node/Ex
 
 
 
+
+## V3.1.4 — Dependências reproduzíveis com package-lock.json
+
+- adicionado `package-lock.json` compatível com as versões exatas já declaradas no `package.json`;
+- mantidas as dependências diretas atuais, sem atualização: `dotenv 16.4.7`, `express 4.21.2` e `pg 8.13.1`;
+- confirmado que as três dependências externas são utilizadas pelo `server.js`;
+- confirmado que `crypto`, `path` e `zlib` são módulos nativos do Node.js e não precisam ser declarados como dependências;
+- `npm run check` continua validando `server.js` e `public/app.js`;
+- o próprio npm aceitou o lockfile em modo offline e `npm ls --package-lock-only --all` validou a árvore declarada;
+- nenhuma funcionalidade da aplicação foi alterada.
+
+**Observação de validação:** o ambiente usado para preparar esta manutenção não conseguiu acessar o registro público do npm, portanto o `npm install` com download real não pôde ser concluído aqui. O lockfile foi validado estruturalmente e deve ser confirmado também pelo próximo deploy do Render, que executa `npm install`.
 
 ## V3.1.3 — Proteção do repositório com .gitignore
 
