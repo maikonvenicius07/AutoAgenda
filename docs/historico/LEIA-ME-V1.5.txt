@@ -1,0 +1,37 @@
+AUTOAGENDA V1.5 — CONFIGURAÇÕES + AGENDA SEMANAL
+
+O QUE FOI ACRESCENTADO
+
+1. CONFIGURAÇÕES
+- Cadastro/edição/exclusão de instrutores.
+- Cadastro/edição/exclusão de veículos.
+- Cadastro/edição/exclusão de locais.
+- Contadores dos recursos ativos.
+- Os novos cadastros aparecem automaticamente nas telas de aula e plano.
+
+2. PROTEÇÃO DO HISTÓRICO
+- A exclusão é lógica (desativação), preservando aulas antigas.
+- Se o recurso estiver em plano ativo ou aula futura, o AutoAgenda bloqueia a exclusão e informa o motivo.
+
+3. AGENDA SEMANAL
+- Segunda a domingo em uma única visão.
+- Semana anterior / Hoje / Próxima semana.
+- Filtro por instrutor.
+- Clique numa aula para alterar.
+- Botão + em cada dia para criar aula já com a data daquele dia.
+
+ATUALIZAÇÃO NO GITHUB
+
+1. Faça uma cópia de segurança da versão atual.
+2. Copie o CONTEÚDO desta pasta para a raiz do repositório AutoAgenda.
+3. Substitua os arquivos existentes.
+4. Faça Commit changes.
+5. Aguarde o deploy do Render.
+6. Abra o sistema e pressione Ctrl+F5 uma vez.
+7. Confirme no topo: Banco conectado — AutoAgenda V1.5.
+
+BANCO DE DADOS
+
+Não crie outro banco.
+Não altere DATABASE_URL.
+Não precisa executar SQL manualmente.

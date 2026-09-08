@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: autoagenda
+    runtime: node
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: APP_TIMEZONE
+        value: America/Porto_Velho
+      - key: DATABASE_URL
+        sync: false
+      - key: AUTOAGENDA_USER
+        sync: false
+      - key: AUTOAGENDA_PASSWORD
+        sync: false
