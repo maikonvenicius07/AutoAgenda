@@ -8,7 +8,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '3.3.0';
+const APP_VERSION = '3.4.0';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -908,6 +908,7 @@ async function initDatabase() {
         lembrete_horas_antes INTEGER NOT NULL DEFAULT 2
           CHECK (lembrete_horas_antes BETWEEN 1 AND 24),
         whatsapp_automatico_ativo BOOLEAN NOT NULL DEFAULT FALSE,
+        email_automatico_ativo BOOLEAN NOT NULL DEFAULT FALSE,
         atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
       )
     `);
@@ -998,6 +999,42 @@ async function initDatabase() {
       )
     `);
     await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_lembrete_envios_fila ON autoagenda.lembrete_envios(status, agendado_em)');
+
+    // V3.4 — fila auditável de e-mails transacionais e lembretes.
+    // O envio usa uma API HTTPS oficial (Resend) e nasce desativado.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS autoagenda.email_envios (
+        id BIGSERIAL PRIMARY KEY,
+        aula_id INTEGER REFERENCES autoagenda.aulas(id) ON DELETE SET NULL,
+        plan_id INTEGER REFERENCES autoagenda.planos_aula(id) ON DELETE SET NULL,
+        evento VARCHAR(40) NOT NULL
+          CHECK (evento IN (
+            'AGENDAMENTO','REAGENDAMENTO','CANCELAMENTO',
+            'LEMBRETE_DIA_ANTERIOR','LEMBRETE_HORAS_ANTES',
+            'PLANO_AGENDADO','PLANO_ATUALIZADO','PLANO_CANCELADO'
+          )),
+        destinatario VARCHAR(180) NOT NULL,
+        assunto VARCHAR(250) NOT NULL,
+        corpo_html TEXT NOT NULL,
+        corpo_texto TEXT,
+        chave_idempotencia VARCHAR(256) NOT NULL UNIQUE,
+        agendado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+        status VARCHAR(20) NOT NULL DEFAULT 'PENDENTE'
+          CHECK (status IN ('PENDENTE','PROCESSANDO','ENVIADO','FALHOU','CANCELADO')),
+        automatico BOOLEAN NOT NULL DEFAULT TRUE,
+        tentativas INTEGER NOT NULL DEFAULT 0 CHECK (tentativas >= 0),
+        ultima_tentativa_em TIMESTAMP,
+        processando_em TIMESTAMP,
+        enviado_em TIMESTAMP,
+        provider_message_id VARCHAR(255),
+        erro TEXT,
+        criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+        atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_email_envios_fila ON autoagenda.email_envios(status, agendado_em)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_email_envios_aula ON autoagenda.email_envios(aula_id, evento)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_email_envios_plano ON autoagenda.email_envios(plan_id, evento)');
 
     // V2.8 — financeiro simples separado da lógica da agenda.
     // O saldo financeiro é calculado a partir de valor_pacote - valor_pago para evitar divergências.
@@ -1109,6 +1146,7 @@ async function initDatabase() {
     await client.query("ALTER TABLE autoagenda.configuracoes ADD COLUMN IF NOT EXISTS lembrete_horas_antes_ativo BOOLEAN NOT NULL DEFAULT TRUE");
     await client.query("ALTER TABLE autoagenda.configuracoes ADD COLUMN IF NOT EXISTS lembrete_horas_antes INTEGER NOT NULL DEFAULT 2");
     await client.query("ALTER TABLE autoagenda.configuracoes ADD COLUMN IF NOT EXISTS whatsapp_automatico_ativo BOOLEAN NOT NULL DEFAULT FALSE");
+    await client.query("ALTER TABLE autoagenda.configuracoes ADD COLUMN IF NOT EXISTS email_automatico_ativo BOOLEAN NOT NULL DEFAULT FALSE");
 
     await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS lembrete_dia_anterior_em TIMESTAMP');
     await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS lembrete_dia_anterior_enviado BOOLEAN NOT NULL DEFAULT FALSE');
@@ -1555,6 +1593,76 @@ function resumoConfiguracaoWhatsAppCloud() {
   };
 }
 
+// ========================= V3.4 — E-MAIL TRANSACIONAL =========================
+// Integração via API HTTPS oficial do Resend, sem SDK/dependência adicional.
+// A chave e o remetente ficam exclusivamente nas variáveis de ambiente do Render.
+function emailFormatoValido(valor) {
+  return /^[^@\s<>]+@[^@\s<>]+\.[^@\s<>]+$/.test(String(valor || '').trim());
+}
+
+function emailRemetenteValido(valor) {
+  const texto = String(valor || '').trim();
+  if (emailFormatoValido(texto)) return true;
+  const m = texto.match(/^[^<>]{1,120}<([^<>]+)>$/);
+  return Boolean(m && emailFormatoValido(m[1]));
+}
+
+function configuracaoEmail() {
+  const apiKey = String(process.env.RESEND_API_KEY || '').trim();
+  const from = String(process.env.EMAIL_FROM || '').trim();
+  const replyTo = String(process.env.EMAIL_REPLY_TO || '').trim();
+  const ausencias = [];
+  if (apiKey.length < 12) ausencias.push('RESEND_API_KEY');
+  if (!emailRemetenteValido(from)) ausencias.push('EMAIL_FROM');
+  if (replyTo && !emailFormatoValido(replyTo)) ausencias.push('EMAIL_REPLY_TO');
+  return {
+    provider: 'RESEND',
+    apiKey, from, replyTo,
+    configurada: ausencias.length === 0,
+    ausencias
+  };
+}
+
+function resumoConfiguracaoEmail() {
+  const cfg = configuracaoEmail();
+  return {
+    email_api_configurada: cfg.configurada,
+    email_api_ausencias: cfg.ausencias,
+    email_provider: cfg.provider
+  };
+}
+
+async function obterConfigEmail(client) {
+  const r = await client.query(`
+    SELECT email_automatico_ativo
+    FROM autoagenda.configuracoes
+    WHERE id=1
+  `);
+  const resumoQ = await client.query(`
+    SELECT
+      COUNT(*) FILTER (WHERE status='PENDENTE')::int AS pendentes,
+      COUNT(*) FILTER (WHERE status='ENVIADO')::int AS enviados,
+      COUNT(*) FILTER (WHERE status='FALHOU')::int AS falhas
+    FROM autoagenda.email_envios
+    WHERE criado_em >= NOW() - INTERVAL '30 days'
+  `);
+  const x = r.rows[0] || {};
+  return {
+    email_automatico_ativo: x.email_automatico_ativo === true,
+    ...resumoConfiguracaoEmail(),
+    email_envios_resumo: resumoQ.rows[0] || { pendentes:0, enviados:0, falhas:0 }
+  };
+}
+
+function escaparHtmlEmail(valor) {
+  return String(valor ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 async function obterConfigLembretes(client) {
   const r = await client.query(`
     SELECT lembrete_dia_anterior_ativo,
@@ -1892,6 +2000,423 @@ async function processarLembretesAutomaticos({ origem = 'WORKER', limite = 10 } 
   }
 }
 
+
+function chaveEmailSeguro(valor) {
+  return String(valor || '')
+    .normalize('NFKD')
+    .replace(/[^\x20-\x7E]/g, '')
+    .replace(/[^A-Za-z0-9_./:-]/g, '-')
+    .replace(/-+/g, '-')
+    .slice(0, 256);
+}
+
+function erroEmailSeguro(valor) {
+  return String(valor || 'Falha ao enviar e-mail.').replace(/\s+/g, ' ').slice(0, 700);
+}
+
+function dataBrEmail(iso) {
+  const s = String(iso || '').slice(0,10);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : s;
+}
+
+async function detalhesAulaEmail(client, aulaId) {
+  const r = await client.query(`
+    SELECT a.id, a.plan_id, a.status, a.arquivada,
+           TO_CHAR(a.data_aula,'YYYY-MM-DD') AS data_aula,
+           TO_CHAR(a.hora_inicio,'HH24:MI') AS hora_inicio,
+           a.atualizado_em,
+           al.nome AS aluno_nome, al.email AS aluno_email,
+           i.nome AS instrutor_nome,
+           v.nome AS veiculo_nome, v.placa AS veiculo_placa,
+           l.nome AS local_nome, l.endereco AS local_endereco
+    FROM autoagenda.aulas a
+    JOIN autoagenda.alunos al ON al.id=a.aluno_id
+    LEFT JOIN autoagenda.instrutores i ON i.id=a.instrutor_id
+    LEFT JOIN autoagenda.veiculos v ON v.id=a.veiculo_id
+    LEFT JOIN autoagenda.locais l ON l.id=a.local_id
+    WHERE a.id=$1
+  `, [Number(aulaId)]);
+  return r.rows[0] || null;
+}
+
+function corpoEmailAula(evento, aula) {
+  const primeiroNome = String(aula.aluno_nome || 'Aluno').trim().split(/\s+/)[0] || 'Aluno';
+  const data = dataBrEmail(aula.data_aula);
+  const hora = String(aula.hora_inicio || '').slice(0,5);
+  const veiculo = aula.veiculo_nome
+    ? `${aula.veiculo_nome}${aula.veiculo_placa ? ` (${aula.veiculo_placa})` : ''}`
+    : 'A definir';
+  const local = aula.local_nome || 'A definir';
+  const endereco = aula.local_endereco ? ` — ${aula.local_endereco}` : '';
+  const mapa = {
+    AGENDAMENTO: {
+      assunto: `AutoAgenda — aula marcada para ${data} às ${hora}`,
+      titulo: 'Sua aula prática foi agendada',
+      intro: 'Seu horário foi registrado no AutoAgenda.'
+    },
+    REAGENDAMENTO: {
+      assunto: `AutoAgenda — aula reagendada para ${data} às ${hora}`,
+      titulo: 'Sua aula prática foi reagendada',
+      intro: 'Confira abaixo os novos dados da sua aula.'
+    },
+    CANCELAMENTO: {
+      assunto: `AutoAgenda — aula cancelada (${data} às ${hora})`,
+      titulo: 'Sua aula prática foi cancelada',
+      intro: 'O horário abaixo foi cancelado no AutoAgenda.'
+    },
+    LEMBRETE_DIA_ANTERIOR: {
+      assunto: `Lembrete AutoAgenda — aula amanhã às ${hora}`,
+      titulo: 'Lembrete da sua aula prática',
+      intro: 'Este é um lembrete da sua aula marcada para amanhã.'
+    },
+    LEMBRETE_HORAS_ANTES: {
+      assunto: `Lembrete AutoAgenda — sua aula é hoje às ${hora}`,
+      titulo: 'Sua aula está próxima',
+      intro: 'Este é um lembrete da sua aula prática de hoje.'
+    }
+  };
+  const cfg = mapa[evento] || mapa.AGENDAMENTO;
+  const aviso = evento === 'CANCELAMENTO'
+    ? '<p style="margin:18px 0 0;color:#7a4d12">Se precisar de um novo horário, entre em contato com o instrutor ou com a autoescola.</p>'
+    : '<p style="margin:18px 0 0;color:#65758b">Em caso de dúvida ou necessidade de alteração, entre em contato com o instrutor ou com a autoescola.</p>';
+
+  const html = `<!doctype html><html lang="pt-BR"><body style="margin:0;background:#f4f6fa;font-family:Arial,sans-serif;color:#172033">
+  <div style="max-width:620px;margin:24px auto;background:#fff;border:1px solid #e3e7ef;border-radius:18px;overflow:hidden">
+    <div style="padding:24px 28px;background:#f7c928"><div style="font-size:13px;font-weight:700">AUTOAGENDA</div><div style="font-size:24px;font-weight:800;margin-top:4px">${escaparHtmlEmail(cfg.titulo)}</div></div>
+    <div style="padding:26px 28px">
+      <p style="font-size:16px;line-height:1.55">Olá, <b>${escaparHtmlEmail(primeiroNome)}</b>. ${escaparHtmlEmail(cfg.intro)}</p>
+      <div style="border:1px solid #e5e9f0;border-radius:14px;padding:14px 18px;line-height:1.8;background:#fbfcfe">
+        <div>📅 <b>Data:</b> ${escaparHtmlEmail(data)}</div>
+        <div>🕐 <b>Horário:</b> ${escaparHtmlEmail(hora)}</div>
+        <div>👨‍🏫 <b>Instrutor:</b> ${escaparHtmlEmail(aula.instrutor_nome || 'A definir')}</div>
+        <div>🚗 <b>Veículo:</b> ${escaparHtmlEmail(veiculo)}</div>
+        <div>📍 <b>Local:</b> ${escaparHtmlEmail(local + endereco)}</div>
+      </div>
+      ${aviso}
+      <p style="font-size:12px;color:#8a95a6;margin-top:24px">Mensagem automática do AutoAgenda.</p>
+    </div>
+  </div></body></html>`;
+
+  const texto = `Olá, ${primeiroNome}. ${cfg.intro}\n\n` +
+    `Data: ${data}\nHorário: ${hora}\nInstrutor: ${aula.instrutor_nome || 'A definir'}\n` +
+    `Veículo: ${veiculo}\nLocal: ${local}${endereco}\n\n` +
+    (evento === 'CANCELAMENTO'
+      ? 'Se precisar de um novo horário, entre em contato com o instrutor ou com a autoescola.'
+      : 'Em caso de dúvida ou necessidade de alteração, entre em contato com o instrutor ou com a autoescola.');
+  return { assunto: cfg.assunto, html, texto };
+}
+
+async function detalhesPlanoEmail(client, planId) {
+  const p = await client.query(`
+    SELECT p.id, p.atualizado_em, p.ativo,
+           al.nome AS aluno_nome, al.email AS aluno_email,
+           i.nome AS instrutor_nome,
+           v.nome AS veiculo_nome, v.placa AS veiculo_placa,
+           l.nome AS local_nome, l.endereco AS local_endereco
+    FROM autoagenda.planos_aula p
+    JOIN autoagenda.alunos al ON al.id=p.aluno_id
+    LEFT JOIN autoagenda.instrutores i ON i.id=p.instrutor_id
+    LEFT JOIN autoagenda.veiculos v ON v.id=p.veiculo_id
+    LEFT JOIN autoagenda.locais l ON l.id=p.local_id
+    WHERE p.id=$1
+  `, [Number(planId)]);
+  if (!p.rowCount) return null;
+  const aulas = await client.query(`
+    SELECT TO_CHAR(data_aula,'YYYY-MM-DD') AS data_aula,
+           TO_CHAR(hora_inicio,'HH24:MI') AS hora_inicio, status
+    FROM autoagenda.aulas
+    WHERE plan_id=$1 AND arquivada=FALSE
+      AND data_aula >= $2::date
+    ORDER BY data_aula,hora_inicio,id
+    LIMIT 100
+  `, [Number(planId), hojeApp()]);
+  return { ...p.rows[0], aulas: aulas.rows };
+}
+
+function corpoEmailPlano(evento, plano) {
+  const primeiroNome = String(plano.aluno_nome || 'Aluno').trim().split(/\s+/)[0] || 'Aluno';
+  const titulos = {
+    PLANO_AGENDADO: ['Seu plano de aulas foi criado', 'Confira o cronograma das próximas aulas.'],
+    PLANO_ATUALIZADO: ['Seu plano de aulas foi atualizado', 'Confira o cronograma atualizado das próximas aulas.'],
+    PLANO_CANCELADO: ['Seu plano de aulas foi encerrado', 'As aulas futuras canceladas deixaram de valer no AutoAgenda.']
+  };
+  const [titulo, intro] = titulos[evento] || titulos.PLANO_ATUALIZADO;
+  const linhas = (plano.aulas || []).map(a =>
+    `<li style="margin:6px 0">${escaparHtmlEmail(dataBrEmail(a.data_aula))} às ${escaparHtmlEmail(String(a.hora_inicio || '').slice(0,5))} — ${escaparHtmlEmail(a.status || '')}</li>`
+  ).join('');
+  const listaTexto = (plano.aulas || []).map(a =>
+    `${dataBrEmail(a.data_aula)} às ${String(a.hora_inicio || '').slice(0,5)} — ${a.status || ''}`
+  ).join('\n') || 'Nenhuma aula futura ativa.';
+  const assunto = `AutoAgenda — ${titulo.toLowerCase()}`;
+  const html = `<!doctype html><html lang="pt-BR"><body style="margin:0;background:#f4f6fa;font-family:Arial,sans-serif;color:#172033">
+    <div style="max-width:620px;margin:24px auto;background:#fff;border:1px solid #e3e7ef;border-radius:18px;overflow:hidden">
+      <div style="padding:24px 28px;background:#f7c928"><div style="font-size:13px;font-weight:700">AUTOAGENDA</div><div style="font-size:24px;font-weight:800;margin-top:4px">${escaparHtmlEmail(titulo)}</div></div>
+      <div style="padding:26px 28px"><p>Olá, <b>${escaparHtmlEmail(primeiroNome)}</b>. ${escaparHtmlEmail(intro)}</p>
+        <p><b>Instrutor:</b> ${escaparHtmlEmail(plano.instrutor_nome || 'A definir')}<br>
+        <b>Veículo:</b> ${escaparHtmlEmail(plano.veiculo_nome || 'A definir')}<br>
+        <b>Local:</b> ${escaparHtmlEmail(plano.local_nome || 'A definir')}</p>
+        <ul style="padding-left:20px;line-height:1.45">${linhas || '<li>Nenhuma aula futura ativa.</li>'}</ul>
+        <p style="font-size:12px;color:#8a95a6;margin-top:24px">Mensagem automática do AutoAgenda.</p>
+      </div>
+    </div></body></html>`;
+  const texto = `Olá, ${primeiroNome}. ${intro}\n\nInstrutor: ${plano.instrutor_nome || 'A definir'}\n` +
+    `Veículo: ${plano.veiculo_nome || 'A definir'}\nLocal: ${plano.local_nome || 'A definir'}\n\n${listaTexto}`;
+  return { assunto, html, texto };
+}
+
+async function inserirEmailFila(client, { aulaId=null, planId=null, evento, destinatario, mensagem, chave, agendadoEm=null }) {
+  if (!emailFormatoValido(destinatario)) return { ignorado:true, motivo:'SEM_EMAIL_VALIDO' };
+  const r = await client.query(`
+    INSERT INTO autoagenda.email_envios
+      (aula_id,plan_id,evento,destinatario,assunto,corpo_html,corpo_texto,chave_idempotencia,agendado_em,status,automatico)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,COALESCE($9::timestamp,NOW()),'PENDENTE',TRUE)
+    ON CONFLICT (chave_idempotencia) DO NOTHING
+    RETURNING id
+  `, [
+    aulaId ? Number(aulaId) : null, planId ? Number(planId) : null, evento,
+    String(destinatario).trim().toLowerCase(), mensagem.assunto, mensagem.html, mensagem.texto,
+    chaveEmailSeguro(chave), agendadoEm || null
+  ]);
+  return r.rowCount ? { id:Number(r.rows[0].id), criado:true } : { criado:false, duplicado:true };
+}
+
+async function enfileirarEmailEventoAula(aulaId, evento, versao='') {
+  const client = await pool.connect();
+  try {
+    const cfg = await obterConfigEmail(client);
+    if (!cfg.email_automatico_ativo) return { ignorado:true, motivo:'AUTOMACAO_DESATIVADA' };
+    if (!cfg.email_api_configurada) return { ignorado:true, motivo:'API_NAO_CONFIGURADA' };
+    const aula = await detalhesAulaEmail(client, aulaId);
+    if (!aula || !emailFormatoValido(aula.aluno_email)) return { ignorado:true, motivo:'SEM_EMAIL_VALIDO' };
+    const mensagem = corpoEmailAula(evento, aula);
+    const chave = `autoagenda/${evento.toLowerCase()}/aula/${aula.id}/${versao || String(aula.atualizado_em || '')}`;
+    return await inserirEmailFila(client, { aulaId:aula.id, evento, destinatario:aula.aluno_email, mensagem, chave });
+  } finally { client.release(); }
+}
+
+async function enfileirarEmailEventoPlano(planId, evento, versao='') {
+  const client = await pool.connect();
+  try {
+    const cfg = await obterConfigEmail(client);
+    if (!cfg.email_automatico_ativo) return { ignorado:true, motivo:'AUTOMACAO_DESATIVADA' };
+    if (!cfg.email_api_configurada) return { ignorado:true, motivo:'API_NAO_CONFIGURADA' };
+    const plano = await detalhesPlanoEmail(client, planId);
+    if (!plano || !emailFormatoValido(plano.aluno_email)) return { ignorado:true, motivo:'SEM_EMAIL_VALIDO' };
+    const mensagem = corpoEmailPlano(evento, plano);
+    const chave = `autoagenda/${evento.toLowerCase()}/plano/${plano.id}/${versao || String(plano.atualizado_em || '')}`;
+    return await inserirEmailFila(client, { planId:plano.id, evento, destinatario:plano.aluno_email, mensagem, chave });
+  } finally { client.release(); }
+}
+
+function dispararEmailAulaSeguro(aulaId, evento, versao='') {
+  setImmediate(async () => {
+    try {
+      const r = await enfileirarEmailEventoAula(aulaId, evento, versao);
+      if (r?.criado) await processarEmailsAutomaticos({ origem:`EVENTO_${evento}`, limite:10 });
+    } catch (error) {
+      console.error(`E-mail ${evento} não enviado; a operação principal foi preservada:`, erroEmailSeguro(error?.message));
+    }
+  });
+}
+
+function dispararEmailPlanoSeguro(planId, evento, versao='') {
+  setImmediate(async () => {
+    try {
+      const r = await enfileirarEmailEventoPlano(planId, evento, versao);
+      if (r?.criado) await processarEmailsAutomaticos({ origem:`EVENTO_${evento}`, limite:10 });
+    } catch (error) {
+      console.error(`E-mail ${evento} do plano não enviado; a operação principal foi preservada:`, erroEmailSeguro(error?.message));
+    }
+  });
+}
+
+async function enviarEmailResend(envio) {
+  const cfg = configuracaoEmail();
+  if (!cfg.configurada) {
+    const e = new Error(`Integração de e-mail não configurada: ${cfg.ausencias.join(', ')}.`);
+    e.code = 'EMAIL_NOT_CONFIGURED';
+    throw e;
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  let resposta;
+  try {
+    const payload = {
+      from: cfg.from,
+      to: [envio.destinatario],
+      subject: envio.assunto,
+      html: envio.corpo_html,
+      text: envio.corpo_texto || undefined
+    };
+    if (cfg.replyTo) payload.reply_to = cfg.replyTo;
+    resposta = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${cfg.apiKey}`,
+        'Content-Type': 'application/json',
+        'User-Agent': `AutoAgenda/${APP_VERSION}`,
+        'Idempotency-Key': chaveEmailSeguro(envio.chave_idempotencia)
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+  let dados = {};
+  try { dados = await resposta.json(); } catch {}
+  if (!resposta.ok) {
+    const msg = dados?.message || dados?.error?.message || dados?.name || `HTTP ${resposta.status}`;
+    const e = new Error(`API de e-mail: ${msg}`);
+    e.code = dados?.name || `HTTP_${resposta.status}`;
+    throw e;
+  }
+  return { messageId: String(dados?.id || '') || null };
+}
+
+async function sincronizarEmailsLembretes(client) {
+  const cfg = await obterConfigEmail(client);
+  if (!cfg.email_automatico_ativo || !cfg.email_api_configurada) return;
+
+  const agora = agoraApp();
+  const agoraTexto = `${agora.data} ${agora.hora}:00`;
+  const r = await client.query(`
+    SELECT a.id AS aula_id,
+           TO_CHAR(a.data_aula,'YYYY-MM-DD') AS data_aula,
+           TO_CHAR(a.hora_inicio,'HH24:MI') AS hora_inicio,
+           a.status, a.arquivada,
+           TO_CHAR(a.lembrete_dia_anterior_em,'YYYY-MM-DD HH24:MI:SS') AS lembrete_dia,
+           TO_CHAR(a.lembrete_horas_antes_em,'YYYY-MM-DD HH24:MI:SS') AS lembrete_horas,
+           al.nome AS aluno_nome, al.email AS aluno_email,
+           i.nome AS instrutor_nome,
+           v.nome AS veiculo_nome, v.placa AS veiculo_placa,
+           l.nome AS local_nome, l.endereco AS local_endereco
+    FROM autoagenda.aulas a
+    JOIN autoagenda.alunos al ON al.id=a.aluno_id
+    LEFT JOIN autoagenda.instrutores i ON i.id=a.instrutor_id
+    LEFT JOIN autoagenda.veiculos v ON v.id=a.veiculo_id
+    LEFT JOIN autoagenda.locais l ON l.id=a.local_id
+    WHERE a.arquivada=FALSE
+      AND a.status IN ('AGENDADA','CONFIRMADA')
+      AND (a.data_aula + a.hora_inicio) > $1::timestamp
+      AND (
+        (a.lembrete_dia_anterior_em IS NOT NULL AND a.lembrete_dia_anterior_em <= $1::timestamp)
+        OR (a.lembrete_horas_antes_em IS NOT NULL AND a.lembrete_horas_antes_em <= $1::timestamp)
+      )
+    ORDER BY a.data_aula,a.hora_inicio,a.id
+    LIMIT 100
+  `, [agoraTexto]);
+
+  for (const aula of r.rows) {
+    if (!emailFormatoValido(aula.aluno_email)) continue;
+    const tipos = [
+      ['LEMBRETE_DIA_ANTERIOR', aula.lembrete_dia],
+      ['LEMBRETE_HORAS_ANTES', aula.lembrete_horas]
+    ];
+    for (const [evento, agendado] of tipos) {
+      if (!agendado || String(agendado) > agoraTexto) continue;
+      const mensagem = corpoEmailAula(evento, aula);
+      const chave = `autoagenda/${evento.toLowerCase()}/aula/${aula.aula_id}/${agendado}`;
+      await inserirEmailFila(client, {
+        aulaId:aula.aula_id, evento, destinatario:aula.aluno_email, mensagem, chave, agendadoEm:agendado
+      });
+    }
+  }
+
+  // Lembretes antigos deixam de ser elegíveis quando a aula é cancelada/arquivada ou o horário muda.
+  await client.query(`
+    UPDATE autoagenda.email_envios e
+    SET status='CANCELADO', processando_em=NULL,
+        erro=COALESCE(erro,'Lembrete de e-mail substituído ou aula não mais elegível.'),
+        atualizado_em=NOW()
+    WHERE e.status='PENDENTE'
+      AND e.evento IN ('LEMBRETE_DIA_ANTERIOR','LEMBRETE_HORAS_ANTES')
+      AND NOT EXISTS (
+        SELECT 1 FROM autoagenda.aulas a
+        WHERE a.id=e.aula_id
+          AND a.arquivada=FALSE
+          AND a.status IN ('AGENDADA','CONFIRMADA')
+          AND CASE e.evento
+                WHEN 'LEMBRETE_DIA_ANTERIOR' THEN a.lembrete_dia_anterior_em
+                WHEN 'LEMBRETE_HORAS_ANTES' THEN a.lembrete_horas_antes_em
+              END IS NOT DISTINCT FROM e.agendado_em
+      )
+  `);
+}
+
+async function processarEmailsAutomaticos({ origem='WORKER', limite=20 } = {}) {
+  const client = await pool.connect();
+  let lockObtido = false;
+  const resultado = { origem, processados:0, enviados:0, falhas:0, cancelados:0, ignorado:false };
+  try {
+    const lock = await client.query('SELECT pg_try_advisory_lock(34003400) AS ok');
+    lockObtido = lock.rows[0]?.ok === true;
+    if (!lockObtido) return { ...resultado, ignorado:true, motivo:'OUTRO_WORKER_EMAIL_ATIVO' };
+
+    const cfg = await obterConfigEmail(client);
+    if (!cfg.email_automatico_ativo) return { ...resultado, ignorado:true, motivo:'AUTOMACAO_DESATIVADA' };
+    if (!cfg.email_api_configurada) return { ...resultado, ignorado:true, motivo:'API_NAO_CONFIGURADA', ausencias:cfg.email_api_ausencias };
+
+    await sincronizarAgendamentoLembretes(client);
+    await sincronizarEmailsLembretes(client);
+
+    await client.query(`
+      UPDATE autoagenda.email_envios
+      SET status='FALHOU',
+          erro=COALESCE(erro,'Envio interrompido antes de confirmar a resposta da API.'),
+          processando_em=NULL, atualizado_em=NOW()
+      WHERE status='PROCESSANDO'
+        AND processando_em < NOW() - INTERVAL '15 minutes'
+    `);
+
+    const fila = await client.query(`
+      SELECT id
+      FROM autoagenda.email_envios
+      WHERE status='PENDENTE' AND automatico=TRUE AND agendado_em <= NOW()
+      ORDER BY agendado_em,id
+      LIMIT $1
+    `, [Math.max(1, Math.min(50, Number(limite) || 20))]);
+
+    for (const item of fila.rows) {
+      const envioId = Number(item.id);
+      const claim = await client.query(`
+        UPDATE autoagenda.email_envios
+        SET status='PROCESSANDO', tentativas=tentativas+1,
+            ultima_tentativa_em=NOW(), processando_em=NOW(), erro=NULL, atualizado_em=NOW()
+        WHERE id=$1 AND status='PENDENTE'
+        RETURNING *
+      `, [envioId]);
+      if (!claim.rowCount) continue;
+      resultado.processados++;
+      const envio = claim.rows[0];
+      try {
+        const api = await enviarEmailResend(envio);
+        await client.query(`
+          UPDATE autoagenda.email_envios
+          SET status='ENVIADO', processando_em=NULL, enviado_em=NOW(),
+              provider_message_id=$1, erro=NULL, atualizado_em=NOW()
+          WHERE id=$2 AND status='PROCESSANDO'
+        `, [api.messageId, envioId]);
+        resultado.enviados++;
+      } catch (error) {
+        await client.query(`
+          UPDATE autoagenda.email_envios
+          SET status='FALHOU', processando_em=NULL, erro=$1, atualizado_em=NOW()
+          WHERE id=$2
+        `, [erroEmailSeguro(error?.message), envioId]);
+        resultado.falhas++;
+      }
+    }
+    return resultado;
+  } finally {
+    if (lockObtido) {
+      try { await client.query('SELECT pg_advisory_unlock(34003400)'); } catch {}
+    }
+    client.release();
+  }
+}
+
 let lembreteWorkerTimer = null;
 function iniciarWorkerLembretesAutomaticos() {
   const bruto = Number(process.env.WHATSAPP_WORKER_INTERVAL_MINUTES || 5);
@@ -1902,15 +2427,19 @@ function iniciarWorkerLembretesAutomaticos() {
       if (r.enviados || r.falhas || r.cancelados) {
         console.log(`Lembretes WhatsApp: ${r.enviados} enviado(s), ${r.falhas} falha(s), ${r.cancelados} cancelado(s).`);
       }
+      const e = await processarEmailsAutomaticos({ origem: 'WORKER', limite: 20 });
+      if (e.enviados || e.falhas || e.cancelados) {
+        console.log(`E-mails AutoAgenda: ${e.enviados} enviado(s), ${e.falhas} falha(s), ${e.cancelados} cancelado(s).`);
+      }
     } catch (error) {
-      console.error('Worker de lembretes do WhatsApp falhou:', erroWhatsAppSeguro(error?.message));
+      console.error('Worker de lembretes/comunicações falhou:', erroEmailSeguro(error?.message || erroWhatsAppSeguro(error?.message)));
     }
   };
   const primeiraExecucao = setTimeout(executar, 15000);
   if (typeof primeiraExecucao.unref === 'function') primeiraExecucao.unref();
   lembreteWorkerTimer = setInterval(executar, minutos * 60 * 1000);
   if (typeof lembreteWorkerTimer.unref === 'function') lembreteWorkerTimer.unref();
-  console.log(`Lembretes WhatsApp: worker preparado a cada ${minutos} minuto(s); envio automático depende da configuração do ADMIN e das variáveis do Render.`);
+  console.log(`Comunicações automáticas: worker preparado a cada ${minutos} minuto(s); WhatsApp e e-mail dependem das configurações do ADMIN e das variáveis do Render.`);
 }
 
 function avaliarHorarioFuncionamento(config, dados) {
@@ -3159,6 +3688,38 @@ app.put('/api/configuracoes/lembretes', async (req, res) => {
   } finally { client.release(); }
 });
 
+// ---------- V3.4 — Configuração de e-mail ----------
+app.get('/api/configuracoes/email', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    res.json(await obterConfigEmail(client));
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao consultar configuração de e-mail.' });
+  } finally { client.release(); }
+});
+
+app.put('/api/configuracoes/email', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const ativo = req.body?.email_automatico_ativo === true;
+    const apiStatus = resumoConfiguracaoEmail();
+    if (ativo && !apiStatus.email_api_configurada) {
+      throw erroHttp(400, `Para ativar o e-mail automático, configure no Render: ${apiStatus.email_api_ausencias.join(', ')}.`);
+    }
+    const r = await client.query(`
+      UPDATE autoagenda.configuracoes
+      SET email_automatico_ativo=$1, atualizado_em=NOW()
+      WHERE id=1
+      RETURNING email_automatico_ativo
+    `, [ativo]);
+    res.json({ ...(r.rows[0] || {email_automatico_ativo:ativo}), ...apiStatus });
+  } catch (error) {
+    console.error(error);
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao salvar configuração de e-mail.' });
+  } finally { client.release(); }
+});
+
 app.get('/api/lembretes', async (req, res) => {
   const client = await pool.connect();
   try {
@@ -3256,6 +3817,23 @@ app.post('/api/lembretes/processar-agora', async (req, res) => {
   } catch (error) {
     console.error('Erro ao processar lembretes manualmente:', error);
     res.status(500).json({ error: 'Erro ao executar a automação de lembretes.' });
+  }
+});
+
+app.post('/api/email/processar-agora', async (req, res) => {
+  try {
+    const cfg = await obterConfigEmail(pool);
+    if (!cfg.email_automatico_ativo) {
+      return res.status(409).json({ error:'O envio automático de e-mail está desativado nas configurações.' });
+    }
+    if (!cfg.email_api_configurada) {
+      return res.status(409).json({ error:`Integração de e-mail incompleta. Configure no Render: ${cfg.email_api_ausencias.join(', ')}.` });
+    }
+    const resultado = await processarEmailsAutomaticos({ origem:'ADMIN', limite:30 });
+    res.json(resultado);
+  } catch (error) {
+    console.error('Erro ao processar e-mails manualmente:', error);
+    res.status(500).json({ error:'Erro ao executar a automação de e-mail.' });
   }
 });
 
@@ -4153,6 +4731,7 @@ app.post('/api/planos', async (req, res) => {
     }
 
     await client.query('COMMIT');
+    dispararEmailPlanoSeguro(planId, 'PLANO_AGENDADO', String(plano.rows[0].criado_em || ''));
     res.status(201).json({ plano: plano.rows[0], aulas: criadas });
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
@@ -4187,6 +4766,7 @@ app.patch('/api/planos/:id/encerrar', async (req, res) => {
       `, [id, hojeApp()]);
     }
     await client.query('COMMIT');
+    if (cancelarFuturas) dispararEmailPlanoSeguro(id, 'PLANO_CANCELADO', String(p.rows[0].atualizado_em || ''));
     res.json({ ok: true });
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
@@ -4731,7 +5311,8 @@ const EXPORTACOES = {
 const EXPORTACOES_SUPORTE = {
   instrutor_indisponibilidades: { tabela: 'instrutor_indisponibilidades', nome: 'Indisponibilidades de instrutores', aba: 'Indisp_Instrutores' },
   veiculo_indisponibilidades: { tabela: 'veiculo_indisponibilidades', nome: 'Indisponibilidades de veículos', aba: 'Indisp_Veiculos' },
-  lembrete_envios: { tabela: 'lembrete_envios', nome: 'Histórico de lembretes', aba: 'Lembretes' }
+  lembrete_envios: { tabela: 'lembrete_envios', nome: 'Histórico de lembretes', aba: 'Lembretes' },
+  email_envios: { tabela: 'email_envios', nome: 'Histórico de e-mails', aba: 'Emails' }
 };
 
 const EXPORTACOES_COMPLETAS = { ...EXPORTACOES, ...EXPORTACOES_SUPORTE };
@@ -5703,6 +6284,7 @@ app.post('/api/aulas', async (req, res) => {
     ]);
 
     await client.query('COMMIT');
+    dispararEmailAulaSeguro(result.rows[0].id, 'AGENDAMENTO', String(result.rows[0].criado_em || ''));
     res.status(201).json(aulaSemMetadadosToken(result.rows[0]));
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
@@ -5807,6 +6389,7 @@ app.post('/api/aulas/:id/reposicao', async (req, res) => {
     ]);
 
     await client.query('COMMIT');
+    dispararEmailAulaSeguro(result.rows[0].id, 'AGENDAMENTO', String(result.rows[0].criado_em || ''));
     res.status(201).json({ ...aulaSemMetadadosToken(result.rows[0]), aula_original_id: origemId });
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
@@ -5841,6 +6424,13 @@ app.put('/api/aulas/:id', async (req, res) => {
       confirmacao_status,
       normalizarConfirmacaoStatus(antiga.confirmacao_status, String(antiga.status || '').toUpperCase() === 'CONFIRMADA' ? 'CONFIRMADA' : 'AGUARDANDO')
     );
+    const mudouAgendamentoEmail =
+      dateOnlyUTC(antiga.data_aula).toISOString().slice(0,10) !== String(data_aula).slice(0,10)
+      || String(antiga.hora_inicio || '').slice(0,5) !== String(hora_inicio).slice(0,5)
+      || Number(antiga.instrutor_id) !== Number(instrutor_id)
+      || Number(antiga.veiculo_id) !== Number(veiculo_id)
+      || Number(antiga.local_id) !== Number(local_id);
+    const cancelouEmail = String(antiga.status || '').toUpperCase() !== 'CANCELADA' && status === 'CANCELADA';
     if (antiga.arquivada) {
       await client.query('ROLLBACK');
       return res.status(409).json({ error:'Esta aula está arquivada e não pode ser alterada.' });
@@ -5895,6 +6485,11 @@ app.put('/api/aulas/:id', async (req, res) => {
         String(hora_inicio).slice(0,5),duracaoFinal,unidadesFinal,status,confirmacaoFinal,observacoes||'',id]);
 
     await client.query('COMMIT');
+    if (cancelouEmail) {
+      dispararEmailAulaSeguro(id, 'CANCELAMENTO', String(result.rows[0].atualizado_em || Date.now()));
+    } else if (mudouAgendamentoEmail && ['AGENDADA','CONFIRMADA'].includes(status)) {
+      dispararEmailAulaSeguro(id, 'REAGENDAMENTO', String(result.rows[0].atualizado_em || Date.now()));
+    }
     res.json(aulaSemMetadadosToken(result.rows[0]));
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
@@ -6029,6 +6624,7 @@ app.put('/api/aulas/:id/serie', async (req, res) => {
       [String(payload.hora_inicio).slice(0,5),Number(payload.instrutor_id),Number(payload.veiculo_id),Number(payload.local_id),novosDias,alvo.plan_id]);
 
     await client.query('COMMIT');
+    dispararEmailPlanoSeguro(alvo.plan_id, 'PLANO_ATUALIZADO', `serie-${Date.now()}`);
     res.json({ ok:true,alteradas:novas.length });
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
@@ -6065,6 +6661,7 @@ app.delete('/api/aulas/:id', async (req, res) => {
       RETURNING id, status, arquivada, arquivada_em
     `,[id]);
     await client.query('COMMIT');
+    dispararEmailAulaSeguro(id, 'CANCELAMENTO', String(result.rows[0].arquivada_em || Date.now()));
     res.json({ ok:true,aula:result.rows[0] });
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
@@ -6164,6 +6761,9 @@ app.patch('/api/aulas/:id/status', async (req, res) => {
       WHERE id=$2 RETURNING *
     `,[status,id]);
     await client.query('COMMIT');
+    if (status === 'CANCELADA' && String(aula.status || '').toUpperCase() !== 'CANCELADA') {
+      dispararEmailAulaSeguro(id, 'CANCELAMENTO', String(result.rows[0].atualizado_em || Date.now()));
+    }
     res.json(aulaSemMetadadosToken(result.rows[0]));
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}

@@ -60,6 +60,13 @@ let configLembretes = {
   whatsapp_api_configurada: false,
   whatsapp_api_ausencias: []
 };
+let configEmail = {
+  email_automatico_ativo: false,
+  email_api_configurada: false,
+  email_api_ausencias: [],
+  email_provider: 'RESEND',
+  email_envios_resumo: { pendentes:0, enviados:0, falhas:0 }
+};
 let lembretesData = { itens: [], resumo: { pendentes: 0, atrasados: 0, falhas: 0, proximos_7_dias: 0 } };
 let mostrarInativosConfig = false;
 let mostrarInativosAlunos = false;
@@ -849,6 +856,36 @@ function renderConfigLembretes() {
   $('#cfgLembretesResumo').textContent = partes.length ? partes.join(' + ') : 'Desativados';
 }
 
+
+function renderConfigEmail() {
+  const c = configEmail || {};
+  const ativo = c.email_automatico_ativo === true;
+  const apiConfigurada = c.email_api_configurada === true;
+  const toggle = $('#cfgEmailAutoAtivo');
+  const status = $('#cfgEmailApiStatus');
+  const resumo = c.email_envios_resumo || {};
+  if (!toggle || !status) return;
+
+  toggle.checked = ativo;
+  toggle.disabled = !apiConfigurada && !ativo;
+  if (apiConfigurada) {
+    status.className = 'reminder-api-status ready';
+    status.textContent = `✅ Serviço de e-mail ${c.email_provider || 'RESEND'} configurado no Render. O ADMIN pode ativar o envio automático.`;
+  } else {
+    const faltam = Array.isArray(c.email_api_ausencias) ? c.email_api_ausencias.join(', ') : '';
+    status.className = 'reminder-api-status pending';
+    status.textContent = `⚙️ E-mail automático ainda não configurado${faltam ? ` · faltam: ${faltam}` : ''}. O WhatsApp continua funcionando normalmente.`;
+  }
+
+  $('#cfgEmailResumo').textContent = ativo ? 'E-mail automático ativo' : 'E-mail automático desligado';
+  $('#cfgEmailEnviosStatus').innerHTML =
+    `Últimos 30 dias: <b>${Number(resumo.enviados || 0)} enviado(s)</b> · ` +
+    `<b>${Number(resumo.falhas || 0)} falha(s)</b> · ${Number(resumo.pendentes || 0)} pendente(s). ` +
+    `Eventos: agendamento, lembretes, reagendamento e cancelamento.`;
+  const processar = $('#processarEmailsAgora');
+  if (processar) processar.disabled = !ativo || !apiConfigurada;
+}
+
 function lembreteEnvioLabel(x) {
   const st = String(x.envio_status || 'PENDENTE').toUpperCase();
   if (st === 'ENVIADO') return '✅ API aceitou o envio';
@@ -1287,6 +1324,7 @@ function render() {
 
   renderConfiguracoes();
   renderConfigLembretes();
+  renderConfigEmail();
   renderLembretes();
   preencherSelects();
   renderSemana();
@@ -1373,12 +1411,16 @@ async function load() {
       configVeiculos = [...veiculos];
       configLocais = [...locais];
       lembretesData = { itens: [], resumo: { pendentes:0, atrasados:0, falhas:0, proximos_7_dias:0 } };
+      configEmail = {
+        email_automatico_ativo:false, email_api_configurada:false, email_api_ausencias:[],
+        email_provider:'RESEND', email_envios_resumo:{pendentes:0,enviados:0,falhas:0}
+      };
       resumoDashboard = {};
       relatorioData = {};
       financeiroData = { itens: [], resumo: {} };
       backupData = { contagens: {}, total_registros:0 };
     } else {
-      [alunos, instrutores, veiculos, locais, aulas, aulasHoje, planos, configInstrutores, configVeiculos, configLocais, configFuncionamento, configLembretes, lembretesData, resumoDashboard] = await Promise.all([
+      [alunos, instrutores, veiculos, locais, aulas, aulasHoje, planos, configInstrutores, configVeiculos, configLocais, configFuncionamento, configLembretes, configEmail, lembretesData, resumoDashboard] = await Promise.all([
         api('/api/alunos'),
         api('/api/instrutores'),
         api('/api/veiculos'),
@@ -1391,6 +1433,7 @@ async function load() {
         api('/api/locais?incluir_inativos=1'),
         api('/api/configuracoes/funcionamento'),
         api('/api/configuracoes/lembretes'),
+        api('/api/configuracoes/email'),
         api('/api/lembretes'),
         api('/api/dashboard/resumo').catch(e => { console.warn('Dashboard indisponível:', e); return {}; })
       ]);
@@ -1412,7 +1455,7 @@ async function health() {
   try {
     const h = await api('/api/health');
     const seguranca = h.security_ready ? ' · 🔐 login individual ativo' : ' · ⛔ login individual precisa ser inicializado';
-    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '3.3.0'}${seguranca}.`;
+    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '3.4.0'}${seguranca}.`;
     $('#db').className = h.security_ready ? 'db ok' : 'db fail';
   } catch {
     $('#db').textContent = '🔴 Banco não conectado. Verifique DATABASE_URL no Render.';
@@ -2445,6 +2488,47 @@ $('#fLembretes').onsubmit = async e => {
   } finally {
     $('#salvarLembretes').disabled = false;
     $('#salvarLembretes').textContent = '💾 Salvar lembretes';
+  }
+};
+
+
+// ========================= V3.4 — E-MAIL =========================
+$('#processarEmailsAgora').onclick = async () => {
+  try {
+    $('#processarEmailsAgora').disabled = true;
+    $('#processarEmailsAgora').textContent = 'Processando...';
+    const r = await api('/api/email/processar-agora', {method:'POST'});
+    toast(`✉️ E-mail: ${Number(r.enviados||0)} enviado(s), ${Number(r.falhas||0)} falha(s).`);
+    configEmail = await api('/api/configuracoes/email');
+    renderConfigEmail();
+  } catch (e) {
+    toast(e.message || 'Erro ao executar automação de e-mail.');
+  } finally {
+    $('#processarEmailsAgora').textContent = '✉️ Processar agora';
+    renderConfigEmail();
+  }
+};
+
+$('#fEmail').onsubmit = async e => {
+  e.preventDefault();
+  $('#erroEmail').classList.add('hide');
+  try {
+    $('#salvarEmail').disabled = true;
+    $('#salvarEmail').textContent = 'Salvando...';
+    configEmail = await api('/api/configuracoes/email', {
+      method:'PUT',
+      body:JSON.stringify({ email_automatico_ativo: $('#cfgEmailAutoAtivo').checked })
+    });
+    // Atualiza contagens e status retornados pelo endpoint GET.
+    configEmail = await api('/api/configuracoes/email');
+    renderConfigEmail();
+    toast('✅ Configuração de e-mail salva.');
+  } catch (x) {
+    $('#erroEmail').textContent = x.message;
+    $('#erroEmail').classList.remove('hide');
+  } finally {
+    $('#salvarEmail').disabled = false;
+    $('#salvarEmail').textContent = '💾 Salvar e-mail';
   }
 };
 

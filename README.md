@@ -1,4 +1,4 @@
-# AutoAgenda V3.3.0
+# AutoAgenda V3.4.0
 
 Sistema de organização de aulas práticas para autoescola, com backend Node/Express, PostgreSQL e deploy no Render.
 
@@ -12,7 +12,7 @@ Sistema de organização de aulas práticas para autoescola, com backend Node/Ex
 - busca de horários livres;
 - reagendamento inteligente;
 - WhatsApp da aula e do plano;
-- confirmação pelo aluno e lembretes com integração oficial do WhatsApp preparada;
+- confirmação pelo aluno, lembretes com integração oficial do WhatsApp e e-mails transacionais preparados;
 - Dashboard e relatórios;
 - financeiro simples;
 - backup/exportação CSV, Excel e JSON;
@@ -185,7 +185,7 @@ Nenhuma dependência externa nova foi adicionada.
 
 ## Próximo passo recomendado
 
-A estabilização técnica e as etapas de confirmação/lembretes foram concluídas. O próximo item do roteiro é o **PROMPT 9 — envio de e-mail**, preservando o WhatsApp manual e a integração oficial preparada nesta versão.
+A etapa de e-mail foi concluída. O próximo item do roteiro é o **PROMPT 10 — restauração de backup**, preservando as exportações CSV, Excel e JSON existentes.
 
 ## V3.2.0 — Confirmação pelo próprio aluno
 
@@ -256,3 +256,58 @@ Nesta versão, `ENVIADO` significa que a **Cloud API aceitou a requisição** e 
 O worker só executa enquanto o processo Node.js do AutoAgenda estiver em execução. Se o serviço de hospedagem ficar suspenso/inativo no horário programado, a execução poderá ocorrer mais tarde quando o serviço voltar. Para garantia operacional de horário em produção, pode ser necessário usar futuramente uma hospedagem sempre ativa ou um agendador dedicado.
 
 Nenhuma biblioteca de automação de WhatsApp Web, navegador automatizado ou método não oficial foi adicionada.
+
+
+## V3.4.0 — E-mails automáticos
+
+A V3.4.0 acrescenta uma camada de e-mail transacional independente do WhatsApp. O recurso nasce **desativado** e só pode ser ligado pelo ADMIN quando o serviço de e-mail estiver configurado no Render.
+
+### Eventos atendidos
+
+- confirmação de novo agendamento individual;
+- resumo quando um plano automático é criado;
+- lembrete no dia anterior;
+- lembrete algumas horas antes;
+- reagendamento de aula;
+- atualização de série/plano;
+- cancelamento de aula;
+- encerramento de plano com cancelamento de aulas futuras.
+
+### Segurança e confiabilidade
+
+- o envio usa a API HTTPS do **Resend** por `fetch` nativo do Node 20; nenhuma dependência nova foi adicionada;
+- a chave da API nunca é enviada ao frontend e não entra no GitHub;
+- o remetente e a chave ficam somente em variáveis de ambiente;
+- cada envio recebe uma `chave_idempotencia` única no PostgreSQL e também no cabeçalho `Idempotency-Key` da API;
+- a fila registra `PENDENTE`, `PROCESSANDO`, `ENVIADO`, `FALHOU` e `CANCELADO`;
+- falhas não impedem salvar, reagendar ou cancelar uma aula;
+- aluno sem e-mail cadastrado é simplesmente ignorado pelo envio automático, sem quebrar a agenda;
+- um advisory lock do PostgreSQL evita processamento concorrente da mesma fila por duas instâncias;
+- envios interrompidos permanecem auditáveis e não são repetidos silenciosamente;
+- o histórico da tabela `email_envios` entra no backup completo;
+- nenhuma credencial de e-mail entra nos backups.
+
+### Variáveis de ambiente para ativar no Render
+
+Configure apenas no painel **Environment** do Render:
+
+- `RESEND_API_KEY` — chave da API do Resend;
+- `EMAIL_FROM` — remetente autorizado/verificado, por exemplo `AutoAgenda <agenda@seudominio.com>`;
+- `EMAIL_REPLY_TO` — opcional; endereço que receberá respostas.
+
+Sem `RESEND_API_KEY` e `EMAIL_FROM`, o AutoAgenda mantém o e-mail automático desligado.
+
+### Configuração no AutoAgenda
+
+Depois de configurar o Render e fazer novo deploy:
+
+1. abra **Configurações**;
+2. localize **📧 Envio automático de e-mail**;
+3. confirme que o serviço aparece como configurado;
+4. marque **Enviar e-mails automaticamente**;
+5. clique em **Salvar e-mail**;
+6. use **Processar agora** apenas para teste controlado ou para processar itens pendentes.
+
+### Observação sobre planos automáticos
+
+Para evitar dezenas de mensagens quando um plano cria muitas aulas de uma vez, o AutoAgenda envia **um resumo do plano**, em vez de um e-mail separado para cada aula criada pelo plano.

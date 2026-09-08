@@ -1,4 +1,4 @@
--- AutoAgenda V3.3.0
+-- AutoAgenda V3.4.0
 -- Schema compatível com o server.js atual.
 -- O servidor cria/migra automaticamente; este arquivo serve para referência e execução manual controlada.
 
@@ -158,6 +158,7 @@ CREATE TABLE IF NOT EXISTS autoagenda.configuracoes (
   lembrete_horas_antes_ativo BOOLEAN NOT NULL DEFAULT TRUE,
   lembrete_horas_antes INTEGER NOT NULL DEFAULT 2 CHECK (lembrete_horas_antes BETWEEN 1 AND 24),
   whatsapp_automatico_ativo BOOLEAN NOT NULL DEFAULT FALSE,
+  email_automatico_ativo BOOLEAN NOT NULL DEFAULT FALSE,
   atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
@@ -243,6 +244,42 @@ CREATE TABLE IF NOT EXISTS autoagenda.lembrete_envios (
 CREATE INDEX IF NOT EXISTS idx_autoagenda_lembrete_envios_fila
   ON autoagenda.lembrete_envios(status, agendado_em);
 
+CREATE TABLE IF NOT EXISTS autoagenda.email_envios (
+  id BIGSERIAL PRIMARY KEY,
+  aula_id INTEGER REFERENCES autoagenda.aulas(id) ON DELETE SET NULL,
+  plan_id INTEGER REFERENCES autoagenda.planos_aula(id) ON DELETE SET NULL,
+  evento VARCHAR(40) NOT NULL
+    CHECK (evento IN (
+      'AGENDAMENTO','REAGENDAMENTO','CANCELAMENTO',
+      'LEMBRETE_DIA_ANTERIOR','LEMBRETE_HORAS_ANTES',
+      'PLANO_AGENDADO','PLANO_ATUALIZADO','PLANO_CANCELADO'
+    )),
+  destinatario VARCHAR(180) NOT NULL,
+  assunto VARCHAR(250) NOT NULL,
+  corpo_html TEXT NOT NULL,
+  corpo_texto TEXT,
+  chave_idempotencia VARCHAR(256) NOT NULL UNIQUE,
+  agendado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+  status VARCHAR(20) NOT NULL DEFAULT 'PENDENTE'
+    CHECK (status IN ('PENDENTE','PROCESSANDO','ENVIADO','FALHOU','CANCELADO')),
+  automatico BOOLEAN NOT NULL DEFAULT TRUE,
+  tentativas INTEGER NOT NULL DEFAULT 0 CHECK (tentativas >= 0),
+  ultima_tentativa_em TIMESTAMP,
+  processando_em TIMESTAMP,
+  enviado_em TIMESTAMP,
+  provider_message_id VARCHAR(255),
+  erro TEXT,
+  criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+  atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_autoagenda_email_envios_fila
+  ON autoagenda.email_envios(status, agendado_em);
+CREATE INDEX IF NOT EXISTS idx_autoagenda_email_envios_aula
+  ON autoagenda.email_envios(aula_id, evento);
+CREATE INDEX IF NOT EXISTS idx_autoagenda_email_envios_plano
+  ON autoagenda.email_envios(plan_id, evento);
+
 CREATE TABLE IF NOT EXISTS autoagenda.financeiro (
   id SERIAL PRIMARY KEY,
   aluno_id INTEGER NOT NULL REFERENCES autoagenda.alunos(id) ON DELETE RESTRICT,
@@ -322,6 +359,7 @@ ALTER TABLE autoagenda.configuracoes ADD COLUMN IF NOT EXISTS lembrete_dia_anter
 ALTER TABLE autoagenda.configuracoes ADD COLUMN IF NOT EXISTS lembrete_horas_antes_ativo BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE autoagenda.configuracoes ADD COLUMN IF NOT EXISTS lembrete_horas_antes INTEGER NOT NULL DEFAULT 2;
 ALTER TABLE autoagenda.configuracoes ADD COLUMN IF NOT EXISTS whatsapp_automatico_ativo BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE autoagenda.configuracoes ADD COLUMN IF NOT EXISTS email_automatico_ativo BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS lembrete_dia_anterior_em TIMESTAMP;
 ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS lembrete_dia_anterior_enviado BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS lembrete_dia_anterior_enviado_em TIMESTAMP;

@@ -64,7 +64,8 @@ const requiredRoutes = [
   'GET /api/dashboard/resumo','GET /api/relatorios/resumo','GET /api/financeiro','POST /api/financeiro',
   'GET /api/backup/resumo','GET /api/backup/exportar','GET /api/aulas','POST /api/aulas','PUT /api/aulas/:id','DELETE /api/aulas/:id',
   'POST /api/aulas/:id/reposicao','PUT /api/aulas/:id/serie','PATCH /api/aulas/:id/confirmacao','PATCH /api/aulas/:id/status',
-  'GET /api/configuracoes/lembretes','PUT /api/configuracoes/lembretes','GET /api/lembretes','POST /api/lembretes/processar-agora'
+  'GET /api/configuracoes/lembretes','PUT /api/configuracoes/lembretes','GET /api/lembretes','POST /api/lembretes/processar-agora',
+  'GET /api/configuracoes/email','PUT /api/configuracoes/email','POST /api/email/processar-agora'
 ];
 const routeSet=new Set(routes);
 const missingRoutes=requiredRoutes.filter(r=>!routeSet.has(r));
@@ -97,7 +98,20 @@ test('lembrete manual permanece disponível', app.includes('WhatsApp manual') &&
 test('interface possui controle de automação oficial', html.includes('cfgWhatsAppAutoAtivo') && html.includes('processarLembretesAgora') && app.includes('whatsapp_api_configurada'));
 test('histórico de lembretes entra no backup completo', server.includes("lembrete_envios: { tabela: 'lembrete_envios'"));
 
-test('schema contém tabelas principais', ['alunos','instrutores','veiculos','locais','aulas','planos_aula','financeiro','usuarios','sessoes','configuracoes','lembrete_envios'].every(t=>schema.includes(`autoagenda.${t}`)));
+test('API de e-mail usa endpoint HTTPS oficial do Resend', server.includes("fetch('https://api.resend.com/emails'"));
+test('credenciais de e-mail ficam somente no backend', ['RESEND_API_KEY','EMAIL_FROM'].every(x=>server.includes(x)) && !['RESEND_API_KEY','EMAIL_FROM','EMAIL_REPLY_TO'].some(x=>app.includes(x)||html.includes(x)));
+test('e-mail automático nasce desligado', schema.includes('email_automatico_ativo BOOLEAN NOT NULL DEFAULT FALSE') && server.includes('email_automatico_ativo BOOLEAN NOT NULL DEFAULT FALSE'));
+test('fila de e-mail possui estados auditáveis', schema.includes('autoagenda.email_envios') && ['PENDENTE','PROCESSANDO','ENVIADO','FALHOU','CANCELADO'].every(x=>server.includes(`'${x}'`)));
+test('e-mail usa chave de idempotência', server.includes("'Idempotency-Key': chaveEmailSeguro(envio.chave_idempotencia)") && schema.includes('chave_idempotencia VARCHAR(256) NOT NULL UNIQUE'));
+test('worker de e-mail evita concorrência entre instâncias', server.includes('pg_try_advisory_lock(34003400)') && server.includes('pg_advisory_unlock(34003400)'));
+test('e-mail não bloqueia operação principal', server.includes('dispararEmailAulaSeguro') && server.includes('setImmediate(async () =>'));
+test('aluno sem e-mail é tratado sem quebrar a agenda', server.includes("motivo:'SEM_EMAIL_VALIDO'"));
+test('interface possui controle de e-mail automático', html.includes('cfgEmailAutoAtivo') && html.includes('processarEmailsAgora') && app.includes('email_api_configurada'));
+test('histórico de e-mails entra no backup completo', server.includes("email_envios: { tabela: 'email_envios'"));
+test('plano automático possui e-mail resumo', server.includes("'PLANO_AGENDADO'") && server.includes('dispararEmailPlanoSeguro(planId'));
+test('eventos de e-mail cobrem agendamento, lembrete, reagendamento e cancelamento', ['AGENDAMENTO','LEMBRETE_DIA_ANTERIOR','LEMBRETE_HORAS_ANTES','REAGENDAMENTO','CANCELAMENTO'].every(x=>server.includes(`'${x}'`)));
+
+test('schema contém tabelas principais', ['alunos','instrutores','veiculos','locais','aulas','planos_aula','financeiro','usuarios','sessoes','configuracoes','lembrete_envios','email_envios'].every(t=>schema.includes(`autoagenda.${t}`)));
 const deps = Object.keys(pkg.dependencies||{}).sort();
 test('dependências diretas esperadas', JSON.stringify(deps)===JSON.stringify(['dotenv','express','pg']), deps.join(', '));
 test('sem automação não oficial de WhatsApp Web', !deps.some(d=>['whatsapp-web.js','puppeteer','playwright','selenium-webdriver'].includes(d)) && !/whatsapp-web\.js|puppeteer|playwright|selenium-webdriver/i.test(server));

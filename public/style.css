@@ -363,3 +363,8 @@ html[data-theme="dark"] .user-role.admin{background:#4a3d0b;color:#ffe997}
 html[data-theme="dark"] .user-role.instrutor{background:#253750;color:#cfe2ff}
 html[data-theme="dark"] .user-role.inactive{background:#333;color:#c8c8c8}
 html[data-theme="dark"] .user-you{background:#183b25;color:#9de1b4}
+
+/* V3.4 — configuração de e-mail */
+.email-config-card{margin:14px 0}.email-config-form{display:grid;gap:10px}.email-config-actions{display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap}.email-config-actions button{min-width:180px}.email-config-form>.erro{grid-column:1/-1}
+@media(max-width:600px){.email-config-actions{display:grid;grid-template-columns:1fr}.email-config-actions button{width:100%;min-width:0}}
+html[data-theme="dark"] .email-config-card .config-rule-note{background:#252525;border-color:#494949;color:#d7dce5}

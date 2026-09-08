@@ -1,21 +1,32 @@
-AUTOAGENDA V3.3.0 — LEMBRETES AUTOMÁTICOS PELO WHATSAPP OFICIAL
+AUTOAGENDA V3.4.0 — E-MAILS AUTOMÁTICOS
 
 O QUE MUDA:
-- prepara integração com WhatsApp Business Platform / Cloud API;
+- adiciona envio automático de e-mail independente do WhatsApp;
+- cobre agendamento, lembretes, reagendamento e cancelamento;
+- planos automáticos recebem um e-mail-resumo em vez de várias mensagens;
 - envio automático nasce DESATIVADO;
-- envio manual atual continua funcionando;
-- cria fila de envios com status e prevenção de duplicidade;
-- permite ao ADMIN ativar a automação somente depois que a API estiver configurada;
-- adiciona botão “Processar agora” para teste controlado;
-- inclui histórico de lembretes no backup completo.
+- cria fila auditável de e-mails com prevenção de duplicidade;
+- falha de e-mail NÃO impede salvar ou alterar a aula;
+- aluno sem e-mail continua funcionando normalmente;
+- inclui histórico de e-mails no backup completo;
+- nenhuma dependência npm nova foi adicionada.
 
 IMPORTANTE:
-NÃO configure token no código ou GitHub. Quando chegar a hora de ativar, use somente variáveis de ambiente do Render, conforme README.md e CHECKLIST_V3.3.0.md.
+NÃO coloque chave de e-mail no código ou GitHub.
+
+Para ativar futuramente no Render:
+- RESEND_API_KEY
+- EMAIL_FROM
+- EMAIL_REPLY_TO (opcional)
+
+SEM ESSAS VARIÁVEIS:
+o AutoAgenda continua funcionando normalmente e o e-mail automático permanece desligado.
 
 NÃO HÁ ARQUIVOS PARA REMOVER DO GITHUB NESTA ETAPA.
 
 APÓS O DEPLOY:
-1. confirme que o AutoAgenda abre normalmente;
-2. abra Configurações → Lembretes;
-3. sem credenciais da Meta, a API deve aparecer como “ainda não configurada” e o envio manual deve continuar normal;
-4. execute o CHECKLIST_V3.3.0.md antes de ativar qualquer envio real.
+1. confirme que /api/health mostra a versão 3.4.0;
+2. abra Configurações → Envio automático de e-mail;
+3. sem credenciais, o controle deve continuar bloqueado/desligado;
+4. configure o serviço no Render somente quando quiser ativar;
+5. siga o CHECKLIST_V3.4.0.md.

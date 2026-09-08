@@ -2,54 +2,38 @@
 
 ## Situação atual
 
-Versão: **V3.1.0 — Níveis de acesso**
+Versão: **V3.4.0 — E-mails automáticos**
 
-Etapas concluídas:
-1. Configurações;
-2. Agenda semanal;
-3. Horário de funcionamento;
-4. Disponibilidade dos instrutores;
-5. Disponibilidade dos veículos;
-6. Encontrar horário livre;
-7. Reagendamento inteligente;
-8. Histórico do aluno;
-9. WhatsApp;
-10. Confirmação da aula;
-11. Lembretes;
-12. Dashboard;
-13. Relatórios;
-14. Financeiro simples;
-15. Backup / Exportação;
-16. Login individual;
-17. Níveis de acesso.
+O roteiro principal de 17 etapas foi concluído e a fase de estabilização também foi concluída.
 
-## Roteiro principal concluído
+Melhorias posteriores já entregues:
+1. limpeza e organização do projeto;
+2. `.gitignore`;
+3. `package-lock.json`;
+4. alinhamento do `schema.sql`;
+5. auditoria de segurança e permissões;
+6. testes estáticos ampliados;
+7. confirmação da aula pelo próprio aluno;
+8. lembretes automáticos preparados para WhatsApp Cloud API;
+9. envio automático de e-mails preparado.
 
-A V3.1 fecha a sequência planejada inicialmente para o AutoAgenda.
+## Próximo passo do roteiro
 
-### Administrador
-Acesso integral ao sistema.
+**PROMPT 10 — Restauração de backup**
 
-### Instrutor
-Acesso restrito à própria agenda, aos alunos relacionados às suas aulas,
-à alteração de status/confirmação e ao reagendamento autorizado.
+Objetivo:
+- restaurar preferencialmente backup JSON completo;
+- acesso exclusivo do ADMIN;
+- validar formato, estrutura e versão;
+- mostrar resumo antes da restauração;
+- confirmar explicitamente a operação;
+- restaurar dentro de transação PostgreSQL;
+- rejeitar arquivo inválido/incompleto;
+- preservar as exportações CSV, Excel e JSON atuais.
 
-As permissões são aplicadas também no backend, evitando que um instrutor
-acesse módulos administrativos apenas digitando uma rota manualmente.
+## Melhorias futuras já registradas
 
-## Próximo passo recomendado
-
-Antes de iniciar novas funcionalidades:
-
-**Auditoria técnica final da V3.1**
-- permissões e tentativas de acesso indevido;
-- integridade das consultas SQL;
-- conflitos de agenda;
-- segurança das sessões;
-- código duplicado/morto;
-- tratamento de erros;
-- desempenho;
-- compatibilidade Render/PostgreSQL;
-- revisão do Backup/Exportação.
-
-Depois da auditoria, podemos definir a próxima fase do AutoAgenda.
+- backup automático do PostgreSQL;
+- mensagem automática de Feliz Aniversário usando a data de nascimento do aluno;
+- Webhooks para acompanhar entrega/leitura do WhatsApp;
+- outras integrações que venham a ser priorizadas.

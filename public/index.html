@@ -14,7 +14,7 @@
       document.documentElement.dataset.theme = 'light';
     }
   </script>
-  <link rel="stylesheet" href="style.css?v=3.3.0">
+  <link rel="stylesheet" href="style.css?v=3.4.0">
 </head>
 <body class="auth-locked">
 <section id="loginScreen" class="login-screen">
@@ -516,6 +516,28 @@
       </form>
     </article>
 
+    <article class="card email-config-card">
+      <div class="head compact">
+        <div>
+          <h3>📧 Envio automático de e-mail</h3>
+          <p>Envie confirmações de agendamento, lembretes, reagendamentos e cancelamentos sem depender do WhatsApp.</p>
+        </div>
+        <span id="cfgEmailResumo" class="remaining-badge">Carregando...</span>
+      </div>
+      <form id="fEmail" class="email-config-form">
+        <label class="check-line reminder-check"><input id="cfgEmailAutoAtivo" type="checkbox"> ✉️ Enviar e-mails automaticamente</label>
+        <div id="cfgEmailApiStatus" class="reminder-api-status">Verificando configuração do serviço de e-mail...</div>
+        <div id="cfgEmailEnviosStatus" class="config-rule-note">
+          Os e-mails automáticos ficam desativados por padrão e não interferem no WhatsApp.
+        </div>
+        <div class="email-config-actions">
+          <button type="button" id="processarEmailsAgora" class="secondary">✉️ Processar agora</button>
+          <button type="submit" id="salvarEmail">💾 Salvar e-mail</button>
+        </div>
+        <div id="erroEmail" class="erro hide"></div>
+      </form>
+    </article>
+
     <div class="config-grid">
       <article class="card config-card">
         <div class="head compact">
@@ -931,6 +953,6 @@
 </div>
 
 <div id="toast" class="toast hide"></div>
-<script src="app.js?v=3.3.0"></script>
+<script src="app.js?v=3.4.0"></script>
 </body>
 </html>
