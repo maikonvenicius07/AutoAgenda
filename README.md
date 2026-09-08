@@ -1,4 +1,4 @@
-# AutoAgenda V3.5.0
+# AutoAgenda V3.6.0
 
 Sistema de organização de aulas práticas para autoescola, com backend Node/Express, PostgreSQL e deploy no Render.
 
@@ -183,6 +183,31 @@ Não é necessário executar SQL manualmente.
 
 Nenhuma dependência externa nova foi adicionada.
 
+
+
+## V3.6.0 — Estratégia de backup automático do PostgreSQL
+
+A V3.6.0 fecha o roteiro de estabilização/evolução com uma estratégia de proteção em camadas:
+
+- o backup manual JSON e a restauração segura da V3.5 continuam disponíveis no próprio AutoAgenda;
+- foi criada a tabela `autoagenda.backup_execucoes` para registrar somente metadados seguros das execuções externas;
+- a aba **Backup** mostra a última execução, último sucesso, tamanho, retenção e eventual falha;
+- foi adicionada uma rotina opcional em `infrastructure/postgres-backup/` que usa `pg_dump` em formato custom, valida o arquivo com `pg_restore --list`, calcula SHA-256, envia para Amazon S3 e remove objetos mais antigos que a retenção configurada;
+- a rotina registra `INICIADO`, `ENVIADO` ou `FALHOU` no PostgreSQL para auditoria no painel;
+- nenhuma chave AWS, `DATABASE_URL` ou outra credencial é colocada no código;
+- o `render.yaml` principal não cria Cron Job automaticamente, evitando cobrança inesperada;
+- o exemplo `render-backup.example.yaml` é apenas um modelo para ativação futura;
+- retenção externa sugerida: 30 dias (configurável);
+- a restauração PostgreSQL nativa está documentada no README específico da infraestrutura.
+
+### Proteção do próprio Render
+
+Em instâncias **pagas** do Render Postgres, o Render oferece recuperação point-in-time (PITR). A janela de recuperação depende do plano do workspace. O AutoAgenda não consegue ativar ou consultar esse recurso pela aplicação: confirme-o na área **Recovery** do banco no painel do Render.
+
+### Backup externo opcional
+
+Para manter uma cópia fora do Render, consulte `infrastructure/postgres-backup/README.md`. A ativação exige um Cron Job do Render e armazenamento S3 (ou solução equivalente), portanto pode gerar custo e **não é habilitada automaticamente** por esta versão.
+
 ## V3.5.0 — Restauração segura de backup JSON
 
 - nova área de restauração dentro da aba **Backup**;
@@ -204,7 +229,7 @@ Consulte `CHECKLIST_V3.5.0.md` antes de restaurar dados reais.
 
 ## Próximo passo recomendado
 
-A restauração segura foi concluída. O próximo item do roteiro é o **PROMPT 11 — backup automático do PostgreSQL**.
+O roteiro original de 11 prompts foi concluído na V3.6.0. As próximas evoluções passam a ser organizadas por prioridade e necessidade real.
 
 ## V3.2.0 — Confirmação pelo próprio aluno
 

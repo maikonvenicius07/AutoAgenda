@@ -1,0 +1,28 @@
+# EXEMPLO OPCIONAL — NÃO É USADO PELO render.yaml PRINCIPAL.
+# Só crie este Cron Job depois de decidir ativar armazenamento externo.
+# Horários do Render Cron usam UTC. 07:00 UTC = 03:00 em Porto Velho (UTC-4).
+services:
+  - type: cron
+    name: autoagenda-postgres-backup
+    runtime: docker
+    plan: 0.5c-512mb
+    schedule: "0 7 * * *"
+    dockerfilePath: ./infrastructure/postgres-backup/Dockerfile
+    dockerContext: .
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: AWS_REGION
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: S3_BUCKET_NAME
+        sync: false
+      - key: S3_PREFIX
+        value: autoagenda/postgres
+      - key: BACKUP_RETENTION_DAYS
+        value: "30"
+      - key: BACKUP_LOG_RETENTION_DAYS
+        value: "365"

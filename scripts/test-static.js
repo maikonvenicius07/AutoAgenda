@@ -12,7 +12,7 @@ function test(name, ok, detail='') {
   if (!ok) failed++;
 }
 
-for (const f of ['server.js','package.json','package-lock.json','public/index.html','public/app.js','public/style.css','sql/schema.sql','render.yaml']) {
+for (const f of ['server.js','package.json','package-lock.json','public/index.html','public/app.js','public/style.css','sql/schema.sql','render.yaml','infrastructure/postgres-backup/Dockerfile','infrastructure/postgres-backup/backup-postgres-s3.sh','infrastructure/postgres-backup/render-backup.example.yaml','infrastructure/postgres-backup/README.md']) {
   test(`arquivo essencial: ${f}`, exists(f));
 }
 
@@ -62,7 +62,7 @@ const requiredRoutes = [
   'POST /api/instrutores','PUT /api/instrutores/:id','POST /api/veiculos','PUT /api/veiculos/:id','POST /api/locais','PUT /api/locais/:id',
   'GET /api/horarios-livres','GET /api/planos','POST /api/planos','POST /api/planos/preview','PATCH /api/planos/:id/encerrar',
   'GET /api/dashboard/resumo','GET /api/relatorios/resumo','GET /api/financeiro','POST /api/financeiro',
-  'GET /api/backup/resumo','GET /api/backup/exportar','POST /api/backup/restaurar/validar','POST /api/backup/restaurar/executar','GET /api/aulas','POST /api/aulas','PUT /api/aulas/:id','DELETE /api/aulas/:id',
+  'GET /api/backup/resumo','GET /api/backup/automatico/status','GET /api/backup/exportar','POST /api/backup/restaurar/validar','POST /api/backup/restaurar/executar','GET /api/aulas','POST /api/aulas','PUT /api/aulas/:id','DELETE /api/aulas/:id',
   'POST /api/aulas/:id/reposicao','PUT /api/aulas/:id/serie','PATCH /api/aulas/:id/confirmacao','PATCH /api/aulas/:id/status',
   'GET /api/configuracoes/lembretes','PUT /api/configuracoes/lembretes','GET /api/lembretes','POST /api/lembretes/processar-agora',
   'GET /api/configuracoes/email','PUT /api/configuracoes/email','POST /api/email/processar-agora'
@@ -122,7 +122,21 @@ test('restauração cancela comunicações pendentes', server.includes("['PENDEN
 test('restauração protege FK autorreferente de reposição', server.includes('UPDATE autoagenda.aulas SET reposicao_de_id=NULL'));
 test('interface de restauração exige arquivo, ciência e texto RESTAURAR', html.includes('backupRestaurarArquivo') && html.includes('backupRestaurarCiente') && html.includes('backupRestaurarTexto') && app.includes("texto === 'RESTAURAR'"));
 
-test('schema contém tabelas principais', ['alunos','instrutores','veiculos','locais','aulas','planos_aula','financeiro','usuarios','sessoes','configuracoes','lembrete_envios','email_envios'].every(t=>schema.includes(`autoagenda.${t}`)));
+const backupScript = read('infrastructure/postgres-backup/backup-postgres-s3.sh');
+const backupBlueprint = read('infrastructure/postgres-backup/render-backup.example.yaml');
+const mainRender = read('render.yaml');
+const bashCheck = cp.spawnSync('bash', ['-n', path.join(root,'infrastructure/postgres-backup/backup-postgres-s3.sh')], {encoding:'utf8'});
+test('script de backup PostgreSQL tem sintaxe shell válida', bashCheck.status === 0, (bashCheck.stderr||'').trim());
+test('backup nativo usa pg_dump custom e valida com pg_restore', backupScript.includes('pg_dump "$DATABASE_URL"') && backupScript.includes('--format=custom') && backupScript.includes('pg_restore --list'));
+test('backup calcula SHA-256 antes do upload', backupScript.includes('sha256sum') && backupScript.includes('FILE_SHA256'));
+test('backup externo usa S3 e retenção configurável', backupScript.includes('aws s3 cp') && backupScript.includes('BACKUP_RETENTION_DAYS') && backupScript.includes('delete-object'));
+test('credenciais do backup ficam em variáveis de ambiente', ['DATABASE_URL','AWS_REGION','AWS_ACCESS_KEY_ID','AWS_SECRET_ACCESS_KEY','S3_BUCKET_NAME'].every(x=>backupScript.includes(x)) && !/AKIA[0-9A-Z]{16}/.test(backupScript+backupBlueprint));
+test('Cron Job externo não é criado pelo render.yaml principal', !/autoagenda-postgres-backup/.test(mainRender) && backupBlueprint.includes('type: cron') && backupBlueprint.includes('autoagenda-postgres-backup'));
+test('histórico técnico de backup PostgreSQL existe no schema', schema.includes('autoagenda.backup_execucoes') && ['INICIADO','ENVIADO','FALHOU'].every(x=>schema.includes(`'${x}'`)));
+test('API e interface exibem status do backup automático', server.includes("app.get('/api/backup/automatico/status'") && html.includes('backupAutoStatus') && app.includes('carregarBackupAutomaticoStatus'));
+test('histórico técnico não entra no backup JSON operacional', !server.includes("backup_execucoes: { tabela: 'backup_execucoes'"));
+
+test('schema contém tabelas principais', ['alunos','instrutores','veiculos','locais','aulas','planos_aula','financeiro','usuarios','sessoes','configuracoes','lembrete_envios','email_envios','backup_execucoes'].every(t=>schema.includes(`autoagenda.${t}`)));
 const deps = Object.keys(pkg.dependencies||{}).sort();
 test('dependências diretas esperadas', JSON.stringify(deps)===JSON.stringify(['dotenv','express','pg']), deps.join(', '));
 test('sem automação não oficial de WhatsApp Web', !deps.some(d=>['whatsapp-web.js','puppeteer','playwright','selenium-webdriver'].includes(d)) && !/whatsapp-web\.js|puppeteer|playwright|selenium-webdriver/i.test(server));

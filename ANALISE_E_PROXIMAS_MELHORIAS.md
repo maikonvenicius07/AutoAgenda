@@ -1,39 +1,31 @@
-# Análise atual — AutoAgenda V3.5.0
+# Análise atual — AutoAgenda V3.6.0
 
 ## Situação
 
-O roteiro principal de 17 etapas foi concluído. A fase posterior de estabilização também foi concluída e as novas evoluções já incluem confirmação pelo aluno, preparação do WhatsApp oficial, e-mail transacional e restauração segura do backup completo JSON.
+O roteiro principal de 17 etapas, os 6 passos de estabilização e os 5 passos de evolução planejados foram concluídos.
 
-## Recursos consolidados
+A V3.6.0 adiciona a última camada prevista no roteiro: estratégia de backup automático nativo do PostgreSQL, mantendo a ativação externa opcional para não gerar custo inesperado.
 
-- login individual com perfis ADMIN e INSTRUTOR;
-- cadastro de alunos com data de nascimento;
-- agenda diária e semanal;
-- planos automáticos e controle de saldo;
-- disponibilidade e conflitos de aluno/instrutor/veículo;
-- reagendamento, histórico e confirmações;
-- WhatsApp manual e confirmação pública por link seguro;
-- arquitetura preparada para lembretes automáticos via WhatsApp Cloud API;
-- arquitetura preparada para e-mails transacionais;
-- dashboard, relatórios e financeiro;
-- backup CSV, Excel e JSON;
-- restauração segura do backup completo JSON;
-- modo claro/escuro;
-- testes estáticos reutilizáveis.
+## Proteção de dados consolidada
 
-## Segurança da restauração V3.5.0
+- exportação CSV, Excel e JSON;
+- backup completo JSON;
+- restauração JSON segura e transacional;
+- usuários/senhas preservados na restauração operacional;
+- estrutura opcional de `pg_dump` + S3;
+- auditoria das execuções externas no painel;
+- documentação de PITR/Recovery do Render;
+- procedimento de restauração PostgreSQL em banco isolado.
 
-- somente ADMIN;
-- validação prévia do arquivo e resumo antes de executar;
-- digest SHA-256 entre análise e execução;
-- transação PostgreSQL com rollback;
-- bloqueio contra restaurações/communications concorrentes;
-- usuários, senhas e sessões preservados;
-- automações desligadas após restaurar;
-- comunicações pendentes canceladas para evitar disparo inesperado.
+## Situação do backup automático externo
 
-## Próximo passo do roteiro
+A estrutura está pronta, porém **não está ativada automaticamente**.
 
-**PROMPT 11 — Backup automático do PostgreSQL.**
+Motivo: o Cron Job do Render e o armazenamento S3 são recursos externos que podem gerar custo e exigem credenciais próprias.
 
-Depois dele, permanecem como melhorias futuras já registradas a mensagem automática de aniversário e Webhooks de status do WhatsApp.
+## Próximas melhorias futuras já registradas
+
+1. mensagem automática de **Feliz Aniversário** usando a data de nascimento do aluno;
+2. Webhooks para acompanhar status de entrega/leitura do WhatsApp oficial;
+3. evolução da confirmação/reagendamento conforme uso real;
+4. demais melhorias que forem identificadas durante o uso da V3.6.0.

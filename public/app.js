@@ -43,6 +43,7 @@ let financeiroCarregado = false;
 let financeiroMostrarArquivados = false;
 let backupData = { contagens: {}, total_registros: 0 };
 let backupCarregado = false;
+let backupAutomaticoData = { ultima_execucao:null, ultimo_sucesso:null, ultimas_execucoes:[] };
 let restauracaoBackup = { texto:'', digest:'', resumo:null, arquivo:'' };
 let configInstrutores = [], configVeiculos = [], configLocais = [];
 let configFuncionamento = {
@@ -1456,7 +1457,7 @@ async function health() {
   try {
     const h = await api('/api/health');
     const seguranca = h.security_ready ? ' · 🔐 login individual ativo' : ' · ⛔ login individual precisa ser inicializado';
-    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '3.5.0'}${seguranca}.`;
+    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '3.6.0'}${seguranca}.`;
     $('#db').className = h.security_ready ? 'db ok' : 'db fail';
   } catch {
     $('#db').textContent = '🔴 Banco não conectado. Verifique DATABASE_URL no Render.';
@@ -2892,13 +2893,63 @@ function renderBackupResumo() {
   }
 }
 
+function formatarBytesBackup(valor) {
+  const n = Number(valor || 0);
+  if (!Number.isFinite(n) || n <= 0) return '—';
+  const unidades = ['B','KB','MB','GB','TB'];
+  let v = n, i = 0;
+  while (v >= 1024 && i < unidades.length - 1) { v /= 1024; i++; }
+  return `${v.toFixed(i ? 1 : 0)} ${unidades[i]}`;
+}
+
+function renderBackupAutomaticoStatus() {
+  const box = $('#backupAutoStatus');
+  const badge = $('#backupAutoBadge');
+  if (!box || !badge) return;
+  const ultima = backupAutomaticoData?.ultima_execucao || null;
+  const sucesso = backupAutomaticoData?.ultimo_sucesso || null;
+  if (!ultima) {
+    badge.textContent = 'Não ativado / sem execução';
+    box.innerHTML = '<div class="backup-auto-empty">Nenhuma execução externa foi registrada ainda. O backup manual JSON continua disponível normalmente.</div>';
+    return;
+  }
+  const status = String(ultima.status || '').toUpperCase();
+  const classe = status === 'ENVIADO' ? 'ok' : (status === 'FALHOU' ? 'erro' : 'andamento');
+  badge.textContent = status === 'ENVIADO' ? 'Último backup OK' : (status === 'FALHOU' ? 'Último backup falhou' : 'Backup em andamento');
+  const quando = dataHoraBackup(ultima.concluido_em || ultima.iniciado_em);
+  const ultimoOk = sucesso ? dataHoraBackup(sucesso.concluido_em || sucesso.iniciado_em) : 'nenhum registrado';
+  box.innerHTML = `
+    <div class="backup-auto-grid">
+      <div><small>Última execução</small><b class="backup-auto-${classe}">${esc(status || '—')}</b><span>${esc(quando || '—')}</span></div>
+      <div><small>Arquivo</small><b>${esc(ultima.arquivo || '—')}</b><span>${esc(formatarBytesBackup(ultima.tamanho_bytes))}</span></div>
+      <div><small>Retenção externa</small><b>${ultima.retencao_dias ? `${Number(ultima.retencao_dias)} dias` : '—'}</b><span>configurada no Cron Job</span></div>
+      <div><small>Último sucesso</small><b>${esc(ultimoOk)}</b><span>${sucesso?.sha256 ? `SHA-256 ${esc(String(sucesso.sha256).slice(0,12))}…` : 'sem hash registrado'}</span></div>
+    </div>
+    ${ultima.erro ? `<div class="backup-auto-error">⚠️ ${esc(ultima.erro)}</div>` : ''}
+  `;
+}
+
+async function carregarBackupAutomaticoStatus() {
+  try {
+    backupAutomaticoData = await api('/api/backup/automatico/status');
+    renderBackupAutomaticoStatus();
+  } catch (e) {
+    if ($('#backupAutoBadge')) $('#backupAutoBadge').textContent = 'Status indisponível';
+    if ($('#backupAutoStatus')) $('#backupAutoStatus').innerHTML = `<div class="backup-auto-error">${esc(e.message || 'Não foi possível carregar o histórico do backup automático.')}</div>`;
+  }
+}
+
 async function carregarBackupResumo(forcar = false) {
-  if (backupCarregado && !forcar) return renderBackupResumo();
+  if (backupCarregado && !forcar) {
+    renderBackupResumo();
+    return carregarBackupAutomaticoStatus();
+  }
   try {
     if ($('#backupResumoBadge')) $('#backupResumoBadge').textContent = 'Atualizando...';
     backupData = await api('/api/backup/resumo');
     backupCarregado = true;
     renderBackupResumo();
+    await carregarBackupAutomaticoStatus();
   } catch (e) {
     if ($('#backupResumoBadge')) $('#backupResumoBadge').textContent = 'Resumo indisponível';
     toast(e.message || 'Erro ao carregar resumo do backup.');

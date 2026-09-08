@@ -8,7 +8,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '3.5.0';
+const APP_VERSION = '3.6.0';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -1043,6 +1043,30 @@ async function initDatabase() {
     await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_email_envios_fila ON autoagenda.email_envios(status, agendado_em)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_email_envios_aula ON autoagenda.email_envios(aula_id, evento)');
     await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_email_envios_plano ON autoagenda.email_envios(plan_id, evento)');
+
+    // V3.6 — auditoria do backup nativo do PostgreSQL executado externamente.
+    // A rotina de dump roda em um Cron Job separado e registra aqui apenas metadados
+    // seguros (status, nome do arquivo, destino, tamanho e hash), nunca credenciais.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS autoagenda.backup_execucoes (
+        id BIGSERIAL PRIMARY KEY,
+        tipo VARCHAR(30) NOT NULL DEFAULT 'POSTGRES_S3'
+          CHECK (tipo IN ('POSTGRES_S3')),
+        status VARCHAR(20) NOT NULL DEFAULT 'INICIADO'
+          CHECK (status IN ('INICIADO','ENVIADO','FALHOU')),
+        arquivo VARCHAR(255),
+        destino TEXT,
+        tamanho_bytes BIGINT CHECK (tamanho_bytes IS NULL OR tamanho_bytes >= 0),
+        sha256 CHAR(64),
+        retencao_dias INTEGER CHECK (retencao_dias IS NULL OR retencao_dias BETWEEN 1 AND 3650),
+        iniciado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+        concluido_em TIMESTAMP,
+        erro TEXT,
+        criado_em TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_backup_execucoes_inicio ON autoagenda.backup_execucoes(iniciado_em DESC)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_backup_execucoes_status ON autoagenda.backup_execucoes(status, iniciado_em DESC)');
 
     // V2.8 — financeiro simples separado da lógica da agenda.
     // O saldo financeiro é calculado a partir de valor_pacote - valor_pago para evitar divergências.
@@ -5703,6 +5727,45 @@ app.get('/api/backup/resumo', async (req, res) => {
   } catch (error) {
     console.error('Erro ao carregar resumo de backup:', error);
     res.status(500).json({ error: 'Erro ao carregar resumo de backup.' });
+  }
+});
+
+// V3.6 — status do backup nativo PostgreSQL/S3.
+// A execução é externa ao web service (Cron Job), portanto esta rota apenas lê
+// o histórico gravado pela rotina e nunca recebe/expõe credenciais de armazenamento.
+app.get('/api/backup/automatico/status', async (req, res) => {
+  try {
+    const ultimas = await query(`
+      SELECT id, tipo, status, arquivo, destino, tamanho_bytes, sha256, retencao_dias,
+             iniciado_em, concluido_em, erro
+      FROM autoagenda.backup_execucoes
+      ORDER BY iniciado_em DESC, id DESC
+      LIMIT 10
+    `);
+    const sucessoQ = await query(`
+      SELECT id, tipo, status, arquivo, destino, tamanho_bytes, sha256, retencao_dias,
+             iniciado_em, concluido_em, erro
+      FROM autoagenda.backup_execucoes
+      WHERE status='ENVIADO'
+      ORDER BY concluido_em DESC NULLS LAST, id DESC
+      LIMIT 1
+    `);
+    const ultima = ultimas.rows[0] || null;
+    const ultimoSucesso = sucessoQ.rows[0] || null;
+    res.json({
+      version: APP_VERSION,
+      modo: 'CRON_EXTERNO_OPCIONAL',
+      armazenamento_recomendado: 'S3',
+      retencao_recomendada_dias: 30,
+      cron_ativado_pelo_app: false,
+      observacao: 'A ativação do Cron Job e do armazenamento externo é feita no Render/AWS, fora do AutoAgenda.',
+      ultima_execucao: ultima,
+      ultimo_sucesso: ultimoSucesso,
+      ultimas_execucoes: ultimas.rows
+    });
+  } catch (error) {
+    console.error('Erro ao carregar status do backup automático:', error);
+    res.status(500).json({ error: 'Erro ao carregar status do backup automático.' });
   }
 });
 

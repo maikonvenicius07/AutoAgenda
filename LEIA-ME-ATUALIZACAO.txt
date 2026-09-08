@@ -1,15 +1,18 @@
-AUTOAGENDA V3.5.0 — RESTAURAÇÃO SEGURA DE BACKUP
+AUTOAGENDA V3.6.0 — BACKUP AUTOMÁTICO DO POSTGRESQL
 
 Atualize os arquivos deste pacote no GitHub mantendo a mesma estrutura de pastas.
 Nenhum arquivo precisa ser removido nesta etapa.
 
 Principais alterações:
-- restauração de backup completo JSON somente para ADMIN;
-- análise e resumo antes da execução;
-- confirmação explícita;
-- transação PostgreSQL com rollback;
-- usuários e senhas preservados;
-- automações de WhatsApp/e-mail desligadas após restauração;
-- CHECKLIST_V3.5.0.md e RELATORIO_V3.5.0.md.
+- tabela técnica autoagenda.backup_execucoes;
+- status do backup PostgreSQL na aba Backup;
+- scripts opcionais de pg_dump + S3 em infrastructure/postgres-backup/;
+- retenção externa configurável;
+- SHA-256 e validação com pg_restore --list;
+- documentação de recuperação e restauração;
+- CHECKLIST_V3.6.0.md e RELATORIO_V3.6.0.md.
 
-Depois do deploy, valide a restauração com dados de teste antes de usar sobre dados importantes.
+IMPORTANTE:
+O render.yaml principal NÃO cria o Cron Job externo.
+Portanto, o deploy desta versão não ativa cobrança adicional de backup por si só.
+A infraestrutura externa deve ser configurada separadamente somente quando você decidir ativá-la.

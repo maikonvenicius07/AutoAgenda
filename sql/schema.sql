@@ -1,4 +1,4 @@
--- AutoAgenda V3.5.0
+-- AutoAgenda V3.6.0
 -- Schema compatível com o server.js atual.
 -- O servidor cria/migra automaticamente; este arquivo serve para referência e execução manual controlada.
 
@@ -279,6 +279,28 @@ CREATE INDEX IF NOT EXISTS idx_autoagenda_email_envios_aula
   ON autoagenda.email_envios(aula_id, evento);
 CREATE INDEX IF NOT EXISTS idx_autoagenda_email_envios_plano
   ON autoagenda.email_envios(plan_id, evento);
+
+-- V3.6 — auditoria do backup nativo PostgreSQL executado por Cron Job externo.
+CREATE TABLE IF NOT EXISTS autoagenda.backup_execucoes (
+  id BIGSERIAL PRIMARY KEY,
+  tipo VARCHAR(30) NOT NULL DEFAULT 'POSTGRES_S3'
+    CHECK (tipo IN ('POSTGRES_S3')),
+  status VARCHAR(20) NOT NULL DEFAULT 'INICIADO'
+    CHECK (status IN ('INICIADO','ENVIADO','FALHOU')),
+  arquivo VARCHAR(255),
+  destino TEXT,
+  tamanho_bytes BIGINT CHECK (tamanho_bytes IS NULL OR tamanho_bytes >= 0),
+  sha256 CHAR(64),
+  retencao_dias INTEGER CHECK (retencao_dias IS NULL OR retencao_dias BETWEEN 1 AND 3650),
+  iniciado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+  concluido_em TIMESTAMP,
+  erro TEXT,
+  criado_em TIMESTAMP NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_autoagenda_backup_execucoes_inicio
+  ON autoagenda.backup_execucoes(iniciado_em DESC);
+CREATE INDEX IF NOT EXISTS idx_autoagenda_backup_execucoes_status
+  ON autoagenda.backup_execucoes(status, iniciado_em DESC);
 
 CREATE TABLE IF NOT EXISTS autoagenda.financeiro (
   id SERIAL PRIMARY KEY,

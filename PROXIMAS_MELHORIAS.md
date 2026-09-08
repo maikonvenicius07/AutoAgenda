@@ -2,37 +2,28 @@
 
 ## Situação atual
 
-Versão: **V3.5.0 — Restauração segura de backup JSON**
+Versão: **V3.6.0 — Estratégia de backup automático do PostgreSQL**
 
-O roteiro principal de 17 etapas e a fase de estabilização foram concluídos.
+O roteiro original está concluído:
 
-Melhorias posteriores já entregues:
-1. limpeza e organização do projeto;
-2. `.gitignore`;
-3. `package-lock.json`;
-4. alinhamento do `schema.sql`;
-5. auditoria de segurança e permissões;
-6. testes estáticos ampliados;
-7. confirmação da aula pelo próprio aluno;
-8. lembretes automáticos preparados para WhatsApp Cloud API;
-9. envio automático de e-mails preparado;
-10. restauração segura de backup completo JSON.
+- 17 etapas principais: concluídas;
+- 6 passos de estabilização: concluídos;
+- confirmação pelo aluno: concluída;
+- preparação do WhatsApp automático: concluída;
+- preparação do e-mail automático: concluída;
+- restauração segura de backup JSON: concluída;
+- estrutura de backup PostgreSQL automático: concluída.
 
-## Próximo passo do roteiro
+## Próximas evoluções
 
-**PROMPT 11 — Backup automático do PostgreSQL**
+### 1. Aniversário automático do aluno
 
-Objetivo:
-- definir rotina segura e periódica de backup do banco PostgreSQL;
-- manter credenciais somente em ambiente seguro;
-- definir retenção de backups;
-- registrar sucesso/falha;
-- documentar localização dos arquivos e procedimento de emergência;
-- não interromper o funcionamento do AutoAgenda;
-- informar claramente qualquer recurso pago necessário antes de torná-lo obrigatório.
+Usar `data_nascimento` para identificar aniversariantes do dia e, quando a integração oficial estiver ativa, enviar uma mensagem personalizada de Feliz Aniversário uma única vez por ano.
 
-## Melhorias futuras já registradas
+### 2. Webhooks do WhatsApp
 
-- mensagem automática de Feliz Aniversário usando a data de nascimento do aluno;
-- Webhooks para acompanhar entrega/leitura do WhatsApp;
-- outras integrações que venham a ser priorizadas.
+Registrar status real das mensagens aceitas pela Meta, como entrega/falha e outros estados disponibilizados pela plataforma.
+
+### 3. Melhorias guiadas pelo uso real
+
+Após utilizar a V3.6.0 em produção, priorizar correções e melhorias com base no fluxo diário dos instrutores e administradores.

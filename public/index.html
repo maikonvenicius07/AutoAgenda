@@ -14,7 +14,7 @@
       document.documentElement.dataset.theme = 'light';
     }
   </script>
-  <link rel="stylesheet" href="style.css?v=3.5.0">
+  <link rel="stylesheet" href="style.css?v=3.6.0">
 </head>
 <body class="auth-locked">
 <section id="loginScreen" class="login-screen">
@@ -413,6 +413,20 @@
         <button type="button" class="secondary" id="backupCompletoExcel">⬇️ Exportar tudo em Excel</button>
       </article>
     </div>
+
+    <article class="card backup-auto-card">
+      <div class="head compact">
+        <div>
+          <h3>🛡️ Backup automático do PostgreSQL</h3>
+          <p>Proteção adicional com dump nativo do PostgreSQL em armazenamento externo. A ativação é opcional e feita fora do AutoAgenda.</p>
+        </div>
+        <span id="backupAutoBadge" class="remaining-badge">Verificando...</span>
+      </div>
+      <div id="backupAutoStatus" class="backup-auto-status">Carregando histórico de execuções...</div>
+      <div class="backup-format-help">
+        <b>Importante:</b> o projeto não cria nenhum serviço pago automaticamente. Em banco Render pago, confirme também o recurso de recuperação do próprio Render. Para retenção externa maior, a V3.6 inclui uma rotina opcional de Cron Job + S3 em <code>infrastructure/postgres-backup/</code>.
+      </div>
+    </article>
 
     <article class="card backup-restore-card">
       <div class="head compact">
@@ -984,6 +998,6 @@
 </div>
 
 <div id="toast" class="toast hide"></div>
-<script src="app.js?v=3.5.0"></script>
+<script src="app.js?v=3.6.0"></script>
 </body>
 </html>
