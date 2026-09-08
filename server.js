@@ -8,7 +8,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '3.4.0';
+const APP_VERSION = '3.5.0';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -281,6 +281,14 @@ app.use((req, res, next) => {
   if (IS_PRODUCTION) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   next();
 });
+
+// V3.5 — restauração de backup JSON.
+// O parser ampliado é aplicado SOMENTE às duas rotas de restauração. As demais
+// APIs continuam limitadas a 1 MB, reduzindo a superfície de consumo de memória.
+const RESTORE_MAX_BYTES = 10 * 1024 * 1024;
+const backupRestoreRawParser = express.raw({ type: 'application/json', limit: '10mb' });
+app.use('/api/backup/restaurar/validar', backupRestoreRawParser);
+app.use('/api/backup/restaurar/executar', backupRestoreRawParser);
 
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: false, limit: '16kb' }));
@@ -5734,6 +5742,461 @@ app.get('/api/backup/exportar', async (req, res) => {
   } catch (error) {
     console.error('Erro ao exportar backup:', error);
     if (!res.headersSent) return res.status(500).json({ error: 'Erro ao gerar o arquivo de backup/exportação.' });
+  }
+});
+
+
+// ========================= V3.5 — RESTAURAÇÃO SEGURA DE BACKUP JSON =========================
+// A restauração substitui somente os dados operacionais exportados no backup completo.
+// Usuários, senhas e sessões são preservados; links de usuários INSTRUTOR são religados
+// pelo mesmo instrutor_id quando esse cadastro existir no backup restaurado.
+const RESTORE_BACKUP_VERSION = 1;
+const RESTORE_LOCK_KEY = 35003500;
+const RESTORE_CHAVES_PRINCIPAIS = Object.keys(EXPORTACOES);
+const RESTORE_CHAVES_SUPORTE = Object.keys(EXPORTACOES_SUPORTE);
+const RESTORE_CHAVES = [...RESTORE_CHAVES_PRINCIPAIS, ...RESTORE_CHAVES_SUPORTE];
+const RESTORE_COLUNAS_PROIBIDAS = new Set([
+  'confirmacao_token_hash',
+  'confirmacao_token_expira_em',
+  'confirmacao_token_usado_em'
+]);
+
+function objetoPlano(valor) {
+  return valor && typeof valor === 'object' && !Array.isArray(valor);
+}
+
+function compararVersoesSemver(a, b) {
+  const pa = String(a || '').split('.').map(Number);
+  const pb = String(b || '').split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    const x = Number.isFinite(pa[i]) ? pa[i] : 0;
+    const y = Number.isFinite(pb[i]) ? pb[i] : 0;
+    if (x !== y) return x > y ? 1 : -1;
+  }
+  return 0;
+}
+
+function lerPayloadRestauracao(req) {
+  let texto = '';
+  if (Buffer.isBuffer(req.body)) texto = req.body.toString('utf8');
+  else if (typeof req.body === 'string') texto = req.body;
+  else if (objetoPlano(req.body)) texto = JSON.stringify(req.body);
+
+  if (!texto || !texto.trim()) throw erroHttp(400, 'Selecione um arquivo JSON de backup do AutoAgenda.');
+  if (Buffer.byteLength(texto, 'utf8') > RESTORE_MAX_BYTES) {
+    throw erroHttp(413, 'O arquivo de backup excede o limite de 10 MB para restauração nesta versão.');
+  }
+
+  let payload;
+  try { payload = JSON.parse(texto); }
+  catch { throw erroHttp(400, 'O arquivo selecionado não contém um JSON válido.'); }
+  return { texto, payload, digest: hashSha256(texto) };
+}
+
+async function colunasAtuaisRestauracao(client) {
+  const tabelas = RESTORE_CHAVES.map(chave => EXPORTACOES_COMPLETAS[chave].tabela);
+  const q = await client.query(`
+    SELECT table_name, column_name, ordinal_position
+    FROM information_schema.columns
+    WHERE table_schema='autoagenda' AND table_name = ANY($1::text[])
+    ORDER BY table_name, ordinal_position
+  `, [tabelas]);
+  const mapa = {};
+  for (const row of q.rows) {
+    if (!mapa[row.table_name]) mapa[row.table_name] = [];
+    mapa[row.table_name].push(row.column_name);
+  }
+  return mapa;
+}
+
+function idsDoConjunto(registros, chave) {
+  const ids = new Set();
+  for (const r of registros) {
+    const id = Number(r?.id);
+    if (!Number.isInteger(id) || id < 1) throw erroHttp(400, `O conjunto ${chave} contém um registro sem id válido.`);
+    if (ids.has(id)) throw erroHttp(400, `O conjunto ${chave} contém id duplicado: ${id}.`);
+    ids.add(id);
+  }
+  return ids;
+}
+
+function validarReferencia(id, ids, mensagem) {
+  if (id === null || id === undefined || id === '') return;
+  const n = Number(id);
+  if (!Number.isInteger(n) || !ids.has(n)) throw erroHttp(400, mensagem.replace('{id}', String(id)));
+}
+
+function validarReferenciasBackup(dados) {
+  const ids = {};
+  for (const chave of RESTORE_CHAVES) ids[chave] = idsDoConjunto(dados[chave] || [], chave);
+
+  for (const r of dados.instrutor_indisponibilidades || []) {
+    validarReferencia(r.instrutor_id, ids.instrutores, 'Indisponibilidade referencia instrutor inexistente no backup: {id}.');
+  }
+  for (const r of dados.veiculo_indisponibilidades || []) {
+    validarReferencia(r.veiculo_id, ids.veiculos, 'Indisponibilidade referencia veículo inexistente no backup: {id}.');
+  }
+  for (const r of dados.planos || []) {
+    validarReferencia(r.aluno_id, ids.alunos, 'Plano referencia aluno inexistente no backup: {id}.');
+    validarReferencia(r.instrutor_id, ids.instrutores, 'Plano referencia instrutor inexistente no backup: {id}.');
+    validarReferencia(r.veiculo_id, ids.veiculos, 'Plano referencia veículo inexistente no backup: {id}.');
+    validarReferencia(r.local_id, ids.locais, 'Plano referencia local inexistente no backup: {id}.');
+  }
+  for (const r of dados.aulas || []) {
+    validarReferencia(r.aluno_id, ids.alunos, 'Aula referencia aluno inexistente no backup: {id}.');
+    validarReferencia(r.instrutor_id, ids.instrutores, 'Aula referencia instrutor inexistente no backup: {id}.');
+    validarReferencia(r.veiculo_id, ids.veiculos, 'Aula referencia veículo inexistente no backup: {id}.');
+    validarReferencia(r.local_id, ids.locais, 'Aula referencia local inexistente no backup: {id}.');
+    validarReferencia(r.plan_id, ids.planos, 'Aula referencia plano inexistente no backup: {id}.');
+    validarReferencia(r.reposicao_de_id, ids.aulas, 'Aula referencia aula de reposição inexistente no backup: {id}.');
+  }
+  for (const r of dados.financeiro || []) {
+    validarReferencia(r.aluno_id, ids.alunos, 'Financeiro referencia aluno inexistente no backup: {id}.');
+  }
+  for (const r of dados.lembrete_envios || []) {
+    validarReferencia(r.aula_id, ids.aulas, 'Lembrete referencia aula inexistente no backup: {id}.');
+  }
+  for (const r of dados.email_envios || []) {
+    validarReferencia(r.aula_id, ids.aulas, 'E-mail referencia aula inexistente no backup: {id}.');
+    validarReferencia(r.plan_id, ids.planos, 'E-mail referencia plano inexistente no backup: {id}.');
+  }
+}
+
+function validarBackupEstrutural(payload, colunasAtuais) {
+  if (!objetoPlano(payload)) throw erroHttp(400, 'Estrutura de backup inválida.');
+  if (payload.tipo !== 'AUTOAGENDA_BACKUP_COMPLETO') throw erroHttp(400, 'O arquivo não é um backup completo do AutoAgenda.');
+  if (Number(payload.versao_backup) !== RESTORE_BACKUP_VERSION) {
+    throw erroHttp(400, `Versão de backup incompatível. Esta versão aceita backup ${RESTORE_BACKUP_VERSION}.`);
+  }
+  if (payload.schema !== 'autoagenda' || payload.entidade !== 'completo') {
+    throw erroHttp(400, 'O arquivo não pertence ao schema completo do AutoAgenda.');
+  }
+  if (payload.credenciais_incluidas === true) {
+    throw erroHttp(400, 'Backup rejeitado porque declara conter credenciais.');
+  }
+  if (!/^\d+\.\d+\.\d+$/.test(String(payload.app_version || ''))) {
+    throw erroHttp(400, 'O backup não possui uma versão válida do AutoAgenda.');
+  }
+  if (compararVersoesSemver(payload.app_version, APP_VERSION) > 0) {
+    throw erroHttp(400, `Este backup foi gerado pelo AutoAgenda V${payload.app_version}, mais novo que a versão atual V${APP_VERSION}. Atualize o sistema antes de restaurá-lo.`);
+  }
+  if (!objetoPlano(payload.estrutura) || !objetoPlano(payload.dados)) {
+    throw erroHttp(400, 'O backup não contém as seções estrutura e dados esperadas.');
+  }
+
+  const desconhecidas = Object.keys(payload.dados).filter(k => !RESTORE_CHAVES.includes(k));
+  if (desconhecidas.length) throw erroHttp(400, `O backup contém conjunto(s) desconhecido(s): ${desconhecidas.join(', ')}.`);
+
+  const normalizados = {};
+  for (const chave of RESTORE_CHAVES) {
+    const def = EXPORTACOES_COMPLETAS[chave];
+    const obrigatorio = RESTORE_CHAVES_PRINCIPAIS.includes(chave);
+    const registros = payload.dados[chave];
+    const estrutura = payload.estrutura[chave];
+
+    if (obrigatorio && !Array.isArray(registros)) throw erroHttp(400, `O backup está incompleto: conjunto ${chave} ausente.`);
+    if (registros !== undefined && !Array.isArray(registros)) throw erroHttp(400, `O conjunto ${chave} precisa ser uma lista.`);
+    if (obrigatorio && !objetoPlano(estrutura)) throw erroHttp(400, `A estrutura do conjunto ${chave} está ausente.`);
+    if (estrutura && estrutura.tabela !== def.tabela) throw erroHttp(400, `Tabela incompatível no conjunto ${chave}.`);
+
+    const lista = Array.isArray(registros) ? registros : [];
+    if (lista.length > 50000) throw erroHttp(400, `O conjunto ${chave} excede o limite de 50.000 registros.`);
+    for (const r of lista) if (!objetoPlano(r)) throw erroHttp(400, `O conjunto ${chave} contém registro inválido.`);
+
+    const colunasDeclaradas = Array.isArray(estrutura?.colunas)
+      ? estrutura.colunas.map(String)
+      : (lista[0] ? Object.keys(lista[0]) : ['id']);
+    if (!colunasDeclaradas.includes('id') && chave !== 'configuracoes') {
+      throw erroHttp(400, `A estrutura do conjunto ${chave} não contém a coluna id.`);
+    }
+    const atuais = new Set(colunasAtuais[def.tabela] || []);
+    for (const coluna of colunasDeclaradas) {
+      if (!/^[a-z_][a-z0-9_]*$/i.test(coluna) || !atuais.has(coluna) || RESTORE_COLUNAS_PROIBIDAS.has(coluna)) {
+        throw erroHttp(400, `Coluna incompatível ou não restaurável em ${chave}: ${coluna}.`);
+      }
+    }
+    const permitidas = new Set(colunasDeclaradas);
+    for (const r of lista) {
+      for (const coluna of Object.keys(r)) {
+        if (!permitidas.has(coluna) || RESTORE_COLUNAS_PROIBIDAS.has(coluna)) {
+          throw erroHttp(400, `Registro de ${chave} contém coluna não declarada ou proibida: ${coluna}.`);
+        }
+      }
+    }
+    normalizados[chave] = lista;
+  }
+
+  if ((normalizados.configuracoes || []).length !== 1 || Number(normalizados.configuracoes[0]?.id) !== 1) {
+    throw erroHttp(400, 'O backup precisa conter exatamente a configuração principal id=1.');
+  }
+
+  const total = RESTORE_CHAVES.reduce((s, chave) => s + normalizados[chave].length, 0);
+  if (total > 100000) throw erroHttp(400, 'O backup excede o limite total de 100.000 registros.');
+  validarReferenciasBackup(normalizados);
+
+  return {
+    dados: normalizados,
+    total,
+    contagens: Object.fromEntries(RESTORE_CHAVES.map(chave => [chave, normalizados[chave].length]))
+  };
+}
+
+async function contagensAtuaisRestauracao(client) {
+  const out = {};
+  for (const chave of RESTORE_CHAVES) {
+    const tabela = EXPORTACOES_COMPLETAS[chave].tabela;
+    const q = await client.query(`SELECT COUNT(*)::int AS n FROM autoagenda.${tabela}`);
+    out[chave] = Number(q.rows[0]?.n || 0);
+  }
+  return out;
+}
+
+function identificadorSql(nome) {
+  return `"${String(nome).replace(/"/g, '""')}"`;
+}
+
+async function inserirLoteRestauracao(client, chave, registros, colunasDeclaradas, transformador = null) {
+  if (!registros.length) return;
+  const tabela = EXPORTACOES_COMPLETAS[chave].tabela;
+  const colunas = colunasDeclaradas.filter(c => !RESTORE_COLUNAS_PROIBIDAS.has(c));
+  const tamanhoLote = 100;
+
+  for (let inicio = 0; inicio < registros.length; inicio += tamanhoLote) {
+    const lote = registros.slice(inicio, inicio + tamanhoLote).map(r => transformador ? transformador({ ...r }) : { ...r });
+    const valores = [];
+    const grupos = lote.map((registro, linha) => {
+      const base = linha * colunas.length;
+      for (const coluna of colunas) valores.push(Object.prototype.hasOwnProperty.call(registro, coluna) ? registro[coluna] : null);
+      return `(${colunas.map((_, i) => `$${base + i + 1}`).join(',')})`;
+    });
+    await client.query(`
+      INSERT INTO autoagenda.${tabela} (${colunas.map(identificadorSql).join(',')})
+      VALUES ${grupos.join(',')}
+    `, valores);
+  }
+}
+
+async function ajustarSequenciaTabela(client, tabela) {
+  const q = await client.query(`SELECT pg_get_serial_sequence($1, 'id') AS seq`, [`autoagenda.${tabela}`]);
+  const seq = q.rows[0]?.seq;
+  if (!seq) return;
+  const m = await client.query(`SELECT COALESCE(MAX(id),0)::bigint AS max_id FROM autoagenda.${tabela}`);
+  const maxId = Number(m.rows[0]?.max_id || 0);
+  if (maxId > 0) await client.query(`SELECT setval($1::regclass, $2, true)`, [seq, maxId]);
+  else await client.query(`SELECT setval($1::regclass, 1, false)`, [seq]);
+}
+
+async function executarRestauracaoBackup(client, payload, validacao) {
+  const locked = await client.query(`SELECT pg_try_advisory_xact_lock($1) AS ok`, [RESTORE_LOCK_KEY]);
+  if (locked.rows[0]?.ok !== true) throw erroHttp(409, 'Já existe uma restauração em andamento. Tente novamente em instantes.');
+
+  // Não inicia a substituição enquanto um worker de comunicação estiver processando.
+  // Usamos as mesmas chaves dos workers para impedir novos envios até o COMMIT/ROLLBACK.
+  for (const workerLock of [33003300, 34003400]) {
+    const w = await client.query(`SELECT pg_try_advisory_xact_lock($1) AS ok`, [workerLock]);
+    if (w.rows[0]?.ok !== true) {
+      throw erroHttp(409, 'Há uma comunicação automática sendo processada neste momento. Aguarde alguns segundos e tente restaurar novamente.');
+    }
+  }
+
+  // Bloqueia o conjunto operacional de uma só vez para impedir alterações concorrentes
+  // durante a janela curta de substituição dos dados. Leituras/escritas aguardam o fim da transação.
+  await client.query(`
+    LOCK TABLE
+      autoagenda.email_envios, autoagenda.lembrete_envios, autoagenda.financeiro,
+      autoagenda.aulas, autoagenda.planos_aula, autoagenda.instrutor_indisponibilidades,
+      autoagenda.veiculo_indisponibilidades, autoagenda.configuracoes, autoagenda.alunos,
+      autoagenda.locais, autoagenda.veiculos, autoagenda.instrutores
+    IN ACCESS EXCLUSIVE MODE
+  `);
+
+  const vinculosQ = await client.query(`
+    SELECT u.id, u.instrutor_id, i.nome AS instrutor_nome, i.email AS instrutor_email, i.whatsapp AS instrutor_whatsapp
+    FROM autoagenda.usuarios u
+    JOIN autoagenda.instrutores i ON i.id=u.instrutor_id
+    WHERE u.perfil='INSTRUTOR' AND u.instrutor_id IS NOT NULL
+    ORDER BY u.id
+  `);
+  const vinculos = vinculosQ.rows.map(x => ({
+    usuario_id:Number(x.id), instrutor_id:Number(x.instrutor_id),
+    nome:String(x.instrutor_nome || '').trim().toLowerCase(),
+    email:String(x.instrutor_email || '').trim().toLowerCase(),
+    whatsapp:String(x.instrutor_whatsapp || '').replace(/\D/g, '')
+  }));
+
+  // A reposição usa uma FK autorreferente com ON DELETE RESTRICT. Zeramos
+  // apenas dentro da mesma transação antes de excluir as aulas, evitando que
+  // uma cadeia de reposições impeça a substituição completa do conjunto.
+  await client.query(`UPDATE autoagenda.aulas SET reposicao_de_id=NULL WHERE reposicao_de_id IS NOT NULL`);
+
+  const ordemExclusao = [
+    'email_envios','lembrete_envios','financeiro','aulas','planos',
+    'instrutor_indisponibilidades','veiculo_indisponibilidades','configuracoes',
+    'alunos','locais','veiculos','instrutores'
+  ];
+  for (const chave of ordemExclusao) {
+    const tabela = EXPORTACOES_COMPLETAS[chave].tabela;
+    await client.query(`DELETE FROM autoagenda.${tabela}`);
+  }
+
+  const estrutura = payload.estrutura || {};
+  const dados = validacao.dados;
+  const colunas = chave => Array.isArray(estrutura[chave]?.colunas)
+    ? estrutura[chave].colunas.map(String)
+    : (dados[chave][0] ? Object.keys(dados[chave][0]) : ['id']);
+
+  await inserirLoteRestauracao(client, 'instrutores', dados.instrutores, colunas('instrutores'));
+  await inserirLoteRestauracao(client, 'alunos', dados.alunos, colunas('alunos'));
+  await inserirLoteRestauracao(client, 'veiculos', dados.veiculos, colunas('veiculos'));
+  await inserirLoteRestauracao(client, 'locais', dados.locais, colunas('locais'));
+  await inserirLoteRestauracao(client, 'configuracoes', dados.configuracoes, colunas('configuracoes'));
+
+  await inserirLoteRestauracao(client, 'instrutor_indisponibilidades', dados.instrutor_indisponibilidades, colunas('instrutor_indisponibilidades'));
+  await inserirLoteRestauracao(client, 'veiculo_indisponibilidades', dados.veiculo_indisponibilidades, colunas('veiculo_indisponibilidades'));
+  await inserirLoteRestauracao(client, 'planos', dados.planos, colunas('planos'));
+
+  const reposicoes = new Map();
+  for (const a of dados.aulas) if (a.reposicao_de_id !== null && a.reposicao_de_id !== undefined) reposicoes.set(Number(a.id), Number(a.reposicao_de_id));
+  await inserirLoteRestauracao(client, 'aulas', dados.aulas, colunas('aulas'), r => {
+    if (Object.prototype.hasOwnProperty.call(r, 'reposicao_de_id')) r.reposicao_de_id = null;
+    return r;
+  });
+  for (const [id, reposicaoId] of reposicoes) {
+    await client.query(`UPDATE autoagenda.aulas SET reposicao_de_id=$1 WHERE id=$2`, [reposicaoId, id]);
+  }
+
+  await inserirLoteRestauracao(client, 'financeiro', dados.financeiro, colunas('financeiro'));
+  await inserirLoteRestauracao(client, 'lembrete_envios', dados.lembrete_envios, colunas('lembrete_envios'), r => {
+    if (['PENDENTE','PROCESSANDO'].includes(String(r.status || '').toUpperCase())) {
+      r.status = 'CANCELADO';
+      r.processando_em = null;
+      r.erro = 'Cancelado automaticamente durante a restauração para impedir envio inesperado.';
+    }
+    return r;
+  });
+  await inserirLoteRestauracao(client, 'email_envios', dados.email_envios, colunas('email_envios'), r => {
+    if (['PENDENTE','PROCESSANDO'].includes(String(r.status || '').toUpperCase())) {
+      r.status = 'CANCELADO';
+      r.processando_em = null;
+      r.erro = 'Cancelado automaticamente durante a restauração para impedir envio inesperado.';
+    }
+    return r;
+  });
+
+  // Sempre exige uma decisão consciente do ADMIN após a restauração. Assim, um
+  // backup antigo não dispara mensagens apenas porque as credenciais existem no Render.
+  await client.query(`
+    UPDATE autoagenda.configuracoes
+    SET whatsapp_automatico_ativo=FALSE,
+        email_automatico_ativo=FALSE,
+        atualizado_em=NOW()
+    WHERE id=1
+  `);
+
+  const instrutoresRestaurados = new Map(dados.instrutores.map(x => [Number(x.id), {
+    nome:String(x.nome || '').trim().toLowerCase(),
+    email:String(x.email || '').trim().toLowerCase(),
+    whatsapp:String(x.whatsapp || '').replace(/\D/g, '')
+  }]));
+  let vinculosRestaurados = 0;
+  let vinculosNaoEncontrados = 0;
+  for (const v of vinculos) {
+    const r = instrutoresRestaurados.get(v.instrutor_id);
+    const identidadeCompativel = Boolean(r && (
+      (v.nome && r.nome && v.nome === r.nome) ||
+      (v.email && r.email && v.email === r.email) ||
+      (v.whatsapp && r.whatsapp && v.whatsapp === r.whatsapp)
+    ));
+    if (identidadeCompativel) {
+      await client.query(`UPDATE autoagenda.usuarios SET instrutor_id=$1, atualizado_em=NOW() WHERE id=$2 AND perfil='INSTRUTOR'`, [v.instrutor_id, v.usuario_id]);
+      vinculosRestaurados++;
+    } else {
+      vinculosNaoEncontrados++;
+    }
+  }
+
+  for (const chave of RESTORE_CHAVES) {
+    if (chave === 'configuracoes') continue;
+    await ajustarSequenciaTabela(client, EXPORTACOES_COMPLETAS[chave].tabela);
+  }
+
+  return { vinculosRestaurados, vinculosNaoEncontrados };
+}
+
+app.post('/api/backup/restaurar/validar', async (req, res) => {
+  if (!usuarioEhAdmin(req)) return res.status(403).json({ error: 'Somente o administrador pode validar uma restauração.' });
+  const client = await pool.connect();
+  try {
+    const { payload, digest } = lerPayloadRestauracao(req);
+    const colunasAtuais = await colunasAtuaisRestauracao(client);
+    const validacao = validarBackupEstrutural(payload, colunasAtuais);
+    const atuais = await contagensAtuaisRestauracao(client);
+    const pendentes = [...validacao.dados.lembrete_envios, ...validacao.dados.email_envios]
+      .filter(x => ['PENDENTE','PROCESSANDO'].includes(String(x.status || '').toUpperCase())).length;
+    res.json({
+      ok: true,
+      digest,
+      arquivo: {
+        tipo: payload.tipo,
+        versao_backup: payload.versao_backup,
+        app_version: payload.app_version,
+        gerado_em: payload.gerado_em || null,
+        timezone_aplicacao: payload.timezone_aplicacao || null
+      },
+      total_registros: validacao.total,
+      contagens: validacao.contagens,
+      contagens_atuais: atuais,
+      usuarios_preservados: true,
+      credenciais_restauradas: false,
+      automacoes_serao_desativadas: true,
+      filas_pendentes_serao_canceladas: pendentes > 0,
+      aviso: 'A restauração substituirá os dados operacionais atuais. Usuários/senhas serão preservados e WhatsApp/e-mail automáticos ficarão desligados após a operação.'
+    });
+  } catch (error) {
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao validar o backup.' });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/backup/restaurar/executar', async (req, res) => {
+  if (!usuarioEhAdmin(req)) return res.status(403).json({ error: 'Somente o administrador pode executar uma restauração.' });
+  const confirmacao = String(req.get('X-AutoAgenda-Restore-Confirmation') || '').trim().toUpperCase();
+  if (confirmacao !== 'RESTAURAR') return res.status(400).json({ error: 'Confirmação de restauração inválida.' });
+
+  const client = await pool.connect();
+  try {
+    const { payload, digest } = lerPayloadRestauracao(req);
+    const digestEsperado = String(req.get('X-AutoAgenda-Backup-Digest') || '').trim().toLowerCase();
+    if (!/^[a-f0-9]{64}$/.test(digestEsperado) || digest !== digestEsperado) {
+      throw erroHttp(409, 'O arquivo mudou depois da análise. Analise o backup novamente antes de restaurar.');
+    }
+
+    const colunasAtuais = await colunasAtuaisRestauracao(client);
+    const validacao = validarBackupEstrutural(payload, colunasAtuais);
+    await client.query('BEGIN');
+    try {
+      const detalhes = await executarRestauracaoBackup(client, payload, validacao);
+      await client.query('COMMIT');
+      res.json({
+        ok: true,
+        restaurado: true,
+        total_registros: validacao.total,
+        contagens: validacao.contagens,
+        usuarios_preservados: true,
+        automacoes_desativadas: true,
+        ...detalhes,
+        mensagem: 'Backup restaurado com sucesso. As automações de WhatsApp e e-mail ficaram desativadas por segurança.'
+      });
+    } catch (error) {
+      try { await client.query('ROLLBACK'); } catch {}
+      throw error;
+    }
+  } catch (error) {
+    console.error('Erro ao restaurar backup:', error);
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao restaurar o backup. Nenhuma alteração parcial foi mantida.' });
+  } finally {
+    client.release();
   }
 });
 

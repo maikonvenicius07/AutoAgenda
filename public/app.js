@@ -43,6 +43,7 @@ let financeiroCarregado = false;
 let financeiroMostrarArquivados = false;
 let backupData = { contagens: {}, total_registros: 0 };
 let backupCarregado = false;
+let restauracaoBackup = { texto:'', digest:'', resumo:null, arquivo:'' };
 let configInstrutores = [], configVeiculos = [], configLocais = [];
 let configFuncionamento = {
   dias_funcionamento: [0,1,2,3,4,5,6],
@@ -1455,7 +1456,7 @@ async function health() {
   try {
     const h = await api('/api/health');
     const seguranca = h.security_ready ? ' · 🔐 login individual ativo' : ' · ⛔ login individual precisa ser inicializado';
-    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '3.4.0'}${seguranca}.`;
+    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '3.5.0'}${seguranca}.`;
     $('#db').className = h.security_ready ? 'db ok' : 'db fail';
   } catch {
     $('#db').textContent = '🔴 Banco não conectado. Verifique DATABASE_URL no Render.';
@@ -2938,6 +2939,139 @@ function baixarBackup(formato, entidadeForcada = '') {
   a.remove();
 }
 
+
+
+// ========================= V3.5 — RESTAURAÇÃO DE BACKUP =========================
+function resetarRestauracaoBackup(manterArquivo = false) {
+  restauracaoBackup = { texto:'', digest:'', resumo:null, arquivo: manterArquivo ? ($('#backupRestaurarArquivo')?.files?.[0]?.name || '') : '' };
+  const resumo = $('#backupRestaurarResumo');
+  const confirmacao = $('#backupRestaurarConfirmacao');
+  if (resumo) { resumo.innerHTML = ''; resumo.classList.add('hide'); }
+  if (confirmacao) confirmacao.classList.add('hide');
+  if ($('#backupRestaurarCiente')) $('#backupRestaurarCiente').checked = false;
+  if ($('#backupRestaurarTexto')) $('#backupRestaurarTexto').value = '';
+  atualizarBotaoRestauracao();
+}
+
+function atualizarBotaoRestauracao() {
+  const btn = $('#backupRestaurarExecutar');
+  if (!btn) return;
+  const ciente = $('#backupRestaurarCiente')?.checked === true;
+  const texto = String($('#backupRestaurarTexto')?.value || '').trim().toUpperCase();
+  btn.disabled = !(restauracaoBackup.digest && restauracaoBackup.texto && ciente && texto === 'RESTAURAR');
+}
+
+function dataHoraBackup(valor) {
+  if (!valor) return 'Não informado';
+  const d = new Date(valor);
+  if (Number.isNaN(d.getTime())) return String(valor);
+  return d.toLocaleString('pt-BR');
+}
+
+function renderResumoRestauracao(r) {
+  const box = $('#backupRestaurarResumo');
+  const confirmacao = $('#backupRestaurarConfirmacao');
+  if (!box || !confirmacao) return;
+  const nomes = {
+    alunos:'Alunos', instrutores:'Instrutores', veiculos:'Veículos', locais:'Locais', aulas:'Aulas',
+    planos:'Planos', financeiro:'Financeiro', configuracoes:'Configurações',
+    instrutor_indisponibilidades:'Indisp. instrutores', veiculo_indisponibilidades:'Indisp. veículos',
+    lembrete_envios:'Histórico WhatsApp', email_envios:'Histórico e-mails'
+  };
+  const ordem = ['alunos','instrutores','veiculos','locais','planos','aulas','financeiro','configuracoes','instrutor_indisponibilidades','veiculo_indisponibilidades','lembrete_envios','email_envios'];
+  const linhas = ordem.map(chave => `
+    <tr>
+      <td>${esc(nomes[chave] || chave)}</td>
+      <td>${Number(r.contagens_atuais?.[chave] || 0)}</td>
+      <td><b>${Number(r.contagens?.[chave] || 0)}</b></td>
+    </tr>`).join('');
+
+  box.innerHTML = `
+    <h4>✅ Backup válido e pronto para restauração</h4>
+    <div class="backup-restore-meta">
+      <div><small>Arquivo</small><b>${esc(restauracaoBackup.arquivo || 'backup.json')}</b></div>
+      <div><small>Versão de origem</small><b>AutoAgenda V${esc(r.arquivo?.app_version || '?')}</b></div>
+      <div><small>Gerado em</small><b>${esc(dataHoraBackup(r.arquivo?.gerado_em))}</b></div>
+      <div><small>Total no backup</small><b>${Number(r.total_registros || 0)} registro(s)</b></div>
+    </div>
+    <table class="backup-restore-table">
+      <thead><tr><th>Conjunto</th><th>Atual</th><th>Após restaurar</th></tr></thead>
+      <tbody>${linhas}</tbody>
+    </table>
+    <div class="backup-format-help" style="margin-top:10px">
+      🔐 <b>Contas de acesso serão preservadas.</b> WhatsApp e e-mail automáticos ficarão desligados após a restauração. Registros de comunicação que estavam PENDENTES/PROCESSANDO no backup serão cancelados para evitar envio inesperado.
+    </div>`;
+  box.classList.remove('hide');
+  confirmacao.classList.remove('hide');
+  atualizarBotaoRestauracao();
+}
+
+async function analisarBackupRestauracao() {
+  if (!usuarioAdmin()) return toast('Somente o administrador pode restaurar backups.');
+  const input = $('#backupRestaurarArquivo');
+  const arquivo = input?.files?.[0];
+  if (!arquivo) return toast('Selecione um arquivo JSON de backup.');
+  if (!/\.json$/i.test(arquivo.name || '')) return toast('Selecione um arquivo com extensão .json.');
+  if (arquivo.size > 10 * 1024 * 1024) return toast('O arquivo excede o limite de 10 MB desta versão.');
+
+  const btn = $('#backupRestaurarAnalisar');
+  try {
+    resetarRestauracaoBackup(true);
+    if (btn) { btn.disabled = true; btn.textContent = 'Analisando...'; }
+    const texto = await arquivo.text();
+    try { JSON.parse(texto); } catch { throw new Error('O arquivo selecionado não contém um JSON válido.'); }
+    restauracaoBackup.texto = texto;
+    restauracaoBackup.arquivo = arquivo.name;
+    const r = await api('/api/backup/restaurar/validar', { method:'POST', body:texto });
+    restauracaoBackup.digest = r.digest || '';
+    restauracaoBackup.resumo = r;
+    renderResumoRestauracao(r);
+    toast('✅ Backup validado. Confira o resumo antes de restaurar.');
+  } catch (e) {
+    resetarRestauracaoBackup(true);
+    toast(e.message || 'Erro ao analisar o backup.');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🔎 Analisar backup'; }
+  }
+}
+
+async function executarBackupRestauracao() {
+  if (!usuarioAdmin()) return toast('Somente o administrador pode restaurar backups.');
+  if (!restauracaoBackup.texto || !restauracaoBackup.digest) return toast('Analise o backup novamente antes de restaurar.');
+  if ($('#backupRestaurarCiente')?.checked !== true || String($('#backupRestaurarTexto')?.value || '').trim().toUpperCase() !== 'RESTAURAR') {
+    return toast('Confirme que está ciente e digite RESTAURAR.');
+  }
+
+  confirmar(
+    'Restaurar este backup agora?',
+    'Os dados operacionais atuais serão substituídos. A operação usa transação: se ocorrer qualquer erro, as alterações serão desfeitas. Usuários e senhas serão preservados.',
+    async () => {
+      const btn = $('#backupRestaurarExecutar');
+      try {
+        if (btn) { btn.disabled = true; btn.textContent = 'Restaurando...'; }
+        const r = await api('/api/backup/restaurar/executar', {
+          method:'POST',
+          headers:{
+            'X-AutoAgenda-Backup-Digest': restauracaoBackup.digest,
+            'X-AutoAgenda-Restore-Confirmation': 'RESTAURAR'
+          },
+          body:restauracaoBackup.texto
+        });
+        toast(`✅ ${r.mensagem || 'Backup restaurado com sucesso.'}`);
+        backupCarregado = false;
+        setTimeout(() => window.location.reload(), 1400);
+      } catch (e) {
+        toast(e.message || 'Erro ao restaurar o backup.');
+        atualizarBotaoRestauracao();
+      } finally {
+        if (btn) btn.textContent = '♻️ Restaurar este backup';
+      }
+    },
+    'Restaurar backup'
+  );
+}
+
+
 // ========================= V2.8 — EVENTOS DO FINANCEIRO =========================
 $('#novoFinanceiro').onclick = () => novoLancamentoFinanceiro();
 $('#finAtualizar').onclick = () => { financeiroCarregado = false; carregarFinanceiro(true); };
@@ -2998,6 +3132,11 @@ if ($('#backupExcel')) $('#backupExcel').onclick = () => baixarBackup('xlsx');
 if ($('#backupJson')) $('#backupJson').onclick = () => baixarBackup('json');
 if ($('#backupCompletoJson')) $('#backupCompletoJson').onclick = () => baixarBackup('json', 'completo');
 if ($('#backupCompletoExcel')) $('#backupCompletoExcel').onclick = () => baixarBackup('xlsx', 'completo');
+if ($('#backupRestaurarArquivo')) $('#backupRestaurarArquivo').onchange = () => resetarRestauracaoBackup(true);
+if ($('#backupRestaurarAnalisar')) $('#backupRestaurarAnalisar').onclick = analisarBackupRestauracao;
+if ($('#backupRestaurarCiente')) $('#backupRestaurarCiente').onchange = atualizarBotaoRestauracao;
+if ($('#backupRestaurarTexto')) $('#backupRestaurarTexto').oninput = atualizarBotaoRestauracao;
+if ($('#backupRestaurarExecutar')) $('#backupRestaurarExecutar').onclick = executarBackupRestauracao;
 atualizarAjudaBackup();
 
 

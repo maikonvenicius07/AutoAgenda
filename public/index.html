@@ -14,7 +14,7 @@
       document.documentElement.dataset.theme = 'light';
     }
   </script>
-  <link rel="stylesheet" href="style.css?v=3.4.0">
+  <link rel="stylesheet" href="style.css?v=3.5.0">
 </head>
 <body class="auth-locked">
 <section id="loginScreen" class="login-screen">
@@ -414,7 +414,38 @@
       </article>
     </div>
 
-    <div class="backup-note">ℹ️ Esta etapa cria e baixa os backups. A restauração automática será implementada somente quando houver uma rotina própria de importação e validação, evitando sobrescrever dados por engano.</div>
+    <article class="card backup-restore-card">
+      <div class="head compact">
+        <div>
+          <h3>♻️ Restaurar backup completo</h3>
+          <p>Use somente um arquivo JSON completo gerado pelo AutoAgenda. A operação substitui os dados operacionais atuais.</p>
+        </div>
+        <span class="remaining-badge danger-badge">Somente ADMIN</span>
+      </div>
+
+      <div class="backup-restore-warning">
+        ⚠️ <b>Atenção:</b> alunos, aulas, planos, financeiro, configurações e demais dados operacionais atuais serão substituídos pelo conteúdo do backup. <b>Usuários e senhas de acesso não são substituídos.</b>
+      </div>
+
+      <div class="backup-restore-select">
+        <label>Arquivo de backup JSON
+          <input type="file" id="backupRestaurarArquivo" accept="application/json,.json">
+        </label>
+        <button type="button" class="secondary" id="backupRestaurarAnalisar">🔎 Analisar backup</button>
+      </div>
+
+      <div id="backupRestaurarResumo" class="backup-restore-summary hide"></div>
+
+      <div id="backupRestaurarConfirmacao" class="backup-restore-confirm hide">
+        <label class="checkline"><input type="checkbox" id="backupRestaurarCiente"> Entendo que os dados operacionais atuais serão substituídos.</label>
+        <label>Para confirmar, digite <b>RESTAURAR</b>
+          <input type="text" id="backupRestaurarTexto" autocomplete="off" placeholder="RESTAURAR" maxlength="20">
+        </label>
+        <button type="button" class="danger" id="backupRestaurarExecutar" disabled>♻️ Restaurar este backup</button>
+      </div>
+    </article>
+
+    <div class="backup-note">ℹ️ O formato oficial de restauração é o <b>backup completo JSON</b>. CSV e Excel continuam destinados à conferência e ao arquivo.</div>
   </section>
 
   <section id="usuarios" class="panel">
@@ -953,6 +984,6 @@
 </div>
 
 <div id="toast" class="toast hide"></div>
-<script src="app.js?v=3.4.0"></script>
+<script src="app.js?v=3.5.0"></script>
 </body>
 </html>

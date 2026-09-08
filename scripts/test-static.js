@@ -62,7 +62,7 @@ const requiredRoutes = [
   'POST /api/instrutores','PUT /api/instrutores/:id','POST /api/veiculos','PUT /api/veiculos/:id','POST /api/locais','PUT /api/locais/:id',
   'GET /api/horarios-livres','GET /api/planos','POST /api/planos','POST /api/planos/preview','PATCH /api/planos/:id/encerrar',
   'GET /api/dashboard/resumo','GET /api/relatorios/resumo','GET /api/financeiro','POST /api/financeiro',
-  'GET /api/backup/resumo','GET /api/backup/exportar','GET /api/aulas','POST /api/aulas','PUT /api/aulas/:id','DELETE /api/aulas/:id',
+  'GET /api/backup/resumo','GET /api/backup/exportar','POST /api/backup/restaurar/validar','POST /api/backup/restaurar/executar','GET /api/aulas','POST /api/aulas','PUT /api/aulas/:id','DELETE /api/aulas/:id',
   'POST /api/aulas/:id/reposicao','PUT /api/aulas/:id/serie','PATCH /api/aulas/:id/confirmacao','PATCH /api/aulas/:id/status',
   'GET /api/configuracoes/lembretes','PUT /api/configuracoes/lembretes','GET /api/lembretes','POST /api/lembretes/processar-agora',
   'GET /api/configuracoes/email','PUT /api/configuracoes/email','POST /api/email/processar-agora'
@@ -110,6 +110,17 @@ test('interface possui controle de e-mail automático', html.includes('cfgEmailA
 test('histórico de e-mails entra no backup completo', server.includes("email_envios: { tabela: 'email_envios'"));
 test('plano automático possui e-mail resumo', server.includes("'PLANO_AGENDADO'") && server.includes('dispararEmailPlanoSeguro(planId'));
 test('eventos de e-mail cobrem agendamento, lembrete, reagendamento e cancelamento', ['AGENDAMENTO','LEMBRETE_DIA_ANTERIOR','LEMBRETE_HORAS_ANTES','REAGENDAMENTO','CANCELAMENTO'].every(x=>server.includes(`'${x}'`)));
+
+
+test('restauração aceita somente backup completo JSON compatível', server.includes("payload.tipo !== 'AUTOAGENDA_BACKUP_COMPLETO'") && server.includes('RESTORE_BACKUP_VERSION = 1') && server.includes("payload.schema !== 'autoagenda'"));
+test('restauração usa digest do arquivo analisado', server.includes('X-AutoAgenda-Backup-Digest') && server.includes('O arquivo mudou depois da análise'));
+test('restauração exige confirmação explícita', server.includes('X-AutoAgenda-Restore-Confirmation') && server.includes("confirmacao !== 'RESTAURAR'"));
+test('restauração usa transação com rollback', server.includes("app.post('/api/backup/restaurar/executar'") && server.includes("await client.query('BEGIN')") && server.includes("await client.query('ROLLBACK')"));
+test('restauração preserva contas e senhas', server.includes('Usuários, senhas e sessões são preservados') && !/DELETE FROM autoagenda\.usuarios/i.test(server));
+test('restauração desliga automações por segurança', server.includes('SET whatsapp_automatico_ativo=FALSE') && server.includes('email_automatico_ativo=FALSE'));
+test('restauração cancela comunicações pendentes', server.includes("['PENDENTE','PROCESSANDO'].includes") && server.includes("r.status = 'CANCELADO'"));
+test('restauração protege FK autorreferente de reposição', server.includes('UPDATE autoagenda.aulas SET reposicao_de_id=NULL'));
+test('interface de restauração exige arquivo, ciência e texto RESTAURAR', html.includes('backupRestaurarArquivo') && html.includes('backupRestaurarCiente') && html.includes('backupRestaurarTexto') && app.includes("texto === 'RESTAURAR'"));
 
 test('schema contém tabelas principais', ['alunos','instrutores','veiculos','locais','aulas','planos_aula','financeiro','usuarios','sessoes','configuracoes','lembrete_envios','email_envios'].every(t=>schema.includes(`autoagenda.${t}`)));
 const deps = Object.keys(pkg.dependencies||{}).sort();

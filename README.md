@@ -1,4 +1,4 @@
-# AutoAgenda V3.4.0
+# AutoAgenda V3.5.0
 
 Sistema de organização de aulas práticas para autoescola, com backend Node/Express, PostgreSQL e deploy no Render.
 
@@ -15,7 +15,7 @@ Sistema de organização de aulas práticas para autoescola, com backend Node/Ex
 - confirmação pelo aluno, lembretes com integração oficial do WhatsApp e e-mails transacionais preparados;
 - Dashboard e relatórios;
 - financeiro simples;
-- backup/exportação CSV, Excel e JSON;
+- backup/exportação CSV, Excel e JSON, com restauração segura pelo backup completo JSON;
 - modo claro/escuro;
 - login individual com senha em hash e sessão segura;
 - níveis de acesso Administrador e Instrutor.
@@ -183,9 +183,28 @@ Não é necessário executar SQL manualmente.
 
 Nenhuma dependência externa nova foi adicionada.
 
+## V3.5.0 — Restauração segura de backup JSON
+
+- nova área de restauração dentro da aba **Backup**;
+- somente ADMIN pode analisar e executar uma restauração;
+- aceita somente backup completo JSON válido do AutoAgenda;
+- valida versão, estrutura, colunas, IDs e referências antes de permitir a execução;
+- mostra comparação entre as quantidades atuais e as que serão restauradas;
+- exige ciência, digitação de `RESTAURAR` e confirmação final;
+- usa SHA-256 para garantir que o arquivo executado é o mesmo que foi analisado;
+- substituição dos dados operacionais ocorre em uma única transação PostgreSQL, com rollback em caso de falha;
+- usuários, hashes de senha e sessões não fazem parte da restauração e são preservados;
+- vínculos de usuários INSTRUTOR são recuperados somente quando o mesmo `instrutor_id` e a identidade do instrutor forem compatíveis no backup;
+- sequences de IDs são reajustadas após a importação;
+- WhatsApp e e-mail automáticos ficam desligados depois da restauração;
+- itens de comunicação que estavam pendentes/processando são cancelados para impedir envio inesperado;
+- CSV e Excel continuam destinados à conferência/exportação.
+
+Consulte `CHECKLIST_V3.5.0.md` antes de restaurar dados reais.
+
 ## Próximo passo recomendado
 
-A etapa de e-mail foi concluída. O próximo item do roteiro é o **PROMPT 10 — restauração de backup**, preservando as exportações CSV, Excel e JSON existentes.
+A restauração segura foi concluída. O próximo item do roteiro é o **PROMPT 11 — backup automático do PostgreSQL**.
 
 ## V3.2.0 — Confirmação pelo próprio aluno
 

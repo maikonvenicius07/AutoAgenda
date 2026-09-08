@@ -1,32 +1,15 @@
-AUTOAGENDA V3.4.0 — E-MAILS AUTOMÁTICOS
+AUTOAGENDA V3.5.0 — RESTAURAÇÃO SEGURA DE BACKUP
 
-O QUE MUDA:
-- adiciona envio automático de e-mail independente do WhatsApp;
-- cobre agendamento, lembretes, reagendamento e cancelamento;
-- planos automáticos recebem um e-mail-resumo em vez de várias mensagens;
-- envio automático nasce DESATIVADO;
-- cria fila auditável de e-mails com prevenção de duplicidade;
-- falha de e-mail NÃO impede salvar ou alterar a aula;
-- aluno sem e-mail continua funcionando normalmente;
-- inclui histórico de e-mails no backup completo;
-- nenhuma dependência npm nova foi adicionada.
+Atualize os arquivos deste pacote no GitHub mantendo a mesma estrutura de pastas.
+Nenhum arquivo precisa ser removido nesta etapa.
 
-IMPORTANTE:
-NÃO coloque chave de e-mail no código ou GitHub.
+Principais alterações:
+- restauração de backup completo JSON somente para ADMIN;
+- análise e resumo antes da execução;
+- confirmação explícita;
+- transação PostgreSQL com rollback;
+- usuários e senhas preservados;
+- automações de WhatsApp/e-mail desligadas após restauração;
+- CHECKLIST_V3.5.0.md e RELATORIO_V3.5.0.md.
 
-Para ativar futuramente no Render:
-- RESEND_API_KEY
-- EMAIL_FROM
-- EMAIL_REPLY_TO (opcional)
-
-SEM ESSAS VARIÁVEIS:
-o AutoAgenda continua funcionando normalmente e o e-mail automático permanece desligado.
-
-NÃO HÁ ARQUIVOS PARA REMOVER DO GITHUB NESTA ETAPA.
-
-APÓS O DEPLOY:
-1. confirme que /api/health mostra a versão 3.4.0;
-2. abra Configurações → Envio automático de e-mail;
-3. sem credenciais, o controle deve continuar bloqueado/desligado;
-4. configure o serviço no Render somente quando quiser ativar;
-5. siga o CHECKLIST_V3.4.0.md.
+Depois do deploy, valide a restauração com dados de teste antes de usar sobre dados importantes.

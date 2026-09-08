@@ -1,38 +1,39 @@
-# Análise — AutoAgenda V3.1.0
+# Análise atual — AutoAgenda V3.5.0
 
-A V3.1 foi construída sobre a V3.0 estável, preservando login individual e todas as funcionalidades existentes.
+## Situação
 
-## Alteração principal
+O roteiro principal de 17 etapas foi concluído. A fase posterior de estabilização também foi concluída e as novas evoluções já incluem confirmação pelo aluno, preparação do WhatsApp oficial, e-mail transacional e restauração segura do backup completo JSON.
 
-Aplicação efetiva dos níveis de acesso.
+## Recursos consolidados
 
-O perfil deixou de ser apenas informativo: o backend agora filtra dados e bloqueia operações conforme `ADMIN` ou `INSTRUTOR`.
+- login individual com perfis ADMIN e INSTRUTOR;
+- cadastro de alunos com data de nascimento;
+- agenda diária e semanal;
+- planos automáticos e controle de saldo;
+- disponibilidade e conflitos de aluno/instrutor/veículo;
+- reagendamento, histórico e confirmações;
+- WhatsApp manual e confirmação pública por link seguro;
+- arquitetura preparada para lembretes automáticos via WhatsApp Cloud API;
+- arquitetura preparada para e-mails transacionais;
+- dashboard, relatórios e financeiro;
+- backup CSV, Excel e JSON;
+- restauração segura do backup completo JSON;
+- modo claro/escuro;
+- testes estáticos reutilizáveis.
 
-## Arquitetura adotada
+## Segurança da restauração V3.5.0
 
-- `ADMIN`: acesso integral;
-- `INSTRUTOR`: acesso operacional restrito;
-- `autoagenda.usuarios.instrutor_id`: vínculo entre a conta de login e o cadastro de instrutor;
-- autorização de backend por rota/operação;
-- filtro adicional nas consultas de alunos e aulas;
-- frontend adapta menus e ações ao perfil, sem substituir a validação do servidor.
+- somente ADMIN;
+- validação prévia do arquivo e resumo antes de executar;
+- digest SHA-256 entre análise e execução;
+- transação PostgreSQL com rollback;
+- bloqueio contra restaurações/communications concorrentes;
+- usuários, senhas e sessões preservados;
+- automações desligadas após restaurar;
+- comunicações pendentes canceladas para evitar disparo inesperado.
 
-## Riscos tratados
+## Próximo passo do roteiro
 
-- acesso direto a rotas administrativas por URL;
-- leitura da agenda de outro instrutor;
-- leitura de aluno sem relação com o instrutor;
-- edição completa de aula por instrutor;
-- criação de aula avulsa por instrutor;
-- reagendamento usando outro instrutor;
-- exportação/financeiro/configurações acessíveis ao perfil errado;
-- duas contas de Instrutor vinculadas ao mesmo cadastro operacional.
+**PROMPT 11 — Backup automático do PostgreSQL.**
 
-## Compatibilidade
-
-A migração é automática e não apaga dados.
-Usuários `INSTRUTOR` existentes na V3.0 podem estar sem vínculo e precisam ser editados pelo administrador uma única vez.
-
-## Próximo passo
-
-Auditoria técnica final da V3.1 antes de iniciar uma nova fase de funcionalidades.
+Depois dele, permanecem como melhorias futuras já registradas a mensagem automática de aniversário e Webhooks de status do WhatsApp.
