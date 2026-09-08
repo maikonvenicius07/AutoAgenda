@@ -1,4 +1,4 @@
-# AutoAgenda V3.1.7
+# AutoAgenda V3.2.0
 
 Sistema de organização de aulas práticas para autoescola, com backend Node/Express, PostgreSQL e deploy no Render.
 
@@ -186,3 +186,15 @@ Nenhuma dependência externa nova foi adicionada.
 ## Próximo passo recomendado
 
 As 17 etapas do roteiro principal estão concluídas. O próximo passo recomendado é uma **auditoria técnica final da V3.1**, sem adicionar funcionalidades, antes de iniciar uma nova fase do AutoAgenda.
+
+## V3.2.0 — Confirmação pelo próprio aluno
+
+- O WhatsApp de cada aula inclui um link individual de confirmação.
+- O aluno abre uma página pública simples, sem login, com somente os dados necessários da aula.
+- Ações disponíveis: **Confirmar aula** ou **Solicitar reagendamento**.
+- O token é aleatório, armazenado apenas como SHA-256 no PostgreSQL, possui validade e é de uso único.
+- O pedido de reagendamento não cancela nem move a aula automaticamente; ele apenas registra `PEDIU_REAGENDAMENTO`.
+- Alterações manuais relevantes invalidam links antigos.
+- Campos de token são excluídos dos backups CSV, Excel e JSON e também não são retornados pelas APIs comuns de aula.
+- `PUBLIC_BASE_URL` é opcional; quando definido no Render, deve conter a URL pública do AutoAgenda (ex.: `https://seu-servico.onrender.com`).
+

@@ -1,20 +1,27 @@
-AUTOAGENDA V3.1.7 — TESTES E ESTABILIZAÇÃO
+AUTOAGENDA V3.2.0 — CONFIRMAÇÃO PELO PRÓPRIO ALUNO
 
-Esta versão conclui o PROMPT 6 do roteiro de estabilização na camada estática/estrutural.
+ARQUIVOS DESTA VERSÃO:
+- server.js
+- package.json
+- package-lock.json
+- public/index.html
+- public/app.js
+- sql/schema.sql
+- scripts/test-static.js
+- README.md
+- CHECKLIST_V3.2.0.md
+- RELATORIO_V3.2.0.md
 
-RESULTADOS:
-- npm run check: APROVADO.
-- npm run test:static: 32/32 APROVADOS.
-- 70 rotas encontradas e nenhuma duplicada.
-- IDs e referências locais da interface conferidos.
-- permissões, transações, conflitos, saldo, backup e modo escuro verificados estruturalmente.
-
-CORREÇÕES:
-- identificadores de versão dos assets em public/index.html atualizados para V3.1.7.
-- fallback visual de versão em public/app.js atualizado para V3.1.7.
-- criado scripts/test-static.js para repetir a validação em versões futuras.
-
-IMPORTANTE:
-Os testes de integração que exigem PostgreSQL real e navegador devem ser feitos no Render usando CHECKLIST_V3.1.7.md. Eles não foram marcados como aprovados sem execução real.
+O QUE MUDA:
+- o WhatsApp da aula passa a incluir um link individual de confirmação;
+- o aluno pode confirmar a aula ou solicitar reagendamento sem login;
+- o link utiliza token aleatório, hash SHA-256, expiração e uso único;
+- o aluno não altera data/horário diretamente; pedido de reagendamento apenas registra a solicitação;
+- alterações manuais relevantes invalidam links antigos;
+- metadados do token não entram nos backups nem nas respostas comuns da API.
 
 NÃO HÁ ARQUIVOS PARA REMOVER DO GITHUB NESTA ETAPA.
+
+APÓS O DEPLOY:
+Execute o CHECKLIST_V3.2.0.md no Render com PostgreSQL real.
+É recomendado configurar PUBLIC_BASE_URL com a URL pública do AutoAgenda; sem ela o sistema tenta detectar o próprio domínio automaticamente.

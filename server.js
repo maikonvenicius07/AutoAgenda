@@ -8,7 +8,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '3.1.7';
+const APP_VERSION = '3.2.0';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -275,7 +275,7 @@ app.use((req, res, next) => {
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
   res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
   res.setHeader('Content-Security-Policy', "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
-  if (req.path.startsWith('/api/') || req.path.startsWith('/whatsapp/')) {
+  if (req.path.startsWith('/api/') || req.path.startsWith('/whatsapp/') || req.path.startsWith('/confirmar/')) {
     res.setHeader('Cache-Control', 'no-store');
   }
   if (IS_PRODUCTION) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
@@ -283,6 +283,7 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: false, limit: '16kb' }));
 
 // Os arquivos estáticos (inclusive a tela de login) podem ser carregados sem sessão.
 // Os dados e ações do backend continuam protegidos pelo middleware logo abaixo.
@@ -954,6 +955,9 @@ async function initDatabase() {
         confirmacao_origem VARCHAR(20) NOT NULL DEFAULT 'MANUAL'
           CHECK (confirmacao_origem IN ('MANUAL','WHATSAPP','SISTEMA')),
         confirmacao_atualizada_em TIMESTAMP,
+        confirmacao_token_hash VARCHAR(64),
+        confirmacao_token_expira_em TIMESTAMP,
+        confirmacao_token_usado_em TIMESTAMP,
         lembrete_dia_anterior_em TIMESTAMP,
         lembrete_dia_anterior_enviado BOOLEAN NOT NULL DEFAULT FALSE,
         lembrete_dia_anterior_enviado_em TIMESTAMP,
@@ -1062,6 +1066,13 @@ async function initDatabase() {
     await client.query("ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS confirmacao_status VARCHAR(30) NOT NULL DEFAULT 'AGUARDANDO'");
     await client.query("ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS confirmacao_origem VARCHAR(20) NOT NULL DEFAULT 'MANUAL'");
     await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS confirmacao_atualizada_em TIMESTAMP');
+
+    // V3.2 — link público e seguro para o próprio aluno confirmar a aula.
+    // Somente o hash do token é armazenado; o token bruto existe apenas no link enviado ao aluno.
+    await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS confirmacao_token_hash VARCHAR(64)');
+    await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS confirmacao_token_expira_em TIMESTAMP');
+    await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS confirmacao_token_usado_em TIMESTAMP');
+    await client.query('CREATE UNIQUE INDEX IF NOT EXISTS ux_autoagenda_aulas_confirmacao_token ON autoagenda.aulas(confirmacao_token_hash) WHERE confirmacao_token_hash IS NOT NULL');
 
     // V2.5 — estrutura de lembretes, ainda com envio manual pelo WhatsApp.
     await client.query("ALTER TABLE autoagenda.configuracoes ADD COLUMN IF NOT EXISTS lembrete_dia_anterior_ativo BOOLEAN NOT NULL DEFAULT TRUE");
@@ -4328,19 +4339,24 @@ function textoSeguroCsv(valor) {
 }
 
 async function carregarTabelaBackup(client, chave, definicao) {
+  const colunasExcluidas = definicao.tabela === 'aulas'
+    ? ['confirmacao_token_hash','confirmacao_token_expira_em','confirmacao_token_usado_em']
+    : [];
+
   const colunasQ = await client.query(`
     SELECT column_name
     FROM information_schema.columns
     WHERE table_schema='autoagenda' AND table_name=$1
+      AND NOT (column_name = ANY($2::text[]))
     ORDER BY ordinal_position
-  `, [definicao.tabela]);
+  `, [definicao.tabela, colunasExcluidas]);
 
-  // row_to_json preserva DATE/TIME/TIMESTAMP como texto de PostgreSQL, evitando mudança
-  // acidental de data por fuso horário no Node durante o backup.
+  // to_jsonb preserva DATE/TIME/TIMESTAMP como texto de PostgreSQL e permite
+  // excluir metadados de segurança antes de gerar qualquer formato de backup.
   const dadosQ = await client.query(`
-    SELECT row_to_json(x) AS registro
+    SELECT (to_jsonb(x) - $1::text[]) AS registro
     FROM (SELECT * FROM autoagenda.${definicao.tabela} ORDER BY id) x
-  `);
+  `, [colunasExcluidas]);
 
   return {
     chave,
@@ -4746,6 +4762,221 @@ function normalizarConfirmacaoStatus(valor, fallback = 'AGUARDANDO') {
   return CONFIRMACAO_STATUS_PERMITIDOS.includes(fallback) ? fallback : '';
 }
 
+function aulaSemMetadadosToken(row) {
+  if (!row || typeof row !== 'object') return row;
+  const { confirmacao_token_hash, confirmacao_token_expira_em, confirmacao_token_usado_em, ...segura } = row;
+  return segura;
+}
+
+
+function gerarTokenConfirmacaoAluno() {
+  return crypto.randomBytes(32).toString('base64url');
+}
+
+function tokenConfirmacaoFormatoValido(token) {
+  return /^[A-Za-z0-9_-]{40,100}$/.test(String(token || ''));
+}
+
+function escaparHtmlPublico(valor) {
+  return String(valor ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function basePublicaAutoAgenda(req) {
+  const configurada = String(process.env.PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '');
+  if (configurada) {
+    try {
+      const u = new URL(configurada);
+      if (['http:', 'https:'].includes(u.protocol)) return `${u.protocol}//${u.host}`;
+    } catch {}
+  }
+  const host = String(req.get('host') || '').trim();
+  if (!/^[A-Za-z0-9.:[\]-]+(?::\d+)?$/.test(host)) return '';
+  return `${req.protocol}://${host}`;
+}
+
+function paginaConfirmacaoAluno({ aula = null, estado = 'ATIVA', mensagem = '' } = {}) {
+  const status = String(aula?.confirmacao_status || 'AGUARDANDO').toUpperCase();
+  const nomes = String(aula?.aluno_nome || '').trim();
+  const primeiroNome = nomes.split(/\s+/)[0] || 'Aluno';
+  const data = aula?.data_br || '';
+  const hora = String(aula?.hora_inicio || '').slice(0, 5);
+  const instrutor = aula?.instrutor_nome || 'A definir';
+  const veiculo = aula?.veiculo_nome ? `${aula.veiculo_nome}${aula.veiculo_placa ? ` (${aula.veiculo_placa})` : ''}` : 'A definir';
+  const local = aula?.local_nome || 'A definir';
+  const token = String(aula?.token_publico || '');
+
+  const titulo = estado === 'SUCESSO'
+    ? (status === 'CONFIRMADA' ? 'Aula confirmada!' : 'Pedido registrado!')
+    : estado === 'USADO'
+      ? 'Resposta já registrada'
+      : estado === 'INVALIDO'
+        ? 'Link indisponível'
+        : 'Confirme sua aula';
+
+  let corpo = '';
+  if (estado === 'ATIVA' && aula) {
+    corpo = `
+      <p class="intro">Olá, <strong>${escaparHtmlPublico(primeiroNome)}</strong>. Confira os dados abaixo e informe sua resposta.</p>
+      <div class="card">
+        <div><span>📅 Data</span><strong>${escaparHtmlPublico(data)}</strong></div>
+        <div><span>🕐 Horário</span><strong>${escaparHtmlPublico(hora)}</strong></div>
+        <div><span>👨‍🏫 Instrutor</span><strong>${escaparHtmlPublico(instrutor)}</strong></div>
+        <div><span>🚗 Veículo</span><strong>${escaparHtmlPublico(veiculo)}</strong></div>
+        <div><span>📍 Local</span><strong>${escaparHtmlPublico(local)}</strong></div>
+      </div>
+      <form method="post" action="/confirmar/${encodeURIComponent(token)}/acao">
+        <button class="ok" type="submit" name="acao" value="CONFIRMADA">✅ CONFIRMAR AULA</button>
+        <button class="change" type="submit" name="acao" value="PEDIU_REAGENDAMENTO">🔄 SOLICITAR REAGENDAMENTO</button>
+      </form>
+      <p class="note">Solicitar reagendamento <strong>não cancela a aula automaticamente</strong>. O instrutor ou administrador receberá o pedido e fará a alteração do horário no AutoAgenda.</p>`;
+  } else {
+    const textoPadrao = estado === 'USADO'
+      ? (status === 'CONFIRMADA' ? 'Sua confirmação já foi registrada no AutoAgenda.' : status === 'PEDIU_REAGENDAMENTO' ? 'Seu pedido de reagendamento já foi registrado no AutoAgenda.' : 'Este link já foi utilizado.')
+      : estado === 'SUCESSO'
+        ? (status === 'CONFIRMADA' ? 'Sua presença foi confirmada no AutoAgenda.' : 'Seu pedido de reagendamento foi registrado. Aguarde o contato do instrutor ou da autoescola.')
+        : 'Este link expirou, foi substituído ou não está mais disponível. Solicite um novo link ao instrutor ou à autoescola.';
+    corpo = `<div class="result ${estado === 'INVALIDO' ? 'warn' : ''}">${escaparHtmlPublico(mensagem || textoPadrao)}</div>`;
+    if (aula && data) {
+      corpo += `<div class="mini">📅 ${escaparHtmlPublico(data)} às ${escaparHtmlPublico(hora)}${instrutor ? ` · 👨‍🏫 ${escaparHtmlPublico(instrutor)}` : ''}</div>`;
+    }
+  }
+
+  return `<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <title>${escaparHtmlPublico(titulo)} · AutoAgenda</title>
+  <style>
+    :root{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#172033;background:#f5f7fb}
+    *{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;padding:22px;background:linear-gradient(180deg,#eef4ff,#f8fafc)}
+    main{width:min(100%,520px);background:#fff;border:1px solid #e4e9f2;border-radius:24px;padding:26px;box-shadow:0 18px 55px rgba(25,42,70,.12)}
+    .brand{font-size:13px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:#4169a8}.brand b{font-size:24px;display:block;letter-spacing:-.02em;text-transform:none;color:#172033;margin-top:5px}
+    h1{font-size:28px;line-height:1.12;margin:24px 0 10px}.intro{color:#536176;line-height:1.55;margin:0 0 18px}
+    .card{border:1px solid #e7ebf2;border-radius:18px;padding:7px 16px;margin:18px 0;background:#fafcff}.card div{display:flex;gap:12px;justify-content:space-between;align-items:flex-start;padding:12px 0;border-bottom:1px solid #edf0f5}.card div:last-child{border-bottom:0}.card span{color:#69768a}.card strong{text-align:right;max-width:62%}
+    form{display:grid;gap:11px;margin-top:20px}button{width:100%;border:0;border-radius:14px;padding:15px 16px;font-size:15px;font-weight:900;cursor:pointer}.ok{background:#177447;color:white}.change{background:#eef3fb;color:#244d86;border:1px solid #cfdbed}
+    .note{font-size:13px;line-height:1.45;color:#69768a;margin:16px 2px 0}.result{padding:18px;border-radius:16px;background:#edf8f1;color:#145a37;line-height:1.55;font-weight:700}.result.warn{background:#fff4e8;color:#7b4a13}.mini{margin-top:14px;color:#68758a;font-size:14px;line-height:1.5}
+    footer{margin-top:22px;color:#8792a3;font-size:12px;text-align:center}
+    @media(max-width:420px){body{padding:12px}main{border-radius:18px;padding:20px}.card div{display:block}.card strong{display:block;max-width:none;text-align:left;margin-top:4px}h1{font-size:25px}}
+  </style>
+</head>
+<body>
+  <main>
+    <div class="brand">Agenda de aulas<b>AutoAgenda</b></div>
+    <h1>${escaparHtmlPublico(titulo)}</h1>
+    ${corpo}
+    <footer>Link individual de confirmação · Não compartilhe este endereço.</footer>
+  </main>
+</body>
+</html>`;
+}
+
+async function consultarConfirmacaoPublica(token, { paraAtualizar = false, client = null } = {}) {
+  if (!tokenConfirmacaoFormatoValido(token)) return null;
+  const executor = client || pool;
+  const tokenHash = hashSha256(token);
+  const bloqueio = paraAtualizar ? 'FOR UPDATE OF a' : '';
+  const r = await executor.query(`
+    SELECT a.id, a.status, a.arquivada, a.confirmacao_status,
+           a.confirmacao_token_expira_em, a.confirmacao_token_usado_em,
+           TO_CHAR(a.data_aula, 'DD/MM/YYYY') AS data_br,
+           TO_CHAR(a.hora_inicio, 'HH24:MI') AS hora_inicio,
+           al.nome AS aluno_nome,
+           i.nome AS instrutor_nome,
+           v.nome AS veiculo_nome, v.placa AS veiculo_placa,
+           l.nome AS local_nome
+    FROM autoagenda.aulas a
+    JOIN autoagenda.alunos al ON al.id = a.aluno_id
+    LEFT JOIN autoagenda.instrutores i ON i.id = a.instrutor_id
+    LEFT JOIN autoagenda.veiculos v ON v.id = a.veiculo_id
+    LEFT JOIN autoagenda.locais l ON l.id = a.local_id
+    WHERE a.confirmacao_token_hash = $1
+    LIMIT 1
+    ${bloqueio}
+  `, [tokenHash]);
+  if (!r.rowCount) return null;
+  return r.rows[0];
+}
+
+function estadoLinkConfirmacao(aula) {
+  if (!aula) return 'INVALIDO';
+  if (aula.confirmacao_token_usado_em) return 'USADO';
+  if (aula.arquivada || !['AGENDADA','CONFIRMADA'].includes(String(aula.status || '').toUpperCase())) return 'INVALIDO';
+  const expira = aula.confirmacao_token_expira_em ? new Date(aula.confirmacao_token_expira_em).getTime() : 0;
+  if (!expira || expira <= Date.now()) return 'INVALIDO';
+  return 'ATIVA';
+}
+
+// Página pública: o token funciona como credencial de uso único e não exige login.
+// Nenhum dado administrativo, telefone, e-mail ou documento do aluno é exposto aqui.
+app.get('/confirmar/:token', async (req, res) => {
+  try {
+    const token = String(req.params.token || '');
+    const aula = await consultarConfirmacaoPublica(token);
+    const estado = estadoLinkConfirmacao(aula);
+    if (aula) aula.token_publico = token;
+    res.setHeader('Cache-Control', 'no-store');
+    res.type('html').send(paginaConfirmacaoAluno({ aula, estado }));
+  } catch (error) {
+    console.error('Erro ao abrir confirmação pública:', error);
+    res.status(500).type('html').send(paginaConfirmacaoAluno({ estado: 'INVALIDO', mensagem: 'Não foi possível abrir a confirmação agora. Tente novamente.' }));
+  }
+});
+
+app.post('/confirmar/:token/acao', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const token = String(req.params.token || '');
+    const acao = normalizarConfirmacaoStatus(req.body?.acao, '');
+    if (!['CONFIRMADA','PEDIU_REAGENDAMENTO'].includes(acao)) {
+      return res.status(400).type('html').send(paginaConfirmacaoAluno({ estado: 'INVALIDO', mensagem: 'Resposta inválida.' }));
+    }
+
+    await client.query('BEGIN');
+    const aula = await consultarConfirmacaoPublica(token, { paraAtualizar: true, client });
+    const estado = estadoLinkConfirmacao(aula);
+    if (estado !== 'ATIVA') {
+      await client.query('ROLLBACK');
+      return res.status(409).type('html').send(paginaConfirmacaoAluno({ aula, estado }));
+    }
+
+    const atualizado = await client.query(`
+      UPDATE autoagenda.aulas
+      SET confirmacao_status=$1,
+          confirmacao_origem='WHATSAPP',
+          confirmacao_atualizada_em=NOW(),
+          confirmacao_token_usado_em=NOW(),
+          atualizado_em=NOW()
+      WHERE id=$2
+        AND confirmacao_token_hash=$3
+        AND confirmacao_token_usado_em IS NULL
+      RETURNING confirmacao_status
+    `, [acao, aula.id, hashSha256(token)]);
+
+    if (!atualizado.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(409).type('html').send(paginaConfirmacaoAluno({ aula, estado: 'USADO' }));
+    }
+
+    await client.query('COMMIT');
+    aula.confirmacao_status = atualizado.rows[0].confirmacao_status;
+    aula.confirmacao_token_usado_em = new Date();
+    return res.type('html').send(paginaConfirmacaoAluno({ aula, estado: 'SUCESSO' }));
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch {}
+    console.error('Erro ao registrar confirmação pública:', error);
+    return res.status(500).type('html').send(paginaConfirmacaoAluno({ estado: 'INVALIDO', mensagem: 'Não foi possível registrar sua resposta agora. Tente novamente.' }));
+  } finally {
+    client.release();
+  }
+});
+
 app.get('/whatsapp/aula/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -4791,12 +5022,31 @@ app.get('/whatsapp/aula/:id', async (req, res) => {
         .send('Este aluno não possui um WhatsApp válido cadastrado. Edite o aluno e informe o número com DDD, por exemplo: (69) 99999-9999.');
     }
 
+    const tokenConfirmacao = gerarTokenConfirmacaoAluno();
+    const tokenHash = hashSha256(tokenConfirmacao);
+    await query(`
+      UPDATE autoagenda.aulas
+      SET confirmacao_token_hash=$1,
+          confirmacao_token_expira_em=GREATEST(NOW() + INTERVAL '48 hours', data_aula::timestamp + hora_inicio + INTERVAL '1 day'),
+          confirmacao_token_usado_em=NULL,
+          atualizado_em=NOW()
+      WHERE id=$2
+    `, [tokenHash, id]);
+
+    const basePublica = basePublicaAutoAgenda(req);
+    if (!basePublica) {
+      return res.status(500).type('text/plain; charset=utf-8')
+        .send('Não foi possível montar o link de confirmação. Configure PUBLIC_BASE_URL no Render.');
+    }
+    const linkConfirmacao = `${basePublica}/confirmar/${tokenConfirmacao}`;
+
     const texto = `Olá, ${aula.aluno_nome}! Seguem os dados da sua aula prática:\n\n` +
       `📅 Data: ${String(aula.data_br || '').trim()}\n` +
       `🕐 Horário: ${String(aula.hora_inicio || '').slice(0,5)}\n` +
       `👨‍🏫 Instrutor: ${aula.instrutor_nome || 'a definir'}\n` +
       `🚗 Veículo: ${aula.veiculo_nome || 'a definir'}${aula.veiculo_placa ? ` (${aula.veiculo_placa})` : ''}\n` +
       `📍 Local: ${aula.local_nome || 'a definir'}\n\n` +
+      `✅ Confirme sua aula ou solicite reagendamento neste link individual:\n${linkConfirmacao}\n\n` +
       `${AVISO_FALTA_WHATSAPP}`;
 
     const destino = `https://wa.me/${telefone}?text=${encodeURIComponent(texto)}`;
@@ -4979,7 +5229,7 @@ app.get('/api/aulas/:id', async (req, res) => {
         AND ($2::int = 0 OR a.instrutor_id=$2)
     `, [id, instrutorEscopo]);
     if (!r.rowCount) return res.status(404).json({ error:'Aula não encontrada.' });
-    res.json(r.rows[0]);
+    res.json(aulaSemMetadadosToken(r.rows[0]));
   } catch (error) {
     console.error(error);
     res.status(500).json({ error:'Erro ao consultar aula.' });
@@ -5034,7 +5284,7 @@ app.post('/api/aulas', async (req, res) => {
     ]);
 
     await client.query('COMMIT');
-    res.status(201).json(result.rows[0]);
+    res.status(201).json(aulaSemMetadadosToken(result.rows[0]));
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
     console.error(error);
@@ -5138,7 +5388,7 @@ app.post('/api/aulas/:id/reposicao', async (req, res) => {
     ]);
 
     await client.query('COMMIT');
-    res.status(201).json({ ...result.rows[0], aula_original_id: origemId });
+    res.status(201).json({ ...aulaSemMetadadosToken(result.rows[0]), aula_original_id: origemId });
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
     console.error(error);
@@ -5214,6 +5464,9 @@ app.put('/api/aulas/:id', async (req, res) => {
           confirmacao_status=$10,
           confirmacao_origem=CASE WHEN confirmacao_status IS DISTINCT FROM $10 THEN 'MANUAL' ELSE confirmacao_origem END,
           confirmacao_atualizada_em=CASE WHEN confirmacao_status IS DISTINCT FROM $10 THEN NOW() ELSE confirmacao_atualizada_em END,
+          confirmacao_token_hash=CASE WHEN data_aula IS DISTINCT FROM $5::date OR hora_inicio IS DISTINCT FROM $6::time OR instrutor_id IS DISTINCT FROM $2::int OR veiculo_id IS DISTINCT FROM $3::int OR local_id IS DISTINCT FROM $4::int OR confirmacao_status IS DISTINCT FROM $10 THEN NULL ELSE confirmacao_token_hash END,
+          confirmacao_token_expira_em=CASE WHEN data_aula IS DISTINCT FROM $5::date OR hora_inicio IS DISTINCT FROM $6::time OR instrutor_id IS DISTINCT FROM $2::int OR veiculo_id IS DISTINCT FROM $3::int OR local_id IS DISTINCT FROM $4::int OR confirmacao_status IS DISTINCT FROM $10 THEN NULL ELSE confirmacao_token_expira_em END,
+          confirmacao_token_usado_em=CASE WHEN data_aula IS DISTINCT FROM $5::date OR hora_inicio IS DISTINCT FROM $6::time OR instrutor_id IS DISTINCT FROM $2::int OR veiculo_id IS DISTINCT FROM $3::int OR local_id IS DISTINCT FROM $4::int OR confirmacao_status IS DISTINCT FROM $10 THEN NULL ELSE confirmacao_token_usado_em END,
           observacoes=$11,
           excecao_plano=CASE WHEN plan_id IS NULL THEN FALSE ELSE TRUE END,
           atualizado_em=NOW()
@@ -5223,7 +5476,7 @@ app.put('/api/aulas/:id', async (req, res) => {
         String(hora_inicio).slice(0,5),duracaoFinal,unidadesFinal,status,confirmacaoFinal,observacoes||'',id]);
 
     await client.query('COMMIT');
-    res.json(result.rows[0]);
+    res.json(aulaSemMetadadosToken(result.rows[0]));
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
     console.error(error);
@@ -5346,6 +5599,7 @@ app.put('/api/aulas/:id/serie', async (req, res) => {
             confirmacao_status=CASE WHEN $8 THEN $10 ELSE confirmacao_status END,
             confirmacao_origem=CASE WHEN $8 AND confirmacao_status IS DISTINCT FROM $10 THEN 'MANUAL' ELSE confirmacao_origem END,
             confirmacao_atualizada_em=CASE WHEN $8 AND confirmacao_status IS DISTINCT FROM $10 THEN NOW() ELSE confirmacao_atualizada_em END,
+            confirmacao_token_hash=NULL, confirmacao_token_expira_em=NULL, confirmacao_token_usado_em=NULL,
             observacoes=CASE WHEN $8 THEN $11 ELSE observacoes END,
             excecao_plano=FALSE,atualizado_em=NOW()
         WHERE id=$12
@@ -5426,11 +5680,13 @@ app.patch('/api/aulas/:id/confirmacao', async (req, res) => {
     }
     const result = await client.query(`
       UPDATE autoagenda.aulas
-      SET confirmacao_status=$1, confirmacao_origem='MANUAL', confirmacao_atualizada_em=NOW(), atualizado_em=NOW()
+      SET confirmacao_status=$1, confirmacao_origem='MANUAL', confirmacao_atualizada_em=NOW(),
+          confirmacao_token_hash=NULL, confirmacao_token_expira_em=NULL, confirmacao_token_usado_em=NULL,
+          atualizado_em=NOW()
       WHERE id=$2 RETURNING *
     `,[confirmacao,id]);
     await client.query('COMMIT');
-    res.json(result.rows[0]);
+    res.json(aulaSemMetadadosToken(result.rows[0]));
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
     console.error(error);
@@ -5484,11 +5740,12 @@ app.patch('/api/aulas/:id/status', async (req, res) => {
           confirmacao_status=CASE WHEN $1='CONFIRMADA' THEN 'CONFIRMADA' ELSE confirmacao_status END,
           confirmacao_origem=CASE WHEN $1='CONFIRMADA' THEN 'MANUAL' ELSE confirmacao_origem END,
           confirmacao_atualizada_em=CASE WHEN $1='CONFIRMADA' THEN NOW() ELSE confirmacao_atualizada_em END,
+          confirmacao_token_hash=NULL, confirmacao_token_expira_em=NULL, confirmacao_token_usado_em=NULL,
           atualizado_em=NOW()
       WHERE id=$2 RETURNING *
     `,[status,id]);
     await client.query('COMMIT');
-    res.json(result.rows[0]);
+    res.json(aulaSemMetadadosToken(result.rows[0]));
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
     console.error(error);
