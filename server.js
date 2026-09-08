@@ -8,7 +8,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '3.1.0';
+const APP_VERSION = '3.1.1';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -809,6 +809,7 @@ async function initDatabase() {
         cpf VARCHAR(11),
         whatsapp VARCHAR(30) NOT NULL,
         email VARCHAR(180),
+        data_nascimento DATE,
         categoria VARCHAR(10) DEFAULT 'B',
         aulas_contratadas INTEGER NOT NULL DEFAULT 20 CHECK (aulas_contratadas > 0),
         -- Campo legado mantido por compatibilidade com versões anteriores.
@@ -1001,6 +1002,7 @@ async function initDatabase() {
     // Migrações seguras das versões anteriores.
     // CPF é opcional apenas para registros legados; novos cadastros exigem CPF válido.
     await client.query('ALTER TABLE autoagenda.alunos ADD COLUMN IF NOT EXISTS cpf VARCHAR(11)');
+    await client.query('ALTER TABLE autoagenda.alunos ADD COLUMN IF NOT EXISTS data_nascimento DATE');
     await client.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS ux_autoagenda_alunos_cpf
       ON autoagenda.alunos(cpf)
@@ -1375,6 +1377,14 @@ function validarDataOpcional(valor, campo) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(data)) throw erroHttp(400, `${campo} inválida.`);
   const d = dateOnlyUTC(data);
   if (isoDateUTC(d) !== data) throw erroHttp(400, `${campo} inválida.`);
+  return data;
+}
+
+function validarDataNascimento(valor) {
+  const data = validarDataOpcional(valor, 'Data de nascimento');
+  if (data && data > hojeApp()) {
+    throw erroHttp(400, 'A data de nascimento não pode ser futura.');
+  }
   return data;
 }
 
@@ -2062,7 +2072,7 @@ app.get('/api/alunos', async (req, res) => {
     const instrutorEscopo = instrutorIdDaSessao(req);
     const mostrarTodos = usuarioEhAdmin(req) ? incluirInativos(req) : false;
     const result = await query(`
-      SELECT a.id, a.nome, a.whatsapp, a.email, a.categoria,
+      SELECT a.id, a.nome, a.whatsapp, a.email, TO_CHAR(a.data_nascimento, 'YYYY-MM-DD') AS data_nascimento, a.categoria,
              a.aulas_contratadas, a.aulas_realizadas,
              a.aulas_realizadas_anteriores,
              a.ativo, a.criado_em,
@@ -2110,7 +2120,7 @@ app.get('/api/alunos/:id', async (req, res) => {
     const id = Number(req.params.id);
     const instrutorEscopo = instrutorIdDaSessao(req);
     const result = await query(`
-      SELECT a.id, a.nome, a.cpf, a.whatsapp, a.email, a.categoria,
+      SELECT a.id, a.nome, a.cpf, a.whatsapp, a.email, TO_CHAR(a.data_nascimento, 'YYYY-MM-DD') AS data_nascimento, a.categoria,
              a.aulas_contratadas, a.aulas_realizadas, a.aulas_realizadas_anteriores,
              a.observacoes, a.ativo, a.criado_em, a.atualizado_em
       FROM autoagenda.alunos a
@@ -2138,7 +2148,7 @@ app.get('/api/alunos/:id/historico', async (req, res) => {
     if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: 'Aluno inválido.' });
 
     const alunoQ = await query(`
-      SELECT id, nome, whatsapp, email, categoria, aulas_contratadas,
+      SELECT id, nome, whatsapp, email, TO_CHAR(data_nascimento, 'YYYY-MM-DD') AS data_nascimento, categoria, aulas_contratadas,
              aulas_realizadas, aulas_realizadas_anteriores, observacoes,
              ativo, criado_em, atualizado_em,
              CASE WHEN LENGTH(COALESCE(cpf,'')) = 11
@@ -2261,12 +2271,13 @@ app.get('/api/alunos/:id/historico', async (req, res) => {
 app.post('/api/alunos', async (req, res) => {
   try {
     const {
-      nome, cpf, whatsapp, email, categoria = 'B', aulas_contratadas = 20,
+      nome, cpf, whatsapp, email, data_nascimento, categoria = 'B', aulas_contratadas = 20,
       aulas_realizadas_anteriores = 0, observacoes = ''
     } = req.body;
     if (!nome || !whatsapp) return res.status(400).json({ error: 'Nome e WhatsApp são obrigatórios.' });
 
     const cpfLimpo = normalizarCpf(cpf);
+    const dataNascimento = validarDataNascimento(data_nascimento);
     if (!cpfValido(cpfLimpo)) return res.status(400).json({ error: 'Informe um CPF válido com 11 dígitos.' });
 
     const existente = await query('SELECT id, nome, ativo FROM autoagenda.alunos WHERE cpf=$1 LIMIT 1', [cpfLimpo]);
@@ -2288,13 +2299,13 @@ app.post('/api/alunos', async (req, res) => {
 
     const result = await query(`
       INSERT INTO autoagenda.alunos
-        (nome, cpf, whatsapp, email, categoria, aulas_contratadas,
+        (nome, cpf, whatsapp, email, data_nascimento, categoria, aulas_contratadas,
          aulas_realizadas, aulas_realizadas_anteriores, observacoes)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8)
-      RETURNING id, nome, whatsapp, email, categoria, aulas_contratadas,
-                aulas_realizadas, aulas_realizadas_anteriores, observacoes, ativo
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9)
+      RETURNING id, nome, whatsapp, email, TO_CHAR(data_nascimento, 'YYYY-MM-DD') AS data_nascimento,
+                categoria, aulas_contratadas, aulas_realizadas, aulas_realizadas_anteriores, observacoes, ativo
     `, [
-      nome.trim(), cpfLimpo, whatsapp.trim(), email || null, categoria,
+      nome.trim(), cpfLimpo, whatsapp.trim(), email || null, dataNascimento, categoria,
       contratadasFinal, anterioresFinal, observacoes || ''
     ]);
 
@@ -2312,12 +2323,13 @@ app.put('/api/alunos/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
     const {
-      nome, cpf, whatsapp, email, categoria, aulas_contratadas,
+      nome, cpf, whatsapp, email, data_nascimento, categoria, aulas_contratadas,
       aulas_realizadas_anteriores = 0, observacoes
     } = req.body;
     if (!nome || !whatsapp) return res.status(400).json({ error: 'Nome e WhatsApp são obrigatórios.' });
 
     const cpfLimpo = normalizarCpf(cpf);
+    const dataNascimento = validarDataNascimento(data_nascimento);
     if (!cpfValido(cpfLimpo)) return res.status(400).json({ error: 'Informe um CPF válido com 11 dígitos.' });
 
     const duplicado = await query('SELECT id FROM autoagenda.alunos WHERE cpf=$1 AND id<>$2 LIMIT 1', [cpfLimpo, id]);
@@ -2339,17 +2351,17 @@ app.put('/api/alunos/:id', async (req, res) => {
 
     const result = await query(`
       UPDATE autoagenda.alunos
-      SET nome = $1, cpf = $2, whatsapp = $3, email = $4, categoria = $5,
-          aulas_contratadas = $6,
-          aulas_realizadas = $7,
-          aulas_realizadas_anteriores = $7,
-          observacoes = $8,
+      SET nome = $1, cpf = $2, whatsapp = $3, email = $4, data_nascimento = $5, categoria = $6,
+          aulas_contratadas = $7,
+          aulas_realizadas = $8,
+          aulas_realizadas_anteriores = $8,
+          observacoes = $9,
           atualizado_em = NOW()
-      WHERE id = $9 AND ativo = TRUE
-      RETURNING id, nome, whatsapp, email, categoria, aulas_contratadas,
-                aulas_realizadas, aulas_realizadas_anteriores, observacoes, ativo
+      WHERE id = $10 AND ativo = TRUE
+      RETURNING id, nome, whatsapp, email, TO_CHAR(data_nascimento, 'YYYY-MM-DD') AS data_nascimento,
+                categoria, aulas_contratadas, aulas_realizadas, aulas_realizadas_anteriores, observacoes, ativo
     `, [
-      nome.trim(), cpfLimpo, whatsapp.trim(), email || null, categoria || 'B',
+      nome.trim(), cpfLimpo, whatsapp.trim(), email || null, dataNascimento, categoria || 'B',
       contratadasFinal, anterioresFinal, observacoes || '', id
     ]);
 

@@ -1,3 +1,26 @@
+AUTOAGENDA V3.1.1 — DATA DE NASCIMENTO DO ALUNO
+
+NOVIDADE DESTA VERSÃO
+- Adicionado campo opcional Data de nascimento (aniversário) no cadastro de alunos.
+- O campo também pode ser alterado na edição do aluno.
+- A data é exibida no cartão e no histórico do aluno.
+- Datas futuras são rejeitadas.
+- Alunos antigos continuam funcionando normalmente com o campo em branco.
+- O banco é atualizado automaticamente no primeiro deploy com a coluna data_nascimento.
+- Backups CSV, Excel e JSON passam a incluir a nova coluna automaticamente.
+
+ARQUIVOS PRINCIPAIS ALTERADOS
+- server.js
+- public/index.html
+- public/app.js
+- sql/schema.sql
+- package.json
+- README.md
+- LEIA-ME-ATUALIZACAO.txt
+
+----------------------------------------
+HISTÓRICO DA V3.1.0
+----------------------------------------
 AUTOAGENDA V3.1.0 — NÍVEIS DE ACESSO
 ======================================
 

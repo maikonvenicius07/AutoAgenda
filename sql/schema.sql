@@ -101,6 +101,7 @@ CREATE TABLE IF NOT EXISTS autoagenda.alunos (
   cpf VARCHAR(11),
   whatsapp VARCHAR(30) NOT NULL,
   email VARCHAR(180),
+  data_nascimento DATE,
   categoria VARCHAR(10) DEFAULT 'B',
   aulas_contratadas INTEGER NOT NULL DEFAULT 20 CHECK (aulas_contratadas > 0),
   aulas_realizadas INTEGER NOT NULL DEFAULT 0 CHECK (aulas_realizadas >= 0),
@@ -240,6 +241,7 @@ ON autoagenda.financeiro(vencimento) WHERE ativo = TRUE;
 
 -- Migrações seguras para instalações anteriores.
 ALTER TABLE autoagenda.alunos ADD COLUMN IF NOT EXISTS cpf VARCHAR(11);
+ALTER TABLE autoagenda.alunos ADD COLUMN IF NOT EXISTS data_nascimento DATE;
 CREATE UNIQUE INDEX IF NOT EXISTS ux_autoagenda_alunos_cpf
   ON autoagenda.alunos(cpf)
   WHERE cpf IS NOT NULL AND cpf <> '';

@@ -14,7 +14,7 @@
       document.documentElement.dataset.theme = 'light';
     }
   </script>
-  <link rel="stylesheet" href="style.css?v=3.1.0-login">
+  <link rel="stylesheet" href="style.css?v=3.1.1-nascimento">
 </head>
 <body class="auth-locked">
 <section id="loginScreen" class="login-screen">
@@ -583,6 +583,10 @@
     <input id="cpf" inputmode="numeric" autocomplete="off" maxlength="14" placeholder="CPF* (000.000.000-00)" required>
     <input id="whats" placeholder="WhatsApp*" required>
     <input id="email" type="email" placeholder="E-mail">
+    <label>Data de nascimento (aniversário)
+      <input id="dataNascimento" type="date" autocomplete="bday">
+      <small class="field-help">Opcional. Alunos já cadastrados podem permanecer sem essa informação.</small>
+    </label>
     <select id="cat">
       <option>A</option><option selected>B</option><option>AB</option><option>C</option><option>D</option><option>E</option>
     </select>
@@ -921,6 +925,6 @@
 </div>
 
 <div id="toast" class="toast hide"></div>
-<script src="app.js?v=3.1.0-login"></script>
+<script src="app.js?v=3.1.1-nascimento"></script>
 </body>
 </html>

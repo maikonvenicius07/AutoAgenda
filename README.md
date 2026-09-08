@@ -1,4 +1,4 @@
-# AutoAgenda V3.1.0
+# AutoAgenda V3.1.1
 
 Sistema de organização de aulas práticas para autoescola, com backend Node/Express, PostgreSQL e deploy no Render.
 
@@ -19,6 +19,15 @@ Sistema de organização de aulas práticas para autoescola, com backend Node/Ex
 - modo claro/escuro;
 - login individual com senha em hash e sessão segura;
 - níveis de acesso Administrador e Instrutor.
+
+
+## V3.1.1 — Data de nascimento do aluno
+
+- Campo opcional **Data de nascimento (aniversário)** no cadastro e edição de alunos.
+- A data aparece no cartão do aluno e no cabeçalho do histórico.
+- Validação impede datas futuras.
+- Alunos já cadastrados continuam válidos sem preencher o novo campo.
+- A coluna `data_nascimento` entra automaticamente nos backups CSV, Excel e JSON.
 
 ## V3.1.0 — Níveis de acesso
 

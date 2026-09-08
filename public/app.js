@@ -464,6 +464,7 @@ function studentHtml(a) {
         <p>🪪 CPF ${esc(cpfExibicao || 'Não informado')}</p>
         <p>📲 ${esc(a.whatsapp)}</p>
         <p>📧 ${esc(a.email || 'Sem e-mail')}</p>
+        <p>🎂 ${a.data_nascimento ? esc(fmtData(a.data_nascimento)) : 'Data de nascimento não informada'}</p>
         <p>🚘 Categoria ${esc(a.categoria)}</p>
       </div>
       <span class="remaining-badge">${ativo ? `${restantes} restantes` : 'Inativo'}</span>
@@ -1372,7 +1373,7 @@ async function health() {
   try {
     const h = await api('/api/health');
     const seguranca = h.security_ready ? ' · 🔐 login individual ativo' : ' · ⛔ login individual precisa ser inicializado';
-    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '3.1.0'}${seguranca}.`;
+    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '3.1.1'}${seguranca}.`;
     $('#db').className = h.security_ready ? 'db ok' : 'db fail';
   } catch {
     $('#db').textContent = '🔴 Banco não conectado. Verifique DATABASE_URL no Render.';
@@ -1386,6 +1387,8 @@ function novoAluno() {
   $('#alunoId').value = '';
   $('#contratadas').value = 20;
   $('#realizadas').value = 0;
+  $('#dataNascimento').value = '';
+  $('#dataNascimento').max = iso();
   $('#tituloAluno').textContent = 'Novo aluno';
   $('#salvarAluno').textContent = 'Salvar aluno';
   $('#erroAluno').classList.add('hide');
@@ -1400,6 +1403,8 @@ async function editarAluno(id) {
     $('#cpf').value = formatCpf(a.cpf || '');
     $('#whats').value = a.whatsapp || '';
     $('#email').value = a.email || '';
+    $('#dataNascimento').max = iso();
+    $('#dataNascimento').value = dataISO(a.data_nascimento || '');
     $('#cat').value = a.categoria || 'B';
     $('#contratadas').value = a.aulas_contratadas || 20;
     $('#realizadas').value = Number(a.aulas_realizadas_anteriores ?? a.aulas_realizadas ?? 0);
@@ -1472,6 +1477,7 @@ $('#fAluno').onsubmit = async e => {
     cpf: soDigitos($('#cpf').value),
     whatsapp: $('#whats').value,
     email: $('#email').value,
+    data_nascimento: $('#dataNascimento').value || null,
     categoria: $('#cat').value,
     aulas_contratadas: Number($('#contratadas').value),
     aulas_realizadas_anteriores: Number($('#realizadas').value),
@@ -1568,7 +1574,7 @@ async function abrirHistoricoAluno(id) {
     }]));
 
     $('#historicoTitulo').textContent = `📚 Histórico — ${a.nome || 'Aluno'}`;
-    $('#historicoSubtitulo').textContent = `Categoria ${a.categoria || '—'} · CPF ${a.cpf_mascarado || 'não informado'} · ${a.whatsapp || 'sem WhatsApp'}`;
+    $('#historicoSubtitulo').textContent = `Categoria ${a.categoria || '—'} · CPF ${a.cpf_mascarado || 'não informado'} · 🎂 ${a.data_nascimento ? fmtData(a.data_nascimento) : 'nascimento não informado'} · ${a.whatsapp || 'sem WhatsApp'}`;
     $('#historicoSituacao').textContent = a.ativo ? 'Ativo' : 'Inativo';
     $('#historicoSituacao').className = `remaining-badge ${a.ativo ? '' : 'history-inactive-badge'}`;
 
