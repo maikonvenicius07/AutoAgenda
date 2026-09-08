@@ -1,0 +1,42 @@
+'use strict';
+const assert=require('assert');
+const fs=require('fs');
+const path=require('path');
+const Engine=require('../game-engine');
+const root=path.join(__dirname,'..');
+const server=fs.readFileSync(path.join(root,'server.js'),'utf8');
+const app=fs.readFileSync(path.join(root,'public','app.js'),'utf8');
+const html=fs.readFileSync(path.join(root,'public','index.html'),'utf8');
+const pkg=require(path.join(root,'package.json'));
+
+assert.equal(pkg.version,'40.4.0');
+assert(server.includes("socket.on('playAgain'"),'evento playAgain ausente no servidor');
+assert(server.includes('maybeStartReplay(room)'),'servidor não tenta iniciar a revanche');
+assert(server.includes('matchSerial'),'proteção do registro de ranking entre partidas ausente');
+assert(app.includes("socket.emit('playAgain')"),'cliente não confirma Jogar de Novo');
+assert(html.includes('id="roundReviewReplay"'),'botão Jogar de Novo ausente da conferência final');
+
+const room=Engine.createRoom('ABC123',{socketId:'s1',token:'t1',name:'Ana',avatar:'mulher',playerKey:'a'});
+Engine.addPlayer(room,{socketId:'s2',token:'t2',name:'Bruno',avatar:'homem',playerKey:'b'});
+room.status='finished';room.round=5;room.finishedAt=Date.now();room.players[0].score=12;room.players[1].score=22;
+room.players[0].roundHistory=[1,2,3,4,2];room.players[1].roundHistory=[2,4,5,6,5];
+room.roundReview={id:'review-final',round:5,players:[]};
+let publicState=Engine.roomPublicState(room,room.players[0].id);
+assert.equal(publicState.replay.eligible,true,'revanche deveria estar disponível em partida humana');
+assert.equal(publicState.replay.requiredCount,2);
+
+const oldSerial=room.matchSerial;
+Engine.resetMatch(room);
+assert.equal(room.status,'lobby');
+assert.equal(room.round,0);
+assert.equal(room.players[0].score,0);
+assert.equal(room.players[1].score,0);
+assert.deepEqual(room.players[0].roundHistory,[]);
+assert.equal(room.roundReview,null);
+assert.equal(room.matchSerial,oldSerial+1);
+Engine.startRound(room);
+assert.equal(room.status,'playing');
+assert.equal(room.round,1);
+assert.equal(room.players[0].hand.length,6);
+assert.equal(room.players[1].hand.length,6);
+console.log('✓ V40.4: Jogar de Novo preserva a sala, zera o placar e inicia nova partida.');
