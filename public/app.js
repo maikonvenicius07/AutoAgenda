@@ -60,7 +60,12 @@ let configLembretes = {
   lembrete_horas_antes: 2,
   whatsapp_automatico_ativo: false,
   whatsapp_api_configurada: false,
-  whatsapp_api_ausencias: []
+  whatsapp_api_ausencias: [],
+  whatsapp_lembretes_configurados: false,
+  whatsapp_lembrete_ausencias: [],
+  whatsapp_comunicacoes_configuradas: false,
+  whatsapp_comunicacao_ausencias: [],
+  whatsapp_envios_resumo: { pendentes:0, enviados:0, falhas:0 }
 };
 let configEmail = {
   email_automatico_ativo: false,
@@ -841,21 +846,31 @@ function renderConfigLembretes() {
   $('#cfgLembreteHoras').value = Number(c.lembrete_horas_antes || 2);
   $('#cfgLembreteHoras').disabled = !horasAtivo;
   $('#cfgWhatsAppAutoAtivo').checked = autoAtivo;
-  $('#cfgWhatsAppAutoAtivo').disabled = !apiConfigurada && !autoAtivo;
+  $('#cfgWhatsAppAutoAtivo').disabled = false;
   const status = $('#cfgWhatsAppApiStatus');
-  if (apiConfigurada) {
+  const lembretesOk = c.whatsapp_lembretes_configurados === true;
+  const comunicacoesOk = c.whatsapp_comunicacoes_configuradas === true;
+  if (lembretesOk && comunicacoesOk) {
     status.className = 'reminder-api-status ready';
-    status.textContent = '✅ WhatsApp Cloud API preparada no Render. O ADMIN pode ativar o envio automático.';
+    status.textContent = '✅ WhatsApp completo no Render: lembretes + comunicações transacionais preparados.';
   } else {
-    const faltam = Array.isArray(c.whatsapp_api_ausencias) ? c.whatsapp_api_ausencias.join(', ') : '';
+    const faltas = [...new Set([
+      ...(Array.isArray(c.whatsapp_lembrete_ausencias) ? c.whatsapp_lembrete_ausencias : []),
+      ...(Array.isArray(c.whatsapp_comunicacao_ausencias) ? c.whatsapp_comunicacao_ausencias : [])
+    ])];
     status.className = 'reminder-api-status pending';
-    status.textContent = `⚙️ API ainda não configurada${faltam ? ` · faltam: ${faltam}` : ''}. O envio manual continua funcionando.`;
+    status.textContent = `${autoAtivo ? '🤖 Automação ativada, aguardando configuração' : '⚙️ WhatsApp ainda incompleto'}${faltas.length ? ` · faltam: ${faltas.join(', ')}` : ''}. O envio manual continua funcionando.`;
   }
+  const resumoEnvios = c.whatsapp_envios_resumo || {};
   const partes = [];
   if (diaAtivo) partes.push(`dia anterior às ${c.lembrete_dia_anterior_hora || '18:00'}`);
   if (horasAtivo) partes.push(`${Number(c.lembrete_horas_antes || 2)}h antes`);
-  if (autoAtivo) partes.push('WhatsApp automático');
+  if (autoAtivo) partes.push('WhatsApp automático total');
   $('#cfgLembretesResumo').textContent = partes.length ? partes.join(' + ') : 'Desativados';
+  if (autoAtivo && (Number(resumoEnvios.pendentes||0) || Number(resumoEnvios.falhas||0))) {
+    status.textContent += ` · últimos 30 dias: ${Number(resumoEnvios.pendentes||0)} pendente(s), ${Number(resumoEnvios.falhas||0)} falha(s).`;
+  }
+  renderAutomacaoTotal();
 }
 
 
@@ -869,14 +884,14 @@ function renderConfigEmail() {
   if (!toggle || !status) return;
 
   toggle.checked = ativo;
-  toggle.disabled = !apiConfigurada && !ativo;
+  toggle.disabled = false;
   if (apiConfigurada) {
     status.className = 'reminder-api-status ready';
-    status.textContent = `✅ Serviço de e-mail ${c.email_provider || 'RESEND'} configurado no Render. O ADMIN pode ativar o envio automático.`;
+    status.textContent = `✅ Serviço de e-mail ${c.email_provider || 'RESEND'} configurado no Render. Os envios automáticos podem ser processados imediatamente.`;
   } else {
     const faltam = Array.isArray(c.email_api_ausencias) ? c.email_api_ausencias.join(', ') : '';
     status.className = 'reminder-api-status pending';
-    status.textContent = `⚙️ E-mail automático ainda não configurado${faltam ? ` · faltam: ${faltam}` : ''}. O WhatsApp continua funcionando normalmente.`;
+    status.textContent = `${ativo ? '🤖 E-mail automático ativado, aguardando configuração' : '⚙️ E-mail ainda não configurado'}${faltam ? ` · faltam: ${faltam}` : ''}. Os itens ficam pendentes até o Render estar configurado.`;
   }
 
   $('#cfgEmailResumo').textContent = ativo ? 'E-mail automático ativo' : 'E-mail automático desligado';
@@ -885,7 +900,28 @@ function renderConfigEmail() {
     `<b>${Number(resumo.falhas || 0)} falha(s)</b> · ${Number(resumo.pendentes || 0)} pendente(s). ` +
     `Eventos: agendamento, lembretes, reagendamento e cancelamento.`;
   const processar = $('#processarEmailsAgora');
-  if (processar) processar.disabled = !ativo || !apiConfigurada;
+  if (processar) processar.disabled = !ativo;
+  renderAutomacaoTotal();
+}
+
+
+function renderAutomacaoTotal() {
+  const el = $('#automacaoTotalStatus');
+  const bt = $('#ativarAutomacaoTotal');
+  if (!el || !bt) return;
+  const whats = configLembretes?.whatsapp_automatico_ativo === true;
+  const email = configEmail?.email_automatico_ativo === true;
+  if (whats && email) {
+    el.textContent = '✅ WhatsApp + e-mail ligados';
+    el.classList.add('automation-on');
+    bt.textContent = '✅ Automação total ativada';
+    bt.disabled = true;
+  } else {
+    el.textContent = `${whats ? 'WhatsApp ligado' : 'WhatsApp desligado'} · ${email ? 'e-mail ligado' : 'e-mail desligado'}`;
+    el.classList.remove('automation-on');
+    bt.textContent = '🤖 Ativar WhatsApp + e-mail';
+    bt.disabled = false;
+  }
 }
 
 function lembreteEnvioLabel(x) {
@@ -1457,7 +1493,7 @@ async function health() {
   try {
     const h = await api('/api/health');
     const seguranca = h.security_ready ? ' · 🔐 login individual ativo' : ' · ⛔ login individual precisa ser inicializado';
-    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '3.6.0'}${seguranca}.`;
+    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '3.7.0'}${seguranca}.`;
     $('#db').className = h.security_ready ? 'db ok' : 'db fail';
   } catch {
     $('#db').textContent = '🔴 Banco não conectado. Verifique DATABASE_URL no Render.';
@@ -2449,6 +2485,33 @@ $('#fFuncionamento').onsubmit = async e => {
 };
 
 
+$('#ativarAutomacaoTotal').onclick = async () => {
+  const bt = $('#ativarAutomacaoTotal');
+  try {
+    bt.disabled = true;
+    bt.textContent = 'Ativando...';
+    const lembretePayload = {
+      lembrete_dia_anterior_ativo: configLembretes?.lembrete_dia_anterior_ativo !== false,
+      lembrete_dia_anterior_hora: configLembretes?.lembrete_dia_anterior_hora || '18:00',
+      lembrete_horas_antes_ativo: configLembretes?.lembrete_horas_antes_ativo !== false,
+      lembrete_horas_antes: Number(configLembretes?.lembrete_horas_antes || 2),
+      whatsapp_automatico_ativo: true
+    };
+    await api('/api/configuracoes/lembretes', { method:'PUT', body:JSON.stringify(lembretePayload) });
+    await api('/api/configuracoes/email', { method:'PUT', body:JSON.stringify({ email_automatico_ativo:true }) });
+    [configLembretes, configEmail] = await Promise.all([
+      api('/api/configuracoes/lembretes'), api('/api/configuracoes/email')
+    ]);
+    renderConfigLembretes();
+    renderConfigEmail();
+    toast('🤖 Automação total ativada. O AutoAgenda enviará sozinho assim que as integrações estiverem configuradas.');
+  } catch (e) {
+    toast(e.message || 'Erro ao ativar automação total.');
+  } finally {
+    renderAutomacaoTotal();
+  }
+};
+
 $('#cfgLembreteDiaAtivo').onchange = () => { $('#cfgLembreteDiaHora').disabled = !$('#cfgLembreteDiaAtivo').checked; };
 $('#cfgLembreteHorasAtivo').onchange = () => { $('#cfgLembreteHoras').disabled = !$('#cfgLembreteHorasAtivo').checked; };
 $('#atualizarLembretes').onclick = carregarLembretes;
@@ -3027,9 +3090,9 @@ function renderResumoRestauracao(r) {
     alunos:'Alunos', instrutores:'Instrutores', veiculos:'Veículos', locais:'Locais', aulas:'Aulas',
     planos:'Planos', financeiro:'Financeiro', configuracoes:'Configurações',
     instrutor_indisponibilidades:'Indisp. instrutores', veiculo_indisponibilidades:'Indisp. veículos',
-    lembrete_envios:'Histórico WhatsApp', email_envios:'Histórico e-mails'
+    lembrete_envios:'Histórico de lembretes WhatsApp', whatsapp_envios:'WhatsApp automático', email_envios:'Histórico e-mails'
   };
-  const ordem = ['alunos','instrutores','veiculos','locais','planos','aulas','financeiro','configuracoes','instrutor_indisponibilidades','veiculo_indisponibilidades','lembrete_envios','email_envios'];
+  const ordem = ['alunos','instrutores','veiculos','locais','planos','aulas','financeiro','configuracoes','instrutor_indisponibilidades','veiculo_indisponibilidades','lembrete_envios','whatsapp_envios','email_envios'];
   const linhas = ordem.map(chave => `
     <tr>
       <td>${esc(nomes[chave] || chave)}</td>

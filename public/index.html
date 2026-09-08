@@ -14,7 +14,7 @@
       document.documentElement.dataset.theme = 'light';
     }
   </script>
-  <link rel="stylesheet" href="style.css?v=3.6.0">
+  <link rel="stylesheet" href="style.css?v=3.7.0">
 </head>
 <body class="auth-locked">
 <section id="loginScreen" class="login-screen">
@@ -538,6 +538,22 @@
       </form>
     </article>
 
+    <article class="card automation-total-card">
+      <div class="head compact">
+        <div>
+          <h3>🤖 Automação total de comunicação</h3>
+          <p>Deixe WhatsApp e e-mail ligados ao mesmo tempo. O AutoAgenda processa automaticamente agendamentos, lembretes, reagendamentos e cancelamentos.</p>
+        </div>
+        <span id="automacaoTotalStatus" class="remaining-badge">Verificando...</span>
+      </div>
+      <div class="automation-total-actions">
+        <button type="button" id="ativarAutomacaoTotal">🤖 Ativar WhatsApp + e-mail</button>
+      </div>
+      <div class="config-rule-note">
+        Você pode ativar agora mesmo. Se alguma integração ainda não estiver configurada no Render, os envios ficam aguardando e começam automaticamente quando as credenciais/templates forem configurados.
+      </div>
+    </article>
+
     <article class="card reminder-config-card">
       <div class="head compact">
         <div>
@@ -551,10 +567,10 @@
         <label>Horário no dia anterior<input id="cfgLembreteDiaHora" type="time" required></label>
         <label class="check-line reminder-check"><input id="cfgLembreteHorasAtivo" type="checkbox"> Lembrete algumas horas antes</label>
         <label>Quantidade de horas antes<input id="cfgLembreteHoras" type="number" min="1" max="24" step="1" required></label>
-        <label class="check-line reminder-check reminder-auto-toggle"><input id="cfgWhatsAppAutoAtivo" type="checkbox"> 🤖 Enviar lembretes automaticamente pela API oficial do WhatsApp</label>
+        <label class="check-line reminder-check reminder-auto-toggle"><input id="cfgWhatsAppAutoAtivo" type="checkbox"> 🤖 Enviar automaticamente pelo WhatsApp (agendamentos, lembretes, reagendamentos e cancelamentos)</label>
         <div id="cfgWhatsAppApiStatus" class="reminder-api-status">Verificando configuração da API...</div>
         <div class="config-rule-note reminder-config-note">
-          O envio automático fica <b>desativado por padrão</b>. Ele só pode ser ligado depois que as variáveis da WhatsApp Cloud API e um template aprovado forem configurados no Render. O envio manual continua disponível em qualquer momento.
+          A opção pode ficar ligada mesmo antes da configuração da Meta. Os envios permanecem pendentes e começam automaticamente quando a API, o template de lembrete e o template de comunicação estiverem configurados no Render. O envio manual continua disponível.
         </div>
         <button type="submit" id="salvarLembretes">💾 Salvar lembretes</button>
         <div id="erroLembretes" class="erro hide"></div>
@@ -570,7 +586,7 @@
         <span id="cfgEmailResumo" class="remaining-badge">Carregando...</span>
       </div>
       <form id="fEmail" class="email-config-form">
-        <label class="check-line reminder-check"><input id="cfgEmailAutoAtivo" type="checkbox"> ✉️ Enviar e-mails automaticamente</label>
+        <label class="check-line reminder-check"><input id="cfgEmailAutoAtivo" type="checkbox"> ✉️ Enviar automaticamente por e-mail (agendamentos, lembretes, reagendamentos e cancelamentos)</label>
         <div id="cfgEmailApiStatus" class="reminder-api-status">Verificando configuração do serviço de e-mail...</div>
         <div id="cfgEmailEnviosStatus" class="config-rule-note">
           Os e-mails automáticos ficam desativados por padrão e não interferem no WhatsApp.
@@ -998,6 +1014,6 @@
 </div>
 
 <div id="toast" class="toast hide"></div>
-<script src="app.js?v=3.6.0"></script>
+<script src="app.js?v=3.7.0"></script>
 </body>
 </html>

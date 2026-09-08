@@ -1,31 +1,35 @@
-# Análise atual — AutoAgenda V3.6.0
+# Análise atual — AutoAgenda V3.7.0
 
 ## Situação
 
-O roteiro principal de 17 etapas, os 6 passos de estabilização e os 5 passos de evolução planejados foram concluídos.
+A V3.7.0 acrescenta a automação total de comunicação, unificando WhatsApp oficial e e-mail em um worker interno. Os eventos passam a ser enfileirados sem bloquear as operações principais do AutoAgenda.
 
-A V3.6.0 adiciona a última camada prevista no roteiro: estratégia de backup automático nativo do PostgreSQL, mantendo a ativação externa opcional para não gerar custo inesperado.
+## Cobertura automática
 
-## Proteção de dados consolidada
+- agendamento individual;
+- resumo de plano criado;
+- lembrete no dia anterior;
+- lembrete algumas horas antes;
+- reagendamento;
+- atualização de plano;
+- cancelamento de aula;
+- encerramento de plano.
 
-- exportação CSV, Excel e JSON;
-- backup completo JSON;
-- restauração JSON segura e transacional;
-- usuários/senhas preservados na restauração operacional;
-- estrutura opcional de `pg_dump` + S3;
-- auditoria das execuções externas no painel;
-- documentação de PITR/Recovery do Render;
-- procedimento de restauração PostgreSQL em banco isolado.
+## Segurança e confiabilidade
 
-## Situação do backup automático externo
+- credenciais somente em variáveis de ambiente do Render;
+- filas auditáveis no PostgreSQL;
+- advisory locks contra processamento simultâneo por duas instâncias;
+- WhatsApp preserva o envio manual e não tenta novamente falhas ambíguas automaticamente;
+- e-mail reutiliza a mesma chave de idempotência e admite até 3 tentativas automáticas;
+- falha de comunicação não desfaz agendamento/reagendamento/cancelamento;
+- backups e restauração contemplam os históricos de comunicação sem incluir credenciais;
+- token do link manual de confirmação não é alterado pelo WhatsApp transacional automático.
 
-A estrutura está pronta, porém **não está ativada automaticamente**.
+## Dependências externas ainda necessárias para envio real
 
-Motivo: o Cron Job do Render e o armazenamento S3 são recursos externos que podem gerar custo e exigem credenciais próprias.
+A automação pode ser ligada no AutoAgenda, porém os provedores externos precisam estar configurados no Render para que as mensagens saiam de fato. Consulte `CONFIGURAR_AUTOMACAO_V3.7.0.md`.
 
-## Próximas melhorias futuras já registradas
+## Próxima melhoria registrada
 
-1. mensagem automática de **Feliz Aniversário** usando a data de nascimento do aluno;
-2. Webhooks para acompanhar status de entrega/leitura do WhatsApp oficial;
-3. evolução da confirmação/reagendamento conforme uso real;
-4. demais melhorias que forem identificadas durante o uso da V3.6.0.
+Mensagem automática de **Feliz Aniversário** usando a data de nascimento do aluno, com controle para enviar somente uma vez por ano.

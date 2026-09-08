@@ -244,6 +244,34 @@ CREATE TABLE IF NOT EXISTS autoagenda.lembrete_envios (
 CREATE INDEX IF NOT EXISTS idx_autoagenda_lembrete_envios_fila
   ON autoagenda.lembrete_envios(status, agendado_em);
 
+CREATE TABLE IF NOT EXISTS autoagenda.whatsapp_envios (
+  id BIGSERIAL PRIMARY KEY,
+  aula_id INTEGER REFERENCES autoagenda.aulas(id) ON DELETE SET NULL,
+  plan_id INTEGER REFERENCES autoagenda.planos_aula(id) ON DELETE SET NULL,
+  evento VARCHAR(40) NOT NULL CHECK (evento IN (
+    'AGENDAMENTO','REAGENDAMENTO','CANCELAMENTO',
+    'PLANO_AGENDADO','PLANO_ATUALIZADO','PLANO_CANCELADO'
+  )),
+  destinatario VARCHAR(30) NOT NULL,
+  chave_idempotencia VARCHAR(256) NOT NULL UNIQUE,
+  agendado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+  status VARCHAR(20) NOT NULL DEFAULT 'PENDENTE'
+    CHECK (status IN ('PENDENTE','PROCESSANDO','ENVIADO','FALHOU','CANCELADO')),
+  automatico BOOLEAN NOT NULL DEFAULT TRUE,
+  tentativas INTEGER NOT NULL DEFAULT 0 CHECK (tentativas >= 0),
+  ultima_tentativa_em TIMESTAMP,
+  processando_em TIMESTAMP,
+  enviado_em TIMESTAMP,
+  provider_message_id VARCHAR(255),
+  erro TEXT,
+  criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+  atualizado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+  CHECK (aula_id IS NOT NULL OR plan_id IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS idx_autoagenda_whatsapp_envios_fila ON autoagenda.whatsapp_envios(status, agendado_em);
+CREATE INDEX IF NOT EXISTS idx_autoagenda_whatsapp_envios_aula ON autoagenda.whatsapp_envios(aula_id, evento);
+CREATE INDEX IF NOT EXISTS idx_autoagenda_whatsapp_envios_plano ON autoagenda.whatsapp_envios(plan_id, evento);
+
 CREATE TABLE IF NOT EXISTS autoagenda.email_envios (
   id BIGSERIAL PRIMARY KEY,
   aula_id INTEGER REFERENCES autoagenda.aulas(id) ON DELETE SET NULL,

@@ -1,4 +1,4 @@
-# AutoAgenda V3.6.0
+# AutoAgenda V3.7.0
 
 Sistema de organização de aulas práticas para autoescola, com backend Node/Express, PostgreSQL e deploy no Render.
 
@@ -12,13 +12,92 @@ Sistema de organização de aulas práticas para autoescola, com backend Node/Ex
 - busca de horários livres;
 - reagendamento inteligente;
 - WhatsApp da aula e do plano;
-- confirmação pelo aluno, lembretes com integração oficial do WhatsApp e e-mails transacionais preparados;
+- confirmação pelo aluno e automação de WhatsApp/e-mail para agendamentos, lembretes, reagendamentos e cancelamentos;
 - Dashboard e relatórios;
 - financeiro simples;
 - backup/exportação CSV, Excel e JSON, com restauração segura pelo backup completo JSON;
 - modo claro/escuro;
 - login individual com senha em hash e sessão segura;
 - níveis de acesso Administrador e Instrutor.
+
+
+## V3.7.0 — Automação total de WhatsApp + e-mail
+
+A V3.7.0 transforma as integrações preparadas nas versões anteriores em uma única camada de **comunicação automática**. O ADMIN pode ligar WhatsApp e e-mail de uma vez e o AutoAgenda passa a processar sozinho os eventos enquanto o serviço Node estiver em execução.
+
+### Eventos automáticos
+
+**WhatsApp oficial**
+- novo agendamento individual;
+- resumo de novo plano;
+- lembrete no dia anterior;
+- lembrete algumas horas antes;
+- reagendamento;
+- atualização de plano/série;
+- cancelamento de aula;
+- encerramento de plano.
+
+**E-mail**
+- novo agendamento individual;
+- resumo de novo plano;
+- lembrete no dia anterior;
+- lembrete algumas horas antes;
+- reagendamento;
+- atualização de plano/série;
+- cancelamento de aula;
+- encerramento de plano.
+
+### Como funciona
+
+- botão **🤖 Ativar WhatsApp + e-mail** na área de Configurações;
+- as automações podem ficar ligadas mesmo antes das credenciais externas estarem prontas;
+- eventos transacionais são guardados em fila e começam a ser processados quando a integração correspondente estiver configurada;
+- o worker interno executa por padrão a cada **1 minuto** (`AUTOAGENDA_COMM_WORKER_INTERVAL_MINUTES=1`);
+- falha da API nunca impede criar, alterar, reagendar ou cancelar uma aula;
+- o envio manual do WhatsApp continua disponível como alternativa;
+- mensagens de plano usam resumo único para evitar excesso de mensagens;
+- WhatsApp transacional substitui comunicações pendentes antigas pelo estado mais recente do mesmo item;
+- e-mails com falha podem ser tentados novamente automaticamente, no máximo 3 vezes, mantendo a mesma chave de idempotência;
+- WhatsApp não repete automaticamente uma falha ambígua, reduzindo o risco de mensagem duplicada;
+- o WhatsApp automático **não gira nem invalida o token do link manual de confirmação**. O link seguro de confirmação continua sendo gerado no fluxo manual já existente.
+
+### Configuração do WhatsApp no Render
+
+Configure em **Environment**:
+
+- `WHATSAPP_CLOUD_API_VERSION` — versão da Graph API no formato `vXX.X`;
+- `WHATSAPP_PHONE_NUMBER_ID` — ID do número do WhatsApp Business;
+- `WHATSAPP_ACCESS_TOKEN` — token de acesso;
+- `WHATSAPP_TEMPLATE_LEMBRETE` — nome do template aprovado de lembrete;
+- `WHATSAPP_TEMPLATE_COMUNICACAO` — nome do template aprovado para agendamento/reagendamento/cancelamento/plano;
+- `WHATSAPP_TEMPLATE_LANGUAGE` — padrão `pt_BR`;
+- `PUBLIC_BASE_URL` — recomendado para o link público de confirmação do fluxo manual;
+- `AUTOAGENDA_COMM_WORKER_INTERVAL_MINUTES` — padrão `1`.
+
+O template de comunicação usa **4 parâmetros de texto**, nesta ordem:
+
+1. primeiro nome do aluno;
+2. descrição do evento;
+3. detalhes da aula ou resumo do plano;
+4. orientação final ao aluno.
+
+Exemplo de corpo para o template:
+
+`Olá, {{1}}! {{2}}. Detalhes: {{3}}. {{4}}`
+
+O template de lembrete continua usando os 6 parâmetros já documentados na V3.3.0.
+
+### Configuração do e-mail no Render
+
+- `RESEND_API_KEY`;
+- `EMAIL_FROM`;
+- `EMAIL_REPLY_TO` — opcional.
+
+### Limitação operacional importante
+
+A automação interna executa somente enquanto o processo Node do AutoAgenda estiver ativo. Em hospedagem que suspenda o serviço por inatividade, uma comunicação pode ser processada depois que o serviço voltar. Para horários rigorosos 24/7, use um serviço sempre ativo ou um agendador externo.
+
+Consulte `CHECKLIST_V3.7.0.md` e `CONFIGURAR_AUTOMACAO_V3.7.0.md` antes da ativação real.
 
 
 

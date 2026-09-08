@@ -2,28 +2,24 @@
 
 ## Situação atual
 
-Versão: **V3.6.0 — Estratégia de backup automático do PostgreSQL**
+Versão: **V3.7.0 — Automação total de WhatsApp + e-mail**
 
-O roteiro original está concluído:
-
-- 17 etapas principais: concluídas;
-- 6 passos de estabilização: concluídos;
-- confirmação pelo aluno: concluída;
-- preparação do WhatsApp automático: concluída;
-- preparação do e-mail automático: concluída;
-- restauração segura de backup JSON: concluída;
-- estrutura de backup PostgreSQL automático: concluída.
+O AutoAgenda agora possui uma camada única de comunicação automática para agendamentos, lembretes, reagendamentos, cancelamentos e resumos de plano. WhatsApp e e-mail podem ser ativados juntos e as filas são processadas automaticamente enquanto o serviço estiver ativo.
 
 ## Próximas evoluções
 
-### 1. Aniversário automático do aluno
+### 1. Feliz Aniversário automático
 
-Usar `data_nascimento` para identificar aniversariantes do dia e, quando a integração oficial estiver ativa, enviar uma mensagem personalizada de Feliz Aniversário uma única vez por ano.
+Usar `data_nascimento` para identificar aniversariantes do dia e enviar uma mensagem personalizada uma única vez por ano, preferencialmente por WhatsApp e e-mail quando as integrações estiverem ativas.
 
 ### 2. Webhooks do WhatsApp
 
-Registrar status real das mensagens aceitas pela Meta, como entrega/falha e outros estados disponibilizados pela plataforma.
+Registrar no AutoAgenda os estados informados pela plataforma após a aceitação do envio, como entrega/falha e demais estados disponibilizados pela integração oficial.
 
-### 3. Melhorias guiadas pelo uso real
+### 3. Central de modelos de mensagem
 
-Após utilizar a V3.6.0 em produção, priorizar correções e melhorias com base no fluxo diário dos instrutores e administradores.
+Permitir que o ADMIN personalize textos/modelos de comunicação sem alterar o código, respeitando os templates aprovados pelo provedor quando necessário.
+
+### 4. Melhorias guiadas pelo uso real
+
+Após utilizar a V3.7.0 em produção, priorizar correções e ajustes de acordo com o fluxo diário dos instrutores e administradores.

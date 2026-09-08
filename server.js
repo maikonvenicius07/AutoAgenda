@@ -8,7 +8,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '3.6.0';
+const APP_VERSION = '3.7.0';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -1008,6 +1008,40 @@ async function initDatabase() {
     `);
     await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_lembrete_envios_fila ON autoagenda.lembrete_envios(status, agendado_em)');
 
+    // V3.7 — fila auditável de comunicações transacionais pelo WhatsApp oficial.
+    // Usa um template genérico aprovado para agendamento, reagendamento, cancelamento
+    // e resumos de plano. Lembretes continuam na fila histórica V3.3.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS autoagenda.whatsapp_envios (
+        id BIGSERIAL PRIMARY KEY,
+        aula_id INTEGER REFERENCES autoagenda.aulas(id) ON DELETE SET NULL,
+        plan_id INTEGER REFERENCES autoagenda.planos_aula(id) ON DELETE SET NULL,
+        evento VARCHAR(40) NOT NULL
+          CHECK (evento IN (
+            'AGENDAMENTO','REAGENDAMENTO','CANCELAMENTO',
+            'PLANO_AGENDADO','PLANO_ATUALIZADO','PLANO_CANCELADO'
+          )),
+        destinatario VARCHAR(30) NOT NULL,
+        chave_idempotencia VARCHAR(256) NOT NULL UNIQUE,
+        agendado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+        status VARCHAR(20) NOT NULL DEFAULT 'PENDENTE'
+          CHECK (status IN ('PENDENTE','PROCESSANDO','ENVIADO','FALHOU','CANCELADO')),
+        automatico BOOLEAN NOT NULL DEFAULT TRUE,
+        tentativas INTEGER NOT NULL DEFAULT 0 CHECK (tentativas >= 0),
+        ultima_tentativa_em TIMESTAMP,
+        processando_em TIMESTAMP,
+        enviado_em TIMESTAMP,
+        provider_message_id VARCHAR(255),
+        erro TEXT,
+        criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+        atualizado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+        CHECK (aula_id IS NOT NULL OR plan_id IS NOT NULL)
+      )
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_whatsapp_envios_fila ON autoagenda.whatsapp_envios(status, agendado_em)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_whatsapp_envios_aula ON autoagenda.whatsapp_envios(aula_id, evento)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_whatsapp_envios_plano ON autoagenda.whatsapp_envios(plan_id, evento)');
+
     // V3.4 — fila auditável de e-mails transacionais e lembretes.
     // O envio usa uma API HTTPS oficial (Resend) e nasce desativado.
     await client.query(`
@@ -1598,29 +1632,63 @@ async function obterConfigFuncionamento(client) {
 }
 
 
+function templateWhatsAppNomeValido(valor) {
+  return /^[a-z0-9_]{2,512}$/i.test(String(valor || '').trim());
+}
+
+function publicBaseUrlConfigurada() {
+  const texto = String(process.env.PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '');
+  if (!texto) return '';
+  try {
+    const u = new URL(texto);
+    if (!['http:', 'https:'].includes(u.protocol)) return '';
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return '';
+  }
+}
+
 function configuracaoWhatsAppCloud() {
   const apiVersion = String(process.env.WHATSAPP_CLOUD_API_VERSION || '').trim();
   const phoneNumberId = String(process.env.WHATSAPP_PHONE_NUMBER_ID || '').trim();
   const accessToken = String(process.env.WHATSAPP_ACCESS_TOKEN || '').trim();
   const templateLembrete = String(process.env.WHATSAPP_TEMPLATE_LEMBRETE || '').trim();
+  const templateComunicacao = String(process.env.WHATSAPP_TEMPLATE_COMUNICACAO || '').trim();
   const templateLanguage = String(process.env.WHATSAPP_TEMPLATE_LANGUAGE || 'pt_BR').trim() || 'pt_BR';
-  const ausencias = [];
-  if (!/^v\d+\.\d+$/.test(apiVersion)) ausencias.push('WHATSAPP_CLOUD_API_VERSION');
-  if (!/^\d+$/.test(phoneNumberId)) ausencias.push('WHATSAPP_PHONE_NUMBER_ID');
-  if (accessToken.length < 20) ausencias.push('WHATSAPP_ACCESS_TOKEN');
-  if (!/^[a-z0-9_]{2,512}$/i.test(templateLembrete)) ausencias.push('WHATSAPP_TEMPLATE_LEMBRETE');
+  const publicBaseUrl = publicBaseUrlConfigurada();
+
+  const ausenciasBase = [];
+  if (!/^v\d+\.\d+$/.test(apiVersion)) ausenciasBase.push('WHATSAPP_CLOUD_API_VERSION');
+  if (!/^\d+$/.test(phoneNumberId)) ausenciasBase.push('WHATSAPP_PHONE_NUMBER_ID');
+  if (accessToken.length < 20) ausenciasBase.push('WHATSAPP_ACCESS_TOKEN');
+
+  const ausenciasLembrete = [...ausenciasBase];
+  if (!templateWhatsAppNomeValido(templateLembrete)) ausenciasLembrete.push('WHATSAPP_TEMPLATE_LEMBRETE');
+
+  const ausenciasComunicacao = [...ausenciasBase];
+  if (!templateWhatsAppNomeValido(templateComunicacao)) ausenciasComunicacao.push('WHATSAPP_TEMPLATE_COMUNICACAO');
+
   return {
-    apiVersion, phoneNumberId, accessToken, templateLembrete, templateLanguage,
-    configurada: ausencias.length === 0,
-    ausencias
+    apiVersion, phoneNumberId, accessToken, templateLembrete, templateComunicacao,
+    templateLanguage, publicBaseUrl,
+    baseConfigurada: ausenciasBase.length === 0,
+    lembretesConfigurados: ausenciasLembrete.length === 0,
+    comunicacoesConfiguradas: ausenciasComunicacao.length === 0,
+    ausenciasBase,
+    ausenciasLembrete,
+    ausenciasComunicacao
   };
 }
 
 function resumoConfiguracaoWhatsAppCloud() {
   const cfg = configuracaoWhatsAppCloud();
   return {
-    whatsapp_api_configurada: cfg.configurada,
-    whatsapp_api_ausencias: cfg.ausencias,
+    whatsapp_api_configurada: cfg.baseConfigurada,
+    whatsapp_api_ausencias: cfg.ausenciasBase,
+    whatsapp_lembretes_configurados: cfg.lembretesConfigurados,
+    whatsapp_lembrete_ausencias: cfg.ausenciasLembrete,
+    whatsapp_comunicacoes_configuradas: cfg.comunicacoesConfiguradas,
+    whatsapp_comunicacao_ausencias: cfg.ausenciasComunicacao,
     whatsapp_template_language: cfg.templateLanguage
   };
 }
@@ -1704,6 +1772,14 @@ async function obterConfigLembretes(client) {
     FROM autoagenda.configuracoes
     WHERE id = 1
   `);
+  const resumoQ = await client.query(`
+    SELECT
+      COUNT(*) FILTER (WHERE status='PENDENTE')::int AS pendentes,
+      COUNT(*) FILTER (WHERE status='ENVIADO')::int AS enviados,
+      COUNT(*) FILTER (WHERE status='FALHOU')::int AS falhas
+    FROM autoagenda.whatsapp_envios
+    WHERE criado_em >= NOW() - INTERVAL '30 days'
+  `);
   const x = r.rows[0] || {};
   return {
     lembrete_dia_anterior_ativo: x.lembrete_dia_anterior_ativo !== false,
@@ -1711,6 +1787,7 @@ async function obterConfigLembretes(client) {
     lembrete_horas_antes_ativo: x.lembrete_horas_antes_ativo !== false,
     lembrete_horas_antes: Math.max(1, Math.min(24, Number(x.lembrete_horas_antes || 2))),
     whatsapp_automatico_ativo: x.whatsapp_automatico_ativo === true,
+    whatsapp_envios_resumo: resumoQ.rows[0] || { pendentes:0, enviados:0, falhas:0 },
     ...resumoConfiguracaoWhatsAppCloud()
   };
 }
@@ -1912,8 +1989,8 @@ async function processarLembretesAutomaticos({ origem = 'WORKER', limite = 10 } 
 
     const cfg = await obterConfigLembretes(client);
     if (!cfg.whatsapp_automatico_ativo) return { ...resultado, ignorado: true, motivo: 'AUTOMACAO_DESATIVADA' };
-    if (!cfg.whatsapp_api_configurada) {
-      return { ...resultado, ignorado: true, motivo: 'API_NAO_CONFIGURADA', ausencias: cfg.whatsapp_api_ausencias };
+    if (!cfg.whatsapp_lembretes_configurados) {
+      return { ...resultado, ignorado: true, motivo: 'LEMBRETE_NAO_CONFIGURADO', ausencias: cfg.whatsapp_lembrete_ausencias };
     }
 
     await sincronizarAgendamentoLembretes(client);
@@ -2032,6 +2109,335 @@ async function processarLembretesAutomaticos({ origem = 'WORKER', limite = 10 } 
   }
 }
 
+
+
+// ========================= V3.7 — WHATSAPP TRANSACIONAL AUTOMÁTICO =========================
+const WHATSAPP_EVENTOS_AULA = new Set(['AGENDAMENTO','REAGENDAMENTO','CANCELAMENTO']);
+const WHATSAPP_EVENTOS_PLANO = new Set(['PLANO_AGENDADO','PLANO_ATUALIZADO','PLANO_CANCELADO']);
+
+function chaveWhatsAppSeguro(valor) {
+  return String(valor || '')
+    .normalize('NFKD')
+    .replace(/[^\x20-\x7E]/g, '')
+    .replace(/[^A-Za-z0-9_./:-]/g, '-')
+    .replace(/-+/g, '-')
+    .slice(0, 256);
+}
+
+async function detalhesAulaWhatsApp(client, aulaId) {
+  const r = await client.query(`
+    SELECT a.id, a.plan_id, a.status, a.arquivada, a.atualizado_em,
+           TO_CHAR(a.data_aula,'YYYY-MM-DD') AS data_aula,
+           TO_CHAR(a.data_aula,'DD/MM/YYYY') AS data_br,
+           TO_CHAR(a.hora_inicio,'HH24:MI') AS hora_inicio,
+           al.nome AS aluno_nome, al.whatsapp AS aluno_whatsapp,
+           i.nome AS instrutor_nome,
+           v.nome AS veiculo_nome, v.placa AS veiculo_placa,
+           l.nome AS local_nome, l.endereco AS local_endereco
+    FROM autoagenda.aulas a
+    JOIN autoagenda.alunos al ON al.id=a.aluno_id
+    LEFT JOIN autoagenda.instrutores i ON i.id=a.instrutor_id
+    LEFT JOIN autoagenda.veiculos v ON v.id=a.veiculo_id
+    LEFT JOIN autoagenda.locais l ON l.id=a.local_id
+    WHERE a.id=$1
+  `, [Number(aulaId)]);
+  return r.rows[0] || null;
+}
+
+async function detalhesPlanoWhatsApp(client, planId) {
+  const p = await client.query(`
+    SELECT p.id, p.ativo, p.atualizado_em,
+           al.nome AS aluno_nome, al.whatsapp AS aluno_whatsapp,
+           i.nome AS instrutor_nome,
+           v.nome AS veiculo_nome, v.placa AS veiculo_placa,
+           l.nome AS local_nome
+    FROM autoagenda.planos_aula p
+    JOIN autoagenda.alunos al ON al.id=p.aluno_id
+    LEFT JOIN autoagenda.instrutores i ON i.id=p.instrutor_id
+    LEFT JOIN autoagenda.veiculos v ON v.id=p.veiculo_id
+    LEFT JOIN autoagenda.locais l ON l.id=p.local_id
+    WHERE p.id=$1
+  `, [Number(planId)]);
+  if (!p.rowCount) return null;
+  const aulas = await client.query(`
+    SELECT TO_CHAR(data_aula,'DD/MM/YYYY') AS data_br,
+           TO_CHAR(hora_inicio,'HH24:MI') AS hora_inicio, status
+    FROM autoagenda.aulas
+    WHERE plan_id=$1 AND arquivada=FALSE AND data_aula >= $2::date
+    ORDER BY data_aula,hora_inicio,id
+    LIMIT 12
+  `, [Number(planId), hojeApp()]);
+  return { ...p.rows[0], aulas: aulas.rows };
+}
+
+function rotuloEventoWhatsApp(evento) {
+  return ({
+    AGENDAMENTO: 'Sua aula prática foi agendada',
+    REAGENDAMENTO: 'Sua aula prática foi reagendada',
+    CANCELAMENTO: 'Sua aula prática foi cancelada',
+    PLANO_AGENDADO: 'Seu plano de aulas foi criado',
+    PLANO_ATUALIZADO: 'Seu plano de aulas foi atualizado',
+    PLANO_CANCELADO: 'Seu plano de aulas foi encerrado'
+  })[String(evento || '').toUpperCase()] || 'Atualização da sua agenda';
+}
+
+function parametroTemplateWhatsApp(texto) {
+  return { type:'text', text:String(texto || '—').slice(0,1024) };
+}
+
+function parametrosComunicacaoAula(evento, aula) {
+  const veiculo = aula.veiculo_nome
+    ? `${aula.veiculo_nome}${aula.veiculo_placa ? ` (${aula.veiculo_placa})` : ''}`
+    : 'A definir';
+  const detalhes = [
+    `📅 Data: ${aula.data_br || dataBrEmail(aula.data_aula)}`,
+    `🕐 Horário: ${String(aula.hora_inicio || '').slice(0,5)}`,
+    `👨‍🏫 Instrutor: ${aula.instrutor_nome || 'A definir'}`,
+    `🚗 Veículo: ${veiculo}`,
+    `📍 Local: ${aula.local_nome || 'A definir'}`
+  ].join('\n');
+  let acao = 'Em caso de dúvida, entre em contato com a autoescola.';
+  if (['AGENDAMENTO','REAGENDAMENTO'].includes(evento)) {
+    acao = 'Para confirmar ou solicitar alteração, use o link enviado pelo WhatsApp manual ou entre em contato com a autoescola.';
+  } else if (evento === 'CANCELAMENTO') {
+    acao = 'Se precisar de um novo horário, entre em contato com o instrutor ou com a autoescola.';
+  }
+  return [
+    parametroTemplateWhatsApp(String(aula.aluno_nome || 'Aluno').trim().split(/\s+/)[0] || 'Aluno'),
+    parametroTemplateWhatsApp(rotuloEventoWhatsApp(evento)),
+    parametroTemplateWhatsApp(detalhes),
+    parametroTemplateWhatsApp(acao)
+  ];
+}
+
+function parametrosComunicacaoPlano(evento, plano) {
+  const cronograma = (plano.aulas || []).map(a => `${a.data_br} às ${String(a.hora_inicio || '').slice(0,5)} — ${a.status}`).join('\n') || 'Nenhuma aula futura ativa.';
+  const detalhes = [
+    `👨‍🏫 Instrutor: ${plano.instrutor_nome || 'A definir'}`,
+    `🚗 Veículo: ${plano.veiculo_nome || 'A definir'}`,
+    `📍 Local: ${plano.local_nome || 'A definir'}`,
+    '',
+    'Próximas aulas:',
+    cronograma
+  ].join('\n').slice(0,1024);
+  return [
+    parametroTemplateWhatsApp(String(plano.aluno_nome || 'Aluno').trim().split(/\s+/)[0] || 'Aluno'),
+    parametroTemplateWhatsApp(rotuloEventoWhatsApp(evento)),
+    parametroTemplateWhatsApp(detalhes),
+    parametroTemplateWhatsApp('Em caso de dúvida ou necessidade de alteração, entre em contato com a autoescola.')
+  ];
+}
+
+async function enviarTemplateComunicacaoWhatsAppCloud(destinatario, parametros) {
+  const cfg = configuracaoWhatsAppCloud();
+  if (!cfg.comunicacoesConfiguradas) {
+    const e = new Error(`Comunicação automática do WhatsApp não configurada: ${cfg.ausenciasComunicacao.join(', ')}.`);
+    e.code = 'WHATSAPP_COMM_NOT_CONFIGURED';
+    throw e;
+  }
+  const telefone = normalizarWhatsAppParaLink(destinatario);
+  if (!telefone) {
+    const e = new Error('Aluno sem número de WhatsApp válido com DDD.');
+    e.code = 'WHATSAPP_INVALID_PHONE';
+    throw e;
+  }
+  const url = `https://graph.facebook.com/${encodeURIComponent(cfg.apiVersion)}/${encodeURIComponent(cfg.phoneNumberId)}/messages`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  let resposta;
+  try {
+    resposta = await fetch(url, {
+      method:'POST',
+      headers:{ 'Authorization':`Bearer ${cfg.accessToken}`, 'Content-Type':'application/json' },
+      body:JSON.stringify({
+        messaging_product:'whatsapp', recipient_type:'individual', to:telefone, type:'template',
+        template:{
+          name:cfg.templateComunicacao,
+          language:{ code:cfg.templateLanguage },
+          components:[{ type:'body', parameters:parametros }]
+        }
+      }),
+      signal:controller.signal
+    });
+  } finally { clearTimeout(timer); }
+  let dados={};
+  try { dados=await resposta.json(); } catch {}
+  if (!resposta.ok) {
+    const mensagem = dados?.error?.message || dados?.error?.error_user_msg || `HTTP ${resposta.status}`;
+    const e = new Error(`WhatsApp Cloud API: ${mensagem}`);
+    e.code = dados?.error?.code || `HTTP_${resposta.status}`;
+    throw e;
+  }
+  return { messageId:String(dados?.messages?.[0]?.id || '') || null };
+}
+
+async function inserirWhatsAppFila(client, { aulaId=null, planId=null, evento, destinatario, chave }) {
+  const telefone = normalizarWhatsAppParaLink(destinatario);
+  if (!telefone) return { ignorado:true, motivo:'SEM_WHATSAPP_VALIDO' };
+  if (!WHATSAPP_EVENTOS_AULA.has(evento) && !WHATSAPP_EVENTOS_PLANO.has(evento)) {
+    return { ignorado:true, motivo:'EVENTO_INVALIDO' };
+  }
+  // Se a API ficou indisponível e houve mais de uma mudança no mesmo item,
+  // preserva no histórico apenas a comunicação mais nova como elegível.
+  if (aulaId) {
+    await client.query(`
+      UPDATE autoagenda.whatsapp_envios
+      SET status='CANCELADO', processando_em=NULL,
+          erro=COALESCE(erro,'Substituído por uma comunicação mais recente da mesma aula.'), atualizado_em=NOW()
+      WHERE aula_id=$1 AND status='PENDENTE'
+    `, [Number(aulaId)]);
+  }
+  if (planId) {
+    await client.query(`
+      UPDATE autoagenda.whatsapp_envios
+      SET status='CANCELADO', processando_em=NULL,
+          erro=COALESCE(erro,'Substituído por uma comunicação mais recente do mesmo plano.'), atualizado_em=NOW()
+      WHERE plan_id=$1 AND status='PENDENTE'
+    `, [Number(planId)]);
+  }
+  const r = await client.query(`
+    INSERT INTO autoagenda.whatsapp_envios
+      (aula_id,plan_id,evento,destinatario,chave_idempotencia,agendado_em,status,automatico)
+    VALUES ($1,$2,$3,$4,$5,NOW(),'PENDENTE',TRUE)
+    ON CONFLICT (chave_idempotencia) DO NOTHING
+    RETURNING id
+  `, [aulaId ? Number(aulaId) : null, planId ? Number(planId) : null, evento, telefone, chaveWhatsAppSeguro(chave)]);
+  return r.rowCount ? { id:Number(r.rows[0].id), criado:true } : { criado:false, duplicado:true };
+}
+
+async function enfileirarWhatsAppEventoAula(aulaId, evento, versao='') {
+  const client = await pool.connect();
+  try {
+    const cfg = await obterConfigLembretes(client);
+    if (!cfg.whatsapp_automatico_ativo) return { ignorado:true, motivo:'AUTOMACAO_DESATIVADA' };
+    const aula = await detalhesAulaWhatsApp(client, aulaId);
+    if (!aula) return { ignorado:true, motivo:'AULA_INEXISTENTE' };
+    const chave = `autoagenda/whatsapp/${evento.toLowerCase()}/aula/${aula.id}/${versao || String(aula.atualizado_em || '')}`;
+    return await inserirWhatsAppFila(client, { aulaId:aula.id, evento, destinatario:aula.aluno_whatsapp, chave });
+  } finally { client.release(); }
+}
+
+async function enfileirarWhatsAppEventoPlano(planId, evento, versao='') {
+  const client = await pool.connect();
+  try {
+    const cfg = await obterConfigLembretes(client);
+    if (!cfg.whatsapp_automatico_ativo) return { ignorado:true, motivo:'AUTOMACAO_DESATIVADA' };
+    const plano = await detalhesPlanoWhatsApp(client, planId);
+    if (!plano) return { ignorado:true, motivo:'PLANO_INEXISTENTE' };
+    const chave = `autoagenda/whatsapp/${evento.toLowerCase()}/plano/${plano.id}/${versao || String(plano.atualizado_em || '')}`;
+    return await inserirWhatsAppFila(client, { planId:plano.id, evento, destinatario:plano.aluno_whatsapp, chave });
+  } finally { client.release(); }
+}
+
+function dispararWhatsAppAulaSeguro(aulaId, evento, versao='') {
+  setImmediate(async () => {
+    try {
+      const r = await enfileirarWhatsAppEventoAula(aulaId, evento, versao);
+      if (r?.criado) await processarWhatsAppComunicacoesAutomaticas({ origem:`EVENTO_${evento}`, limite:10 });
+    } catch (error) {
+      console.error(`WhatsApp ${evento} não enviado; a operação principal foi preservada:`, erroWhatsAppSeguro(error?.message));
+    }
+  });
+}
+
+function dispararWhatsAppPlanoSeguro(planId, evento, versao='') {
+  setImmediate(async () => {
+    try {
+      const r = await enfileirarWhatsAppEventoPlano(planId, evento, versao);
+      if (r?.criado) await processarWhatsAppComunicacoesAutomaticas({ origem:`EVENTO_${evento}`, limite:10 });
+    } catch (error) {
+      console.error(`WhatsApp ${evento} do plano não enviado; a operação principal foi preservada:`, erroWhatsAppSeguro(error?.message));
+    }
+  });
+}
+
+async function processarWhatsAppComunicacoesAutomaticas({ origem='WORKER', limite=20 } = {}) {
+  const client = await pool.connect();
+  let lockObtido=false;
+  const resultado={ origem, processados:0, enviados:0, falhas:0, cancelados:0, ignorado:false };
+  try {
+    const lock=await client.query('SELECT pg_try_advisory_lock(37003700) AS ok');
+    lockObtido=lock.rows[0]?.ok===true;
+    if (!lockObtido) return { ...resultado, ignorado:true, motivo:'OUTRO_WORKER_WHATSAPP_ATIVO' };
+    const cfg=await obterConfigLembretes(client);
+    if (!cfg.whatsapp_automatico_ativo) return { ...resultado, ignorado:true, motivo:'AUTOMACAO_DESATIVADA' };
+    if (!cfg.whatsapp_comunicacoes_configuradas) return { ...resultado, ignorado:true, motivo:'COMUNICACAO_NAO_CONFIGURADA', ausencias:cfg.whatsapp_comunicacao_ausencias };
+
+    await client.query(`
+      UPDATE autoagenda.whatsapp_envios
+      SET status='FALHOU', erro=COALESCE(erro,'Envio interrompido antes de confirmar a resposta da API.'),
+          processando_em=NULL, atualizado_em=NOW()
+      WHERE status='PROCESSANDO' AND processando_em < NOW() - INTERVAL '15 minutes'
+    `);
+
+    const fila=await client.query(`
+      SELECT id FROM autoagenda.whatsapp_envios
+      WHERE status='PENDENTE' AND automatico=TRUE AND agendado_em<=NOW()
+      ORDER BY agendado_em,id LIMIT $1
+    `,[Math.max(1,Math.min(50,Number(limite)||20))]);
+
+    for (const item of fila.rows) {
+      const envioId=Number(item.id);
+      const claim=await client.query(`
+        UPDATE autoagenda.whatsapp_envios
+        SET status='PROCESSANDO', tentativas=tentativas+1, ultima_tentativa_em=NOW(),
+            processando_em=NOW(), erro=NULL, atualizado_em=NOW()
+        WHERE id=$1 AND status='PENDENTE'
+        RETURNING *
+      `,[envioId]);
+      if (!claim.rowCount) continue;
+      resultado.processados++;
+      const envio=claim.rows[0];
+      try {
+        let parametros=[];
+        if (envio.aula_id) {
+          const aula=await detalhesAulaWhatsApp(client, envio.aula_id);
+          if (!aula) throw Object.assign(new Error('Aula não encontrada para a comunicação.'),{cancelar:true});
+          const ativo=!aula.arquivada && ['AGENDADA','CONFIRMADA'].includes(String(aula.status||'').toUpperCase());
+          if (['AGENDAMENTO','REAGENDAMENTO'].includes(envio.evento) && !ativo) {
+            throw Object.assign(new Error('Comunicação ficou obsoleta porque a aula não está mais ativa.'),{cancelar:true});
+          }
+          if (envio.evento==='CANCELAMENTO' && ativo) {
+            throw Object.assign(new Error('Cancelamento ficou obsoleto porque a aula está ativa.'),{cancelar:true});
+          }
+          parametros=parametrosComunicacaoAula(envio.evento,aula);
+        } else if (envio.plan_id) {
+          const plano=await detalhesPlanoWhatsApp(client, envio.plan_id);
+          if (!plano) throw Object.assign(new Error('Plano não encontrado para a comunicação.'),{cancelar:true});
+          if (envio.evento==='PLANO_CANCELADO' && plano.ativo) {
+            throw Object.assign(new Error('Encerramento ficou obsoleto porque o plano está ativo.'),{cancelar:true});
+          }
+          if (['PLANO_AGENDADO','PLANO_ATUALIZADO'].includes(envio.evento) && !plano.ativo) {
+            throw Object.assign(new Error('Comunicação ficou obsoleta porque o plano foi encerrado.'),{cancelar:true});
+          }
+          parametros=parametrosComunicacaoPlano(envio.evento,plano);
+        } else {
+          throw Object.assign(new Error('Comunicação sem referência operacional.'),{cancelar:true});
+        }
+        const api=await enviarTemplateComunicacaoWhatsAppCloud(envio.destinatario,parametros);
+        await client.query(`
+          UPDATE autoagenda.whatsapp_envios
+          SET status='ENVIADO', processando_em=NULL, enviado_em=NOW(), provider_message_id=$1,
+              erro=NULL, atualizado_em=NOW()
+          WHERE id=$2 AND status='PROCESSANDO'
+        `,[api.messageId,envioId]);
+        resultado.enviados++;
+      } catch (error) {
+        if (error?.cancelar) {
+          await client.query(`UPDATE autoagenda.whatsapp_envios SET status='CANCELADO',processando_em=NULL,erro=$1,atualizado_em=NOW() WHERE id=$2`,[erroWhatsAppSeguro(error.message),envioId]);
+          resultado.cancelados++;
+        } else {
+          await client.query(`UPDATE autoagenda.whatsapp_envios SET status='FALHOU',processando_em=NULL,erro=$1,atualizado_em=NOW() WHERE id=$2`,[erroWhatsAppSeguro(error?.message),envioId]);
+          resultado.falhas++;
+        }
+      }
+    }
+    return resultado;
+  } finally {
+    if (lockObtido) { try { await client.query('SELECT pg_advisory_unlock(37003700)'); } catch {} }
+    client.release();
+  }
+}
 
 function chaveEmailSeguro(valor) {
   return String(valor || '')
@@ -2218,7 +2624,6 @@ async function enfileirarEmailEventoAula(aulaId, evento, versao='') {
   try {
     const cfg = await obterConfigEmail(client);
     if (!cfg.email_automatico_ativo) return { ignorado:true, motivo:'AUTOMACAO_DESATIVADA' };
-    if (!cfg.email_api_configurada) return { ignorado:true, motivo:'API_NAO_CONFIGURADA' };
     const aula = await detalhesAulaEmail(client, aulaId);
     if (!aula || !emailFormatoValido(aula.aluno_email)) return { ignorado:true, motivo:'SEM_EMAIL_VALIDO' };
     const mensagem = corpoEmailAula(evento, aula);
@@ -2232,7 +2637,6 @@ async function enfileirarEmailEventoPlano(planId, evento, versao='') {
   try {
     const cfg = await obterConfigEmail(client);
     if (!cfg.email_automatico_ativo) return { ignorado:true, motivo:'AUTOMACAO_DESATIVADA' };
-    if (!cfg.email_api_configurada) return { ignorado:true, motivo:'API_NAO_CONFIGURADA' };
     const plano = await detalhesPlanoEmail(client, planId);
     if (!plano || !emailFormatoValido(plano.aluno_email)) return { ignorado:true, motivo:'SEM_EMAIL_VALIDO' };
     const mensagem = corpoEmailPlano(evento, plano);
@@ -2309,7 +2713,7 @@ async function enviarEmailResend(envio) {
 
 async function sincronizarEmailsLembretes(client) {
   const cfg = await obterConfigEmail(client);
-  if (!cfg.email_automatico_ativo || !cfg.email_api_configurada) return;
+  if (!cfg.email_automatico_ativo) return;
 
   const agora = agoraApp();
   const agoraTexto = `${agora.data} ${agora.hora}:00`;
@@ -2405,7 +2809,16 @@ async function processarEmailsAutomaticos({ origem='WORKER', limite=20 } = {}) {
     const fila = await client.query(`
       SELECT id
       FROM autoagenda.email_envios
-      WHERE status='PENDENTE' AND automatico=TRUE AND agendado_em <= NOW()
+      WHERE automatico=TRUE AND agendado_em <= NOW()
+        AND (
+          status='PENDENTE'
+          OR (
+            status='FALHOU'
+            AND tentativas < 3
+            AND ultima_tentativa_em IS NOT NULL
+            AND ultima_tentativa_em <= NOW() - ((GREATEST(tentativas,1) * 5)::text || ' minutes')::interval
+          )
+        )
       ORDER BY agendado_em,id
       LIMIT $1
     `, [Math.max(1, Math.min(50, Number(limite) || 20))]);
@@ -2416,7 +2829,7 @@ async function processarEmailsAutomaticos({ origem='WORKER', limite=20 } = {}) {
         UPDATE autoagenda.email_envios
         SET status='PROCESSANDO', tentativas=tentativas+1,
             ultima_tentativa_em=NOW(), processando_em=NOW(), erro=NULL, atualizado_em=NOW()
-        WHERE id=$1 AND status='PENDENTE'
+        WHERE id=$1 AND status IN ('PENDENTE','FALHOU') AND tentativas < 3
         RETURNING *
       `, [envioId]);
       if (!claim.rowCount) continue;
@@ -2451,27 +2864,31 @@ async function processarEmailsAutomaticos({ origem='WORKER', limite=20 } = {}) {
 
 let lembreteWorkerTimer = null;
 function iniciarWorkerLembretesAutomaticos() {
-  const bruto = Number(process.env.WHATSAPP_WORKER_INTERVAL_MINUTES || 5);
-  const minutos = Number.isFinite(bruto) ? Math.max(1, Math.min(60, Math.floor(bruto))) : 5;
+  const bruto = Number(process.env.AUTOAGENDA_COMM_WORKER_INTERVAL_MINUTES || process.env.WHATSAPP_WORKER_INTERVAL_MINUTES || 1);
+  const minutos = Number.isFinite(bruto) ? Math.max(1, Math.min(60, Math.floor(bruto))) : 1;
   const executar = async () => {
     try {
       const r = await processarLembretesAutomaticos({ origem: 'WORKER' });
       if (r.enviados || r.falhas || r.cancelados) {
         console.log(`Lembretes WhatsApp: ${r.enviados} enviado(s), ${r.falhas} falha(s), ${r.cancelados} cancelado(s).`);
       }
+      const w = await processarWhatsAppComunicacoesAutomaticas({ origem:'WORKER', limite:20 });
+      if (w.enviados || w.falhas || w.cancelados) {
+        console.log(`WhatsApp transacional: ${w.enviados} enviado(s), ${w.falhas} falha(s), ${w.cancelados} cancelado(s).`);
+      }
       const e = await processarEmailsAutomaticos({ origem: 'WORKER', limite: 20 });
       if (e.enviados || e.falhas || e.cancelados) {
         console.log(`E-mails AutoAgenda: ${e.enviados} enviado(s), ${e.falhas} falha(s), ${e.cancelados} cancelado(s).`);
       }
     } catch (error) {
-      console.error('Worker de lembretes/comunicações falhou:', erroEmailSeguro(error?.message || erroWhatsAppSeguro(error?.message)));
+      console.error('Worker de comunicações automáticas falhou:', erroEmailSeguro(error?.message || erroWhatsAppSeguro(error?.message)));
     }
   };
   const primeiraExecucao = setTimeout(executar, 15000);
   if (typeof primeiraExecucao.unref === 'function') primeiraExecucao.unref();
   lembreteWorkerTimer = setInterval(executar, minutos * 60 * 1000);
   if (typeof lembreteWorkerTimer.unref === 'function') lembreteWorkerTimer.unref();
-  console.log(`Comunicações automáticas: worker preparado a cada ${minutos} minuto(s); WhatsApp e e-mail dependem das configurações do ADMIN e das variáveis do Render.`);
+  console.log(`Comunicações automáticas: worker preparado a cada ${minutos} minuto(s); WhatsApp e e-mail enviam automaticamente quando as respectivas integrações estiverem configuradas.`);
 }
 
 function avaliarHorarioFuncionamento(config, dados) {
@@ -3691,9 +4108,9 @@ app.put('/api/configuracoes/lembretes', async (req, res) => {
   try {
     const cfg = normalizarConfiguracaoLembretes(req.body || {});
     const apiStatus = resumoConfiguracaoWhatsAppCloud();
-    if (cfg.whatsapp_automatico_ativo && !apiStatus.whatsapp_api_configurada) {
-      throw erroHttp(400, `Para ativar o envio automático, configure no Render: ${apiStatus.whatsapp_api_ausencias.join(', ')}.`);
-    }
+    // O ADMIN pode deixar a automação ligada antes de configurar a Meta.
+    // Nesse estado os itens ficam pendentes e o worker começa a enviar sozinho
+    // assim que as variáveis do Render e os templates aprovados estiverem disponíveis.
     await client.query('BEGIN');
     const r = await client.query(`
       UPDATE autoagenda.configuracoes
@@ -3736,9 +4153,8 @@ app.put('/api/configuracoes/email', async (req, res) => {
   try {
     const ativo = req.body?.email_automatico_ativo === true;
     const apiStatus = resumoConfiguracaoEmail();
-    if (ativo && !apiStatus.email_api_configurada) {
-      throw erroHttp(400, `Para ativar o e-mail automático, configure no Render: ${apiStatus.email_api_ausencias.join(', ')}.`);
-    }
+    // Pode permanecer ativo mesmo antes de configurar o provedor. Os envios ficam
+    // pendentes e começam automaticamente assim que as variáveis do Render existirem.
     const r = await client.query(`
       UPDATE autoagenda.configuracoes
       SET email_automatico_ativo=$1, atualizado_em=NOW()
@@ -3841,14 +4257,17 @@ app.post('/api/lembretes/processar-agora', async (req, res) => {
     if (!cfg.whatsapp_automatico_ativo) {
       return res.status(409).json({ error: 'O envio automático pelo WhatsApp está desativado nas configurações.' });
     }
-    if (!cfg.whatsapp_api_configurada) {
-      return res.status(409).json({ error: `Integração do WhatsApp incompleta. Configure no Render: ${cfg.whatsapp_api_ausencias.join(', ')}.` });
-    }
-    const resultado = await processarLembretesAutomaticos({ origem: 'ADMIN', limite: 20 });
-    res.json(resultado);
+    const lembretes = await processarLembretesAutomaticos({ origem: 'ADMIN', limite: 20 });
+    const comunicacoes = await processarWhatsAppComunicacoesAutomaticas({ origem:'ADMIN', limite:30 });
+    res.json({
+      lembretes, comunicacoes,
+      enviados:Number(lembretes.enviados||0)+Number(comunicacoes.enviados||0),
+      falhas:Number(lembretes.falhas||0)+Number(comunicacoes.falhas||0),
+      cancelados:Number(lembretes.cancelados||0)+Number(comunicacoes.cancelados||0)
+    });
   } catch (error) {
-    console.error('Erro ao processar lembretes manualmente:', error);
-    res.status(500).json({ error: 'Erro ao executar a automação de lembretes.' });
+    console.error('Erro ao processar WhatsApp manualmente:', error);
+    res.status(500).json({ error: 'Erro ao executar a automação do WhatsApp.' });
   }
 });
 
@@ -3857,9 +4276,6 @@ app.post('/api/email/processar-agora', async (req, res) => {
     const cfg = await obterConfigEmail(pool);
     if (!cfg.email_automatico_ativo) {
       return res.status(409).json({ error:'O envio automático de e-mail está desativado nas configurações.' });
-    }
-    if (!cfg.email_api_configurada) {
-      return res.status(409).json({ error:`Integração de e-mail incompleta. Configure no Render: ${cfg.email_api_ausencias.join(', ')}.` });
     }
     const resultado = await processarEmailsAutomaticos({ origem:'ADMIN', limite:30 });
     res.json(resultado);
@@ -4764,6 +5180,7 @@ app.post('/api/planos', async (req, res) => {
 
     await client.query('COMMIT');
     dispararEmailPlanoSeguro(planId, 'PLANO_AGENDADO', String(plano.rows[0].criado_em || ''));
+    dispararWhatsAppPlanoSeguro(planId, 'PLANO_AGENDADO', String(plano.rows[0].criado_em || ''));
     res.status(201).json({ plano: plano.rows[0], aulas: criadas });
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
@@ -4798,7 +5215,10 @@ app.patch('/api/planos/:id/encerrar', async (req, res) => {
       `, [id, hojeApp()]);
     }
     await client.query('COMMIT');
-    if (cancelarFuturas) dispararEmailPlanoSeguro(id, 'PLANO_CANCELADO', String(p.rows[0].atualizado_em || ''));
+    if (cancelarFuturas) {
+      dispararEmailPlanoSeguro(id, 'PLANO_CANCELADO', String(p.rows[0].atualizado_em || ''));
+      dispararWhatsAppPlanoSeguro(id, 'PLANO_CANCELADO', String(p.rows[0].atualizado_em || ''));
+    }
     res.json({ ok: true });
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
@@ -5344,6 +5764,7 @@ const EXPORTACOES_SUPORTE = {
   instrutor_indisponibilidades: { tabela: 'instrutor_indisponibilidades', nome: 'Indisponibilidades de instrutores', aba: 'Indisp_Instrutores' },
   veiculo_indisponibilidades: { tabela: 'veiculo_indisponibilidades', nome: 'Indisponibilidades de veículos', aba: 'Indisp_Veiculos' },
   lembrete_envios: { tabela: 'lembrete_envios', nome: 'Histórico de lembretes', aba: 'Lembretes' },
+  whatsapp_envios: { tabela: 'whatsapp_envios', nome: 'Histórico WhatsApp automático', aba: 'WhatsApp' },
   email_envios: { tabela: 'email_envios', nome: 'Histórico de e-mails', aba: 'Emails' }
 };
 
@@ -5919,6 +6340,10 @@ function validarReferenciasBackup(dados) {
   for (const r of dados.lembrete_envios || []) {
     validarReferencia(r.aula_id, ids.aulas, 'Lembrete referencia aula inexistente no backup: {id}.');
   }
+  for (const r of dados.whatsapp_envios || []) {
+    validarReferencia(r.aula_id, ids.aulas, 'WhatsApp referencia aula inexistente no backup: {id}.');
+    validarReferencia(r.plan_id, ids.planos, 'WhatsApp referencia plano inexistente no backup: {id}.');
+  }
   for (const r of dados.email_envios || []) {
     validarReferencia(r.aula_id, ids.aulas, 'E-mail referencia aula inexistente no backup: {id}.');
     validarReferencia(r.plan_id, ids.planos, 'E-mail referencia plano inexistente no backup: {id}.');
@@ -6055,7 +6480,7 @@ async function executarRestauracaoBackup(client, payload, validacao) {
 
   // Não inicia a substituição enquanto um worker de comunicação estiver processando.
   // Usamos as mesmas chaves dos workers para impedir novos envios até o COMMIT/ROLLBACK.
-  for (const workerLock of [33003300, 34003400]) {
+  for (const workerLock of [33003300, 34003400, 37003700]) {
     const w = await client.query(`SELECT pg_try_advisory_xact_lock($1) AS ok`, [workerLock]);
     if (w.rows[0]?.ok !== true) {
       throw erroHttp(409, 'Há uma comunicação automática sendo processada neste momento. Aguarde alguns segundos e tente restaurar novamente.');
@@ -6066,7 +6491,7 @@ async function executarRestauracaoBackup(client, payload, validacao) {
   // durante a janela curta de substituição dos dados. Leituras/escritas aguardam o fim da transação.
   await client.query(`
     LOCK TABLE
-      autoagenda.email_envios, autoagenda.lembrete_envios, autoagenda.financeiro,
+      autoagenda.email_envios, autoagenda.whatsapp_envios, autoagenda.lembrete_envios, autoagenda.financeiro,
       autoagenda.aulas, autoagenda.planos_aula, autoagenda.instrutor_indisponibilidades,
       autoagenda.veiculo_indisponibilidades, autoagenda.configuracoes, autoagenda.alunos,
       autoagenda.locais, autoagenda.veiculos, autoagenda.instrutores
@@ -6093,7 +6518,7 @@ async function executarRestauracaoBackup(client, payload, validacao) {
   await client.query(`UPDATE autoagenda.aulas SET reposicao_de_id=NULL WHERE reposicao_de_id IS NOT NULL`);
 
   const ordemExclusao = [
-    'email_envios','lembrete_envios','financeiro','aulas','planos',
+    'email_envios','whatsapp_envios','lembrete_envios','financeiro','aulas','planos',
     'instrutor_indisponibilidades','veiculo_indisponibilidades','configuracoes',
     'alunos','locais','veiculos','instrutores'
   ];
@@ -6130,6 +6555,14 @@ async function executarRestauracaoBackup(client, payload, validacao) {
 
   await inserirLoteRestauracao(client, 'financeiro', dados.financeiro, colunas('financeiro'));
   await inserirLoteRestauracao(client, 'lembrete_envios', dados.lembrete_envios, colunas('lembrete_envios'), r => {
+    if (['PENDENTE','PROCESSANDO'].includes(String(r.status || '').toUpperCase())) {
+      r.status = 'CANCELADO';
+      r.processando_em = null;
+      r.erro = 'Cancelado automaticamente durante a restauração para impedir envio inesperado.';
+    }
+    return r;
+  });
+  await inserirLoteRestauracao(client, 'whatsapp_envios', dados.whatsapp_envios, colunas('whatsapp_envios'), r => {
     if (['PENDENTE','PROCESSANDO'].includes(String(r.status || '').toUpperCase())) {
       r.status = 'CANCELADO';
       r.processando_em = null;
@@ -6194,7 +6627,7 @@ app.post('/api/backup/restaurar/validar', async (req, res) => {
     const colunasAtuais = await colunasAtuaisRestauracao(client);
     const validacao = validarBackupEstrutural(payload, colunasAtuais);
     const atuais = await contagensAtuaisRestauracao(client);
-    const pendentes = [...validacao.dados.lembrete_envios, ...validacao.dados.email_envios]
+    const pendentes = [...validacao.dados.lembrete_envios, ...validacao.dados.whatsapp_envios, ...validacao.dados.email_envios]
       .filter(x => ['PENDENTE','PROCESSANDO'].includes(String(x.status || '').toUpperCase())).length;
     res.json({
       ok: true,
@@ -6811,6 +7244,7 @@ app.post('/api/aulas', async (req, res) => {
 
     await client.query('COMMIT');
     dispararEmailAulaSeguro(result.rows[0].id, 'AGENDAMENTO', String(result.rows[0].criado_em || ''));
+    dispararWhatsAppAulaSeguro(result.rows[0].id, 'AGENDAMENTO', String(result.rows[0].criado_em || ''));
     res.status(201).json(aulaSemMetadadosToken(result.rows[0]));
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
@@ -6916,6 +7350,7 @@ app.post('/api/aulas/:id/reposicao', async (req, res) => {
 
     await client.query('COMMIT');
     dispararEmailAulaSeguro(result.rows[0].id, 'AGENDAMENTO', String(result.rows[0].criado_em || ''));
+    dispararWhatsAppAulaSeguro(result.rows[0].id, 'AGENDAMENTO', String(result.rows[0].criado_em || ''));
     res.status(201).json({ ...aulaSemMetadadosToken(result.rows[0]), aula_original_id: origemId });
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
@@ -7013,8 +7448,10 @@ app.put('/api/aulas/:id', async (req, res) => {
     await client.query('COMMIT');
     if (cancelouEmail) {
       dispararEmailAulaSeguro(id, 'CANCELAMENTO', String(result.rows[0].atualizado_em || Date.now()));
+      dispararWhatsAppAulaSeguro(id, 'CANCELAMENTO', String(result.rows[0].atualizado_em || Date.now()));
     } else if (mudouAgendamentoEmail && ['AGENDADA','CONFIRMADA'].includes(status)) {
       dispararEmailAulaSeguro(id, 'REAGENDAMENTO', String(result.rows[0].atualizado_em || Date.now()));
+      dispararWhatsAppAulaSeguro(id, 'REAGENDAMENTO', String(result.rows[0].atualizado_em || Date.now()));
     }
     res.json(aulaSemMetadadosToken(result.rows[0]));
   } catch (error) {
@@ -7151,6 +7588,7 @@ app.put('/api/aulas/:id/serie', async (req, res) => {
 
     await client.query('COMMIT');
     dispararEmailPlanoSeguro(alvo.plan_id, 'PLANO_ATUALIZADO', `serie-${Date.now()}`);
+    dispararWhatsAppPlanoSeguro(alvo.plan_id, 'PLANO_ATUALIZADO', `serie-${Date.now()}`);
     res.json({ ok:true,alteradas:novas.length });
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
@@ -7188,6 +7626,7 @@ app.delete('/api/aulas/:id', async (req, res) => {
     `,[id]);
     await client.query('COMMIT');
     dispararEmailAulaSeguro(id, 'CANCELAMENTO', String(result.rows[0].arquivada_em || Date.now()));
+    dispararWhatsAppAulaSeguro(id, 'CANCELAMENTO', String(result.rows[0].arquivada_em || Date.now()));
     res.json({ ok:true,aula:result.rows[0] });
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
@@ -7289,6 +7728,7 @@ app.patch('/api/aulas/:id/status', async (req, res) => {
     await client.query('COMMIT');
     if (status === 'CANCELADA' && String(aula.status || '').toUpperCase() !== 'CANCELADA') {
       dispararEmailAulaSeguro(id, 'CANCELAMENTO', String(result.rows[0].atualizado_em || Date.now()));
+      dispararWhatsAppAulaSeguro(id, 'CANCELAMENTO', String(result.rows[0].atualizado_em || Date.now()));
     }
     res.json(aulaSemMetadadosToken(result.rows[0]));
   } catch (error) {

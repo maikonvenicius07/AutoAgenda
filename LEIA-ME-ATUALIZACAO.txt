@@ -1,18 +1,20 @@
-AUTOAGENDA V3.6.0 — BACKUP AUTOMÁTICO DO POSTGRESQL
+AUTOAGENDA V3.7.0 — AUTOMAÇÃO TOTAL DE WHATSAPP + E-MAIL
 
-Atualize os arquivos deste pacote no GitHub mantendo a mesma estrutura de pastas.
-Nenhum arquivo precisa ser removido nesta etapa.
+Objetivo:
+- automatizar agendamento, lembretes, reagendamento, cancelamento e resumo de plano;
+- manter WhatsApp manual como alternativa;
+- permitir ligar WhatsApp e e-mail juntos;
+- manter filas aguardando enquanto as integrações externas não estiverem configuradas.
 
-Principais alterações:
-- tabela técnica autoagenda.backup_execucoes;
-- status do backup PostgreSQL na aba Backup;
-- scripts opcionais de pg_dump + S3 em infrastructure/postgres-backup/;
-- retenção externa configurável;
-- SHA-256 e validação com pg_restore --list;
-- documentação de recuperação e restauração;
-- CHECKLIST_V3.6.0.md e RELATORIO_V3.6.0.md.
+Depois do deploy:
+1. abra Configurações;
+2. clique em “Ativar WhatsApp + e-mail”;
+3. configure as variáveis externas conforme CONFIGURAR_AUTOMACAO_V3.7.0.md;
+4. faça testes com um aluno de teste antes de usar com alunos reais.
 
-IMPORTANTE:
-O render.yaml principal NÃO cria o Cron Job externo.
-Portanto, o deploy desta versão não ativa cobrança adicional de backup por si só.
-A infraestrutura externa deve ser configurada separadamente somente quando você decidir ativá-la.
+Arquivos de apoio:
+- CHECKLIST_V3.7.0.md
+- RELATORIO_V3.7.0.md
+- CONFIGURAR_AUTOMACAO_V3.7.0.md
+
+Nenhum arquivo precisa ser removido do GitHub nesta versão.
