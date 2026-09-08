@@ -1,4 +1,4 @@
--- AutoAgenda V3.1.0
+-- AutoAgenda V3.1.5
 -- Schema compatível com o server.js atual.
 -- O servidor cria/migra automaticamente; este arquivo serve para referência e execução manual controlada.
 
@@ -240,6 +240,27 @@ CREATE INDEX IF NOT EXISTS idx_autoagenda_financeiro_vencimento
 ON autoagenda.financeiro(vencimento) WHERE ativo = TRUE;
 
 -- Migrações seguras para instalações anteriores.
+-- Mantém este arquivo alinhado às migrações automáticas executadas por server.js.
+
+-- Disponibilidade individual dos instrutores (versões anteriores podem não ter estes campos).
+ALTER TABLE autoagenda.instrutores
+  ADD COLUMN IF NOT EXISTS disponibilidade_personalizada BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE autoagenda.instrutores ADD COLUMN IF NOT EXISTS dias_trabalho INTEGER[];
+ALTER TABLE autoagenda.instrutores ADD COLUMN IF NOT EXISTS hora_inicio TIME;
+ALTER TABLE autoagenda.instrutores ADD COLUMN IF NOT EXISTS hora_fim TIME;
+ALTER TABLE autoagenda.instrutores ADD COLUMN IF NOT EXISTS intervalo_inicio TIME;
+ALTER TABLE autoagenda.instrutores ADD COLUMN IF NOT EXISTS intervalo_fim TIME;
+
+-- Situação operacional do veículo. Normaliza registros legados da mesma forma que server.js.
+ALTER TABLE autoagenda.veiculos
+  ADD COLUMN IF NOT EXISTS situacao VARCHAR(20) NOT NULL DEFAULT 'DISPONIVEL';
+UPDATE autoagenda.veiculos
+SET situacao = CASE
+  WHEN ativo = FALSE THEN 'INATIVO'
+  WHEN situacao IS NULL OR situacao = '' THEN 'DISPONIVEL'
+  ELSE UPPER(situacao)
+END;
+
 ALTER TABLE autoagenda.alunos ADD COLUMN IF NOT EXISTS cpf VARCHAR(11);
 ALTER TABLE autoagenda.alunos ADD COLUMN IF NOT EXISTS data_nascimento DATE;
 CREATE UNIQUE INDEX IF NOT EXISTS ux_autoagenda_alunos_cpf

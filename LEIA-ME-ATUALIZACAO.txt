@@ -1,29 +1,21 @@
-AUTOAGENDA V3.1.4 — PACKAGE-LOCK.JSON E DEPENDÊNCIAS
+AUTOAGENDA V3.1.5 — ALINHAMENTO DO SCHEMA.SQL
 
-ETAPA EXECUTADA
-Prompt 3 — package-lock.json e dependências.
+Esta versão conclui o PROMPT 4 do roteiro de estabilização.
 
-O QUE FOI FEITO
-- Adicionado package-lock.json para tornar as instalações mais reproduzíveis.
-- Mantidas exatamente as dependências diretas já utilizadas: dotenv 16.4.7, express 4.21.2 e pg 8.13.1.
-- Confirmado que as três dependências são utilizadas pelo server.js.
-- Confirmado que crypto, path e zlib são módulos nativos do Node.js e não precisam constar no package.json.
-- Não houve atualização de bibliotecas e nenhuma funcionalidade foi alterada.
-- npm run check foi executado após a alteração.
-- npm install --package-lock-only --offline aceitou o lockfile.
-- npm ls --package-lock-only --all validou a árvore declarada.
+ALTERAÇÕES:
+- sql/schema.sql atualizado para refletir as migrações atuais do server.js.
+- incluídas migrações de disponibilidade individual dos instrutores.
+- incluída migração e normalização da situação dos veículos.
+- nenhuma regra de negócio, tela ou permissão foi alterada.
 
-IMPORTANTE
-O ambiente de preparação desta versão não conseguiu acessar registry.npmjs.org. Por isso, o npm install com download real das dependências não pôde ser concluído nesta sessão. O package-lock.json foi validado estruturalmente e o deploy do Render deve servir como confirmação do install em ambiente com acesso ao registro npm.
-
-ARQUIVOS ADICIONADOS/ATUALIZADOS
-- package-lock.json (novo)
-- package.json (versão 3.1.4; dependências mantidas)
-- server.js (somente identificação V3.1.4)
-- public/app.js (somente fallback de versão V3.1.4)
+ARQUIVOS ALTERADOS/ADICIONADOS:
+- sql/schema.sql
+- server.js (somente identificação da versão)
+- package.json (somente versão)
+- package-lock.json (somente versão do projeto)
+- public/app.js (somente fallback de versão)
 - README.md
+- CHECKLIST_V3.1.5.md
 - LEIA-ME-ATUALIZACAO.txt
-- CHECKLIST_V3.1.4.md
 
-PRÓXIMA ETAPA
-Prompt 4 — atualizar e alinhar o sql/schema.sql.
+NÃO HÁ ARQUIVOS PARA REMOVER DO GITHUB NESTA ETAPA.

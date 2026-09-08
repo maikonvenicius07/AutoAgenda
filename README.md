@@ -1,4 +1,4 @@
-# AutoAgenda V3.1.4
+# AutoAgenda V3.1.5
 
 Sistema de organização de aulas práticas para autoescola, com backend Node/Express, PostgreSQL e deploy no Render.
 
@@ -21,6 +21,14 @@ Sistema de organização de aulas práticas para autoescola, com backend Node/Ex
 - níveis de acesso Administrador e Instrutor.
 
 
+
+
+## V3.1.5 — Schema SQL alinhado às migrações atuais
+
+- `sql/schema.sql` revisado contra o `initDatabase()` do `server.js`.
+- incluídas migrações dos campos de disponibilidade individual dos instrutores para bancos antigos.
+- incluída migração e normalização do campo `situacao` dos veículos.
+- nenhuma funcionalidade, tela ou regra de negócio foi alterada.
 
 
 ## V3.1.4 — Dependências reproduzíveis com package-lock.json
