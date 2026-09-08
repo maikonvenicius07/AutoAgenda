@@ -55,9 +55,12 @@ let configLembretes = {
   lembrete_dia_anterior_ativo: true,
   lembrete_dia_anterior_hora: '18:00',
   lembrete_horas_antes_ativo: true,
-  lembrete_horas_antes: 2
+  lembrete_horas_antes: 2,
+  whatsapp_automatico_ativo: false,
+  whatsapp_api_configurada: false,
+  whatsapp_api_ausencias: []
 };
-let lembretesData = { itens: [], resumo: { pendentes: 0, atrasados: 0, proximos_7_dias: 0 } };
+let lembretesData = { itens: [], resumo: { pendentes: 0, atrasados: 0, falhas: 0, proximos_7_dias: 0 } };
 let mostrarInativosConfig = false;
 let mostrarInativosAlunos = false;
 let confirmAction = null;
@@ -820,20 +823,46 @@ function renderConfigLembretes() {
   const c = configLembretes || {};
   const diaAtivo = c.lembrete_dia_anterior_ativo !== false;
   const horasAtivo = c.lembrete_horas_antes_ativo !== false;
+  const autoAtivo = c.whatsapp_automatico_ativo === true;
+  const apiConfigurada = c.whatsapp_api_configurada === true;
   $('#cfgLembreteDiaAtivo').checked = diaAtivo;
   $('#cfgLembreteDiaHora').value = c.lembrete_dia_anterior_hora || '18:00';
   $('#cfgLembreteDiaHora').disabled = !diaAtivo;
   $('#cfgLembreteHorasAtivo').checked = horasAtivo;
   $('#cfgLembreteHoras').value = Number(c.lembrete_horas_antes || 2);
   $('#cfgLembreteHoras').disabled = !horasAtivo;
+  $('#cfgWhatsAppAutoAtivo').checked = autoAtivo;
+  $('#cfgWhatsAppAutoAtivo').disabled = !apiConfigurada && !autoAtivo;
+  const status = $('#cfgWhatsAppApiStatus');
+  if (apiConfigurada) {
+    status.className = 'reminder-api-status ready';
+    status.textContent = '✅ WhatsApp Cloud API preparada no Render. O ADMIN pode ativar o envio automático.';
+  } else {
+    const faltam = Array.isArray(c.whatsapp_api_ausencias) ? c.whatsapp_api_ausencias.join(', ') : '';
+    status.className = 'reminder-api-status pending';
+    status.textContent = `⚙️ API ainda não configurada${faltam ? ` · faltam: ${faltam}` : ''}. O envio manual continua funcionando.`;
+  }
   const partes = [];
   if (diaAtivo) partes.push(`dia anterior às ${c.lembrete_dia_anterior_hora || '18:00'}`);
   if (horasAtivo) partes.push(`${Number(c.lembrete_horas_antes || 2)}h antes`);
+  if (autoAtivo) partes.push('WhatsApp automático');
   $('#cfgLembretesResumo').textContent = partes.length ? partes.join(' + ') : 'Desativados';
 }
+
+function lembreteEnvioLabel(x) {
+  const st = String(x.envio_status || 'PENDENTE').toUpperCase();
+  if (st === 'ENVIADO') return '✅ API aceitou o envio';
+  if (st === 'FALHOU') return '❌ Falha na API';
+  if (st === 'PROCESSANDO') return '⏳ Enviando pela API';
+  if (st === 'CANCELADO') return '🚫 Envio cancelado';
+  return configLembretes?.whatsapp_automatico_ativo ? '🤖 Aguardando automação' : '📲 Aguardando envio manual';
+}
+
 function lembreteHtml(x) {
   const atrasado = Boolean(x.atrasado);
   const confirmacao = confirmacaoLabel(confirmacaoStatusAula(x));
+  const envioStatus = String(x.envio_status || 'PENDENTE').toLowerCase();
+  const erroEnvio = x.envio_erro ? `<small class="reminder-error">${esc(x.envio_erro)}</small>` : '';
   return `<article class="reminder-item ${atrasado ? 'overdue' : ''}">
     <div class="reminder-time"><b>${esc(lembreteTipoLabel(x.tipo))}</b><strong>${esc(formatarDataHoraLembrete(x.lembrete_em))}</strong>${atrasado ? '<span>⚠️ Atrasado</span>' : '<span>Programado</span>'}</div>
     <div class="reminder-main">
@@ -841,19 +870,29 @@ function lembreteHtml(x) {
       <p>📚 Aula: ${esc(fmtData(x.data_aula))} às ${esc(hora(x.hora_inicio))}</p>
       <small>👨‍🏫 ${esc(x.instrutor_nome)} · 🚗 ${esc(x.veiculo_nome)} · 📍 ${esc(x.local_nome)}</small>
       <small>${esc(confirmacao)}</small>
+      <span class="reminder-send-status ${esc(envioStatus)}">${esc(lembreteEnvioLabel(x))}${Number(x.envio_tentativas || 0) ? ` · tentativa ${Number(x.envio_tentativas)}` : ''}</span>
+      ${erroEnvio}
     </div>
     <div class="reminder-actions">
-      <a class="mini secondary" href="/whatsapp/aula/${Number(x.aula_id)}" style="text-decoration:none">📲 WhatsApp</a>
+      <a class="mini secondary" href="/whatsapp/aula/${Number(x.aula_id)}" style="text-decoration:none">📲 WhatsApp manual</a>
       <button type="button" class="mini" data-lembrete-enviado="${Number(x.aula_id)}" data-lembrete-tipo="${esc(x.tipo)}">✅ Marcar enviado</button>
     </div>
   </article>`;
 }
+
 function renderLembretes() {
   const d = lembretesData || {itens:[],resumo:{}};
   const r = d.resumo || {};
   $('#lemPendentes').textContent = Number(r.pendentes || 0);
   $('#lemAtrasados').textContent = Number(r.atrasados || 0);
+  $('#lemFalhas').textContent = Number(r.falhas || 0);
   $('#lemProximos7').textContent = Number(r.proximos_7_dias || 0);
+  const autoAtivo = configLembretes?.whatsapp_automatico_ativo === true;
+  const apiConfigurada = configLembretes?.whatsapp_api_configurada === true;
+  $('#processarLembretesAgora').disabled = !(autoAtivo && apiConfigurada);
+  $('#lembreteModoNota').innerHTML = autoAtivo && apiConfigurada
+    ? '🤖 <b>Automação oficial ativa.</b> Os lembretes vencidos são enviados enquanto o serviço do AutoAgenda estiver em execução. O WhatsApp manual continua disponível como alternativa.'
+    : '📲 <b>Modo manual ativo.</b> O envio automático só funciona depois que a WhatsApp Cloud API estiver configurada no Render e o ADMIN ativar a opção.';
   const itens = Array.isArray(d.itens) ? d.itens : [];
   $('#listaLembretes').innerHTML = itens.length ? itens.map(lembreteHtml).join('') : '<div class="empty">✅ Nenhum lembrete pendente.</div>';
   $$('[data-lembrete-enviado]').forEach(b => b.onclick = () => marcarLembreteEnviado(Number(b.dataset.lembreteEnviado), b.dataset.lembreteTipo));
@@ -1333,7 +1372,7 @@ async function load() {
       configInstrutores = [...instrutores];
       configVeiculos = [...veiculos];
       configLocais = [...locais];
-      lembretesData = { itens: [], resumo: { pendentes:0, atrasados:0, proximos_7_dias:0 } };
+      lembretesData = { itens: [], resumo: { pendentes:0, atrasados:0, falhas:0, proximos_7_dias:0 } };
       resumoDashboard = {};
       relatorioData = {};
       financeiroData = { itens: [], resumo: {} };
@@ -1373,7 +1412,7 @@ async function health() {
   try {
     const h = await api('/api/health');
     const seguranca = h.security_ready ? ' · 🔐 login individual ativo' : ' · ⛔ login individual precisa ser inicializado';
-    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '3.1.7'}${seguranca}.`;
+    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '3.3.0'}${seguranca}.`;
     $('#db').className = h.security_ready ? 'db ok' : 'db fail';
   } catch {
     $('#db').textContent = '🔴 Banco não conectado. Verifique DATABASE_URL no Render.';
@@ -2368,6 +2407,20 @@ $('#fFuncionamento').onsubmit = async e => {
 $('#cfgLembreteDiaAtivo').onchange = () => { $('#cfgLembreteDiaHora').disabled = !$('#cfgLembreteDiaAtivo').checked; };
 $('#cfgLembreteHorasAtivo').onchange = () => { $('#cfgLembreteHoras').disabled = !$('#cfgLembreteHorasAtivo').checked; };
 $('#atualizarLembretes').onclick = carregarLembretes;
+$('#processarLembretesAgora').onclick = async () => {
+  try {
+    $('#processarLembretesAgora').disabled = true;
+    $('#processarLembretesAgora').textContent = 'Processando...';
+    const r = await api('/api/lembretes/processar-agora', {method:'POST'});
+    toast(`🤖 Automação: ${Number(r.enviados||0)} enviado(s), ${Number(r.falhas||0)} falha(s).`);
+    await carregarLembretes();
+  } catch (e) {
+    toast(e.message || 'Erro ao executar automação.');
+  } finally {
+    $('#processarLembretesAgora').textContent = '🤖 Processar agora';
+    renderLembretes();
+  }
+};
 
 $('#fLembretes').onsubmit = async e => {
   e.preventDefault();
@@ -2376,7 +2429,8 @@ $('#fLembretes').onsubmit = async e => {
     lembrete_dia_anterior_ativo: $('#cfgLembreteDiaAtivo').checked,
     lembrete_dia_anterior_hora: $('#cfgLembreteDiaHora').value || '18:00',
     lembrete_horas_antes_ativo: $('#cfgLembreteHorasAtivo').checked,
-    lembrete_horas_antes: Number($('#cfgLembreteHoras').value || 2)
+    lembrete_horas_antes: Number($('#cfgLembreteHoras').value || 2),
+    whatsapp_automatico_ativo: $('#cfgWhatsAppAutoAtivo').checked
   };
   try {
     $('#salvarLembretes').disabled = true;

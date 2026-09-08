@@ -8,7 +8,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '3.2.0';
+const APP_VERSION = '3.3.0';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -907,6 +907,7 @@ async function initDatabase() {
         lembrete_horas_antes_ativo BOOLEAN NOT NULL DEFAULT TRUE,
         lembrete_horas_antes INTEGER NOT NULL DEFAULT 2
           CHECK (lembrete_horas_antes BETWEEN 1 AND 24),
+        whatsapp_automatico_ativo BOOLEAN NOT NULL DEFAULT FALSE,
         atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
       )
     `);
@@ -969,6 +970,34 @@ async function initDatabase() {
         atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
       )
     `);
+
+    // V3.3 — fila auditável de envios de lembretes pelo WhatsApp oficial.
+    // O estado fica separado da aula para registrar pendência, falha e aceite da API
+    // sem remover os campos legados de lembrete usados pela interface atual.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS autoagenda.lembrete_envios (
+        id BIGSERIAL PRIMARY KEY,
+        aula_id INTEGER NOT NULL REFERENCES autoagenda.aulas(id) ON DELETE CASCADE,
+        tipo VARCHAR(20) NOT NULL
+          CHECK (tipo IN ('DIA_ANTERIOR','HORAS_ANTES')),
+        canal VARCHAR(20) NOT NULL DEFAULT 'WHATSAPP'
+          CHECK (canal = 'WHATSAPP'),
+        agendado_em TIMESTAMP NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'PENDENTE'
+          CHECK (status IN ('PENDENTE','PROCESSANDO','ENVIADO','FALHOU','CANCELADO')),
+        automatico BOOLEAN NOT NULL DEFAULT TRUE,
+        tentativas INTEGER NOT NULL DEFAULT 0 CHECK (tentativas >= 0),
+        ultima_tentativa_em TIMESTAMP,
+        processando_em TIMESTAMP,
+        enviado_em TIMESTAMP,
+        provider_message_id VARCHAR(255),
+        erro TEXT,
+        criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+        atualizado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+        UNIQUE (aula_id, tipo, canal)
+      )
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_lembrete_envios_fila ON autoagenda.lembrete_envios(status, agendado_em)');
 
     // V2.8 — financeiro simples separado da lógica da agenda.
     // O saldo financeiro é calculado a partir de valor_pacote - valor_pago para evitar divergências.
@@ -1079,6 +1108,7 @@ async function initDatabase() {
     await client.query("ALTER TABLE autoagenda.configuracoes ADD COLUMN IF NOT EXISTS lembrete_dia_anterior_hora TIME NOT NULL DEFAULT '18:00'");
     await client.query("ALTER TABLE autoagenda.configuracoes ADD COLUMN IF NOT EXISTS lembrete_horas_antes_ativo BOOLEAN NOT NULL DEFAULT TRUE");
     await client.query("ALTER TABLE autoagenda.configuracoes ADD COLUMN IF NOT EXISTS lembrete_horas_antes INTEGER NOT NULL DEFAULT 2");
+    await client.query("ALTER TABLE autoagenda.configuracoes ADD COLUMN IF NOT EXISTS whatsapp_automatico_ativo BOOLEAN NOT NULL DEFAULT FALSE");
 
     await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS lembrete_dia_anterior_em TIMESTAMP');
     await client.query('ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS lembrete_dia_anterior_enviado BOOLEAN NOT NULL DEFAULT FALSE');
@@ -1498,11 +1528,39 @@ async function obterConfigFuncionamento(client) {
 }
 
 
+function configuracaoWhatsAppCloud() {
+  const apiVersion = String(process.env.WHATSAPP_CLOUD_API_VERSION || '').trim();
+  const phoneNumberId = String(process.env.WHATSAPP_PHONE_NUMBER_ID || '').trim();
+  const accessToken = String(process.env.WHATSAPP_ACCESS_TOKEN || '').trim();
+  const templateLembrete = String(process.env.WHATSAPP_TEMPLATE_LEMBRETE || '').trim();
+  const templateLanguage = String(process.env.WHATSAPP_TEMPLATE_LANGUAGE || 'pt_BR').trim() || 'pt_BR';
+  const ausencias = [];
+  if (!/^v\d+\.\d+$/.test(apiVersion)) ausencias.push('WHATSAPP_CLOUD_API_VERSION');
+  if (!/^\d+$/.test(phoneNumberId)) ausencias.push('WHATSAPP_PHONE_NUMBER_ID');
+  if (accessToken.length < 20) ausencias.push('WHATSAPP_ACCESS_TOKEN');
+  if (!/^[a-z0-9_]{2,512}$/i.test(templateLembrete)) ausencias.push('WHATSAPP_TEMPLATE_LEMBRETE');
+  return {
+    apiVersion, phoneNumberId, accessToken, templateLembrete, templateLanguage,
+    configurada: ausencias.length === 0,
+    ausencias
+  };
+}
+
+function resumoConfiguracaoWhatsAppCloud() {
+  const cfg = configuracaoWhatsAppCloud();
+  return {
+    whatsapp_api_configurada: cfg.configurada,
+    whatsapp_api_ausencias: cfg.ausencias,
+    whatsapp_template_language: cfg.templateLanguage
+  };
+}
+
 async function obterConfigLembretes(client) {
   const r = await client.query(`
     SELECT lembrete_dia_anterior_ativo,
            TO_CHAR(lembrete_dia_anterior_hora, 'HH24:MI') AS lembrete_dia_anterior_hora,
-           lembrete_horas_antes_ativo, lembrete_horas_antes
+           lembrete_horas_antes_ativo, lembrete_horas_antes,
+           whatsapp_automatico_ativo
     FROM autoagenda.configuracoes
     WHERE id = 1
   `);
@@ -1511,7 +1569,9 @@ async function obterConfigLembretes(client) {
     lembrete_dia_anterior_ativo: x.lembrete_dia_anterior_ativo !== false,
     lembrete_dia_anterior_hora: String(x.lembrete_dia_anterior_hora || '18:00').slice(0,5),
     lembrete_horas_antes_ativo: x.lembrete_horas_antes_ativo !== false,
-    lembrete_horas_antes: Math.max(1, Math.min(24, Number(x.lembrete_horas_antes || 2)))
+    lembrete_horas_antes: Math.max(1, Math.min(24, Number(x.lembrete_horas_antes || 2))),
+    whatsapp_automatico_ativo: x.whatsapp_automatico_ativo === true,
+    ...resumoConfiguracaoWhatsAppCloud()
   };
 }
 
@@ -1528,7 +1588,8 @@ function normalizarConfiguracaoLembretes(payload = {}) {
     lembrete_dia_anterior_ativo: payload.lembrete_dia_anterior_ativo !== false,
     lembrete_dia_anterior_hora: horaDia,
     lembrete_horas_antes_ativo: payload.lembrete_horas_antes_ativo !== false,
-    lembrete_horas_antes: horas
+    lembrete_horas_antes: horas,
+    whatsapp_automatico_ativo: payload.whatsapp_automatico_ativo === true
   };
 }
 
@@ -1553,6 +1614,303 @@ async function sincronizarAgendamentoLembretes(client) {
     WHERE c.id = 1
       AND a.data_aula >= $1::date
   `, [hojeApp()]);
+}
+
+async function sincronizarFilaLembretes(client) {
+  const tipos = [
+    { tipo: 'DIA_ANTERIOR', em: 'lembrete_dia_anterior_em', enviado: 'lembrete_dia_anterior_enviado', enviadoEm: 'lembrete_dia_anterior_enviado_em' },
+    { tipo: 'HORAS_ANTES', em: 'lembrete_horas_antes_em', enviado: 'lembrete_horas_antes_enviado', enviadoEm: 'lembrete_horas_antes_enviado_em' }
+  ];
+
+  for (const t of tipos) {
+    await client.query(`
+      INSERT INTO autoagenda.lembrete_envios
+        (aula_id, tipo, canal, agendado_em, status, automatico, enviado_em)
+      SELECT a.id, $1, 'WHATSAPP', a.${t.em},
+             CASE WHEN a.${t.enviado} THEN 'ENVIADO' ELSE 'PENDENTE' END,
+             TRUE, a.${t.enviadoEm}
+      FROM autoagenda.aulas a
+      WHERE a.${t.em} IS NOT NULL
+        AND a.data_aula >= $2::date
+      ON CONFLICT (aula_id, tipo, canal) DO UPDATE
+      SET agendado_em = EXCLUDED.agendado_em,
+          status = CASE
+            WHEN lembrete_envios.agendado_em IS DISTINCT FROM EXCLUDED.agendado_em THEN EXCLUDED.status
+            WHEN EXCLUDED.status = 'ENVIADO' THEN 'ENVIADO'
+            WHEN lembrete_envios.status = 'CANCELADO' THEN 'PENDENTE'
+            ELSE lembrete_envios.status
+          END,
+          automatico = CASE
+            WHEN lembrete_envios.agendado_em IS DISTINCT FROM EXCLUDED.agendado_em THEN TRUE
+            WHEN EXCLUDED.status='ENVIADO' AND lembrete_envios.status='ENVIADO' THEN lembrete_envios.automatico
+            ELSE TRUE
+          END,
+          tentativas = CASE WHEN lembrete_envios.agendado_em IS DISTINCT FROM EXCLUDED.agendado_em THEN 0 ELSE lembrete_envios.tentativas END,
+          ultima_tentativa_em = CASE WHEN lembrete_envios.agendado_em IS DISTINCT FROM EXCLUDED.agendado_em THEN NULL ELSE lembrete_envios.ultima_tentativa_em END,
+          processando_em = CASE WHEN lembrete_envios.agendado_em IS DISTINCT FROM EXCLUDED.agendado_em THEN NULL ELSE lembrete_envios.processando_em END,
+          enviado_em = CASE
+            WHEN EXCLUDED.status = 'ENVIADO' THEN COALESCE(EXCLUDED.enviado_em, lembrete_envios.enviado_em)
+            WHEN lembrete_envios.agendado_em IS DISTINCT FROM EXCLUDED.agendado_em THEN NULL
+            ELSE lembrete_envios.enviado_em
+          END,
+          provider_message_id = CASE WHEN lembrete_envios.agendado_em IS DISTINCT FROM EXCLUDED.agendado_em THEN NULL ELSE lembrete_envios.provider_message_id END,
+          erro = CASE WHEN lembrete_envios.agendado_em IS DISTINCT FROM EXCLUDED.agendado_em THEN NULL ELSE lembrete_envios.erro END,
+          atualizado_em = NOW()
+    `, [t.tipo, hojeApp()]);
+  }
+
+  // Se a aula foi cancelada/arquivada ou a programação mudou, preserva o histórico
+  // sem deixar o item antigo elegível para envio.
+  await client.query(`
+    UPDATE autoagenda.lembrete_envios le
+    SET status='CANCELADO', processando_em=NULL, atualizado_em=NOW()
+    WHERE le.status IN ('PENDENTE','FALHOU','PROCESSANDO')
+      AND NOT EXISTS (
+        SELECT 1
+        FROM autoagenda.aulas a
+        WHERE a.id=le.aula_id
+          AND a.arquivada=FALSE
+          AND a.status IN ('AGENDADA','CONFIRMADA')
+          AND CASE le.tipo
+                WHEN 'DIA_ANTERIOR' THEN a.lembrete_dia_anterior_em
+                WHEN 'HORAS_ANTES' THEN a.lembrete_horas_antes_em
+              END IS NOT DISTINCT FROM le.agendado_em
+      )
+  `);
+
+  // Se o processo caiu durante uma chamada externa, não reenvia automaticamente:
+  // marca como falha para evitar uma duplicidade silenciosa em caso de resposta ambígua.
+  await client.query(`
+    UPDATE autoagenda.lembrete_envios
+    SET status='FALHOU',
+        erro=COALESCE(erro,'Envio interrompido antes de confirmar a resposta da API.'),
+        processando_em=NULL,
+        atualizado_em=NOW()
+    WHERE status='PROCESSANDO'
+      AND processando_em IS NOT NULL
+      AND processando_em < NOW() - INTERVAL '15 minutes'
+  `);
+}
+
+function erroWhatsAppSeguro(valor) {
+  return String(valor || 'Falha ao enviar pela API do WhatsApp.').replace(/\s+/g, ' ').slice(0, 700);
+}
+
+function parametrosTemplateLembrete(aula) {
+  return [
+    aula.aluno_nome || 'Aluno',
+    aula.data_br || '',
+    String(aula.hora_inicio || '').slice(0,5),
+    aula.instrutor_nome || 'A definir',
+    aula.veiculo_nome || 'A definir',
+    aula.local_nome || 'A definir'
+  ].map(text => ({ type: 'text', text: String(text).slice(0, 1024) }));
+}
+
+async function enviarTemplateWhatsAppCloud(aula) {
+  const cfg = configuracaoWhatsAppCloud();
+  if (!cfg.configurada) {
+    const e = new Error(`Integração do WhatsApp não configurada: ${cfg.ausencias.join(', ')}.`);
+    e.code = 'WHATSAPP_NOT_CONFIGURED';
+    throw e;
+  }
+  const telefone = normalizarWhatsAppParaLink(aula.aluno_whatsapp);
+  if (!telefone) {
+    const e = new Error('Aluno sem número de WhatsApp válido com DDD.');
+    e.code = 'WHATSAPP_INVALID_PHONE';
+    throw e;
+  }
+
+  const url = `https://graph.facebook.com/${encodeURIComponent(cfg.apiVersion)}/${encodeURIComponent(cfg.phoneNumberId)}/messages`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  let resposta;
+  try {
+    resposta = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${cfg.accessToken}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: telefone,
+        type: 'template',
+        template: {
+          name: cfg.templateLembrete,
+          language: { code: cfg.templateLanguage },
+          components: [{ type: 'body', parameters: parametrosTemplateLembrete(aula) }]
+        }
+      }),
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+
+  let dados = {};
+  try { dados = await resposta.json(); } catch {}
+  if (!resposta.ok) {
+    const mensagem = dados?.error?.message || dados?.error?.error_user_msg || `HTTP ${resposta.status}`;
+    const e = new Error(`WhatsApp Cloud API: ${mensagem}`);
+    e.code = dados?.error?.code || `HTTP_${resposta.status}`;
+    throw e;
+  }
+  return { messageId: String(dados?.messages?.[0]?.id || '') || null };
+}
+
+async function processarLembretesAutomaticos({ origem = 'WORKER', limite = 10 } = {}) {
+  const client = await pool.connect();
+  let lockObtido = false;
+  const resultado = { origem, processados: 0, enviados: 0, falhas: 0, cancelados: 0, ignorado: false };
+  try {
+    // Lock global no PostgreSQL evita dois processos/instâncias enviando o mesmo lote.
+    const lock = await client.query('SELECT pg_try_advisory_lock(33003300) AS ok');
+    lockObtido = lock.rows[0]?.ok === true;
+    if (!lockObtido) return { ...resultado, ignorado: true, motivo: 'OUTRO_WORKER_ATIVO' };
+
+    const cfg = await obterConfigLembretes(client);
+    if (!cfg.whatsapp_automatico_ativo) return { ...resultado, ignorado: true, motivo: 'AUTOMACAO_DESATIVADA' };
+    if (!cfg.whatsapp_api_configurada) {
+      return { ...resultado, ignorado: true, motivo: 'API_NAO_CONFIGURADA', ausencias: cfg.whatsapp_api_ausencias };
+    }
+
+    await sincronizarAgendamentoLembretes(client);
+    await sincronizarFilaLembretes(client);
+    const agora = agoraApp();
+    const agoraTexto = `${agora.data} ${agora.hora}:00`;
+
+    // Se o serviço ficou indisponível e dois lembretes da mesma aula venceram,
+    // envia somente o mais próximo da aula. O mais antigo é cancelado para evitar
+    // duas mensagens automáticas seguidas quando o Render voltar a executar.
+    await client.query(`
+      UPDATE autoagenda.lembrete_envios le
+      SET status='CANCELADO',
+          erro='Lembrete vencido substituído por um lembrete mais recente da mesma aula.',
+          atualizado_em=NOW()
+      FROM autoagenda.aulas a
+      WHERE a.id=le.aula_id
+        AND le.status='PENDENTE'
+        AND le.agendado_em <= $1::timestamp
+        AND (a.data_aula + a.hora_inicio) > $1::timestamp
+        AND EXISTS (
+          SELECT 1
+          FROM autoagenda.lembrete_envios mais_novo
+          WHERE mais_novo.aula_id=le.aula_id
+            AND mais_novo.canal=le.canal
+            AND mais_novo.status='PENDENTE'
+            AND mais_novo.agendado_em <= $1::timestamp
+            AND mais_novo.agendado_em > le.agendado_em
+        )
+    `, [agoraTexto]);
+
+    const fila = await client.query(`
+      SELECT le.id
+      FROM autoagenda.lembrete_envios le
+      JOIN autoagenda.aulas a ON a.id=le.aula_id
+      WHERE le.status='PENDENTE'
+        AND le.automatico=TRUE
+        AND le.agendado_em <= $1::timestamp
+        AND (a.data_aula + a.hora_inicio) > $1::timestamp
+        AND a.arquivada=FALSE
+        AND a.status IN ('AGENDADA','CONFIRMADA')
+      ORDER BY le.agendado_em, le.id
+      LIMIT $2
+    `, [agoraTexto, Math.max(1, Math.min(50, Number(limite) || 10))]);
+
+    for (const item of fila.rows) {
+      const envioId = Number(item.id);
+      const claim = await client.query(`
+        UPDATE autoagenda.lembrete_envios
+        SET status='PROCESSANDO', tentativas=tentativas+1,
+            ultima_tentativa_em=NOW(), processando_em=NOW(), erro=NULL, atualizado_em=NOW()
+        WHERE id=$1 AND status='PENDENTE'
+        RETURNING id, aula_id, tipo, agendado_em
+      `, [envioId]);
+      if (!claim.rowCount) continue;
+      resultado.processados++;
+
+      const detalhe = await client.query(`
+        SELECT le.id AS envio_id, le.tipo,
+               TO_CHAR(a.data_aula,'DD/MM/YYYY') AS data_br,
+               TO_CHAR(a.hora_inicio,'HH24:MI') AS hora_inicio,
+               a.status, a.arquivada,
+               al.nome AS aluno_nome, al.whatsapp AS aluno_whatsapp,
+               i.nome AS instrutor_nome,
+               v.nome AS veiculo_nome,
+               l.nome AS local_nome
+        FROM autoagenda.lembrete_envios le
+        JOIN autoagenda.aulas a ON a.id=le.aula_id
+        JOIN autoagenda.alunos al ON al.id=a.aluno_id
+        LEFT JOIN autoagenda.instrutores i ON i.id=a.instrutor_id
+        LEFT JOIN autoagenda.veiculos v ON v.id=a.veiculo_id
+        LEFT JOIN autoagenda.locais l ON l.id=a.local_id
+        WHERE le.id=$1
+      `, [envioId]);
+      const aula = detalhe.rows[0];
+      if (!aula || aula.arquivada || !['AGENDADA','CONFIRMADA'].includes(String(aula.status || '').toUpperCase())) {
+        await client.query(`UPDATE autoagenda.lembrete_envios SET status='CANCELADO', processando_em=NULL, atualizado_em=NOW() WHERE id=$1`, [envioId]);
+        resultado.cancelados++;
+        continue;
+      }
+
+      try {
+        const envio = await enviarTemplateWhatsAppCloud(aula);
+        await client.query('BEGIN');
+        await client.query(`
+          UPDATE autoagenda.lembrete_envios
+          SET status='ENVIADO', processando_em=NULL, enviado_em=NOW(),
+              provider_message_id=$1, erro=NULL, atualizado_em=NOW()
+          WHERE id=$2 AND status='PROCESSANDO'
+        `, [envio.messageId, envioId]);
+        const coluna = aula.tipo === 'DIA_ANTERIOR' ? 'lembrete_dia_anterior' : 'lembrete_horas_antes';
+        await client.query(`
+          UPDATE autoagenda.aulas a
+          SET ${coluna}_enviado=TRUE, ${coluna}_enviado_em=NOW(), atualizado_em=NOW()
+          FROM autoagenda.lembrete_envios le
+          WHERE le.id=$1 AND a.id=le.aula_id
+        `, [envioId]);
+        await client.query('COMMIT');
+        resultado.enviados++;
+      } catch (error) {
+        try { await client.query('ROLLBACK'); } catch {}
+        await client.query(`
+          UPDATE autoagenda.lembrete_envios
+          SET status='FALHOU', processando_em=NULL, erro=$1, atualizado_em=NOW()
+          WHERE id=$2
+        `, [erroWhatsAppSeguro(error?.message), envioId]);
+        resultado.falhas++;
+      }
+    }
+    return resultado;
+  } finally {
+    if (lockObtido) {
+      try { await client.query('SELECT pg_advisory_unlock(33003300)'); } catch {}
+    }
+    client.release();
+  }
+}
+
+let lembreteWorkerTimer = null;
+function iniciarWorkerLembretesAutomaticos() {
+  const bruto = Number(process.env.WHATSAPP_WORKER_INTERVAL_MINUTES || 5);
+  const minutos = Number.isFinite(bruto) ? Math.max(1, Math.min(60, Math.floor(bruto))) : 5;
+  const executar = async () => {
+    try {
+      const r = await processarLembretesAutomaticos({ origem: 'WORKER' });
+      if (r.enviados || r.falhas || r.cancelados) {
+        console.log(`Lembretes WhatsApp: ${r.enviados} enviado(s), ${r.falhas} falha(s), ${r.cancelados} cancelado(s).`);
+      }
+    } catch (error) {
+      console.error('Worker de lembretes do WhatsApp falhou:', erroWhatsAppSeguro(error?.message));
+    }
+  };
+  const primeiraExecucao = setTimeout(executar, 15000);
+  if (typeof primeiraExecucao.unref === 'function') primeiraExecucao.unref();
+  lembreteWorkerTimer = setInterval(executar, minutos * 60 * 1000);
+  if (typeof lembreteWorkerTimer.unref === 'function') lembreteWorkerTimer.unref();
+  console.log(`Lembretes WhatsApp: worker preparado a cada ${minutos} minuto(s); envio automático depende da configuração do ADMIN e das variáveis do Render.`);
 }
 
 function avaliarHorarioFuncionamento(config, dados) {
@@ -2771,6 +3129,10 @@ app.put('/api/configuracoes/lembretes', async (req, res) => {
   const client = await pool.connect();
   try {
     const cfg = normalizarConfiguracaoLembretes(req.body || {});
+    const apiStatus = resumoConfiguracaoWhatsAppCloud();
+    if (cfg.whatsapp_automatico_ativo && !apiStatus.whatsapp_api_configurada) {
+      throw erroHttp(400, `Para ativar o envio automático, configure no Render: ${apiStatus.whatsapp_api_ausencias.join(', ')}.`);
+    }
     await client.query('BEGIN');
     const r = await client.query(`
       UPDATE autoagenda.configuracoes
@@ -2778,15 +3140,18 @@ app.put('/api/configuracoes/lembretes', async (req, res) => {
           lembrete_dia_anterior_hora=$2::time,
           lembrete_horas_antes_ativo=$3,
           lembrete_horas_antes=$4,
+          whatsapp_automatico_ativo=$5,
           atualizado_em=NOW()
       WHERE id=1
       RETURNING lembrete_dia_anterior_ativo,
                 TO_CHAR(lembrete_dia_anterior_hora,'HH24:MI') AS lembrete_dia_anterior_hora,
-                lembrete_horas_antes_ativo, lembrete_horas_antes
-    `,[cfg.lembrete_dia_anterior_ativo,cfg.lembrete_dia_anterior_hora,cfg.lembrete_horas_antes_ativo,cfg.lembrete_horas_antes]);
+                lembrete_horas_antes_ativo, lembrete_horas_antes,
+                whatsapp_automatico_ativo
+    `,[cfg.lembrete_dia_anterior_ativo,cfg.lembrete_dia_anterior_hora,cfg.lembrete_horas_antes_ativo,cfg.lembrete_horas_antes,cfg.whatsapp_automatico_ativo]);
     await sincronizarAgendamentoLembretes(client);
+    await sincronizarFilaLembretes(client);
     await client.query('COMMIT');
-    res.json(r.rows[0] || cfg);
+    res.json({ ...(r.rows[0] || cfg), ...apiStatus });
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
     console.error(error);
@@ -2798,6 +3163,7 @@ app.get('/api/lembretes', async (req, res) => {
   const client = await pool.connect();
   try {
     await sincronizarAgendamentoLembretes(client);
+    await sincronizarFilaLembretes(client);
     const agora = agoraApp();
     const agoraTexto = `${agora.data}T${agora.hora}`;
     const r = await client.query(`
@@ -2841,7 +3207,18 @@ app.get('/api/lembretes', async (req, res) => {
           AND a.arquivada=FALSE
           AND a.status IN ('AGENDADA','CONFIRMADA')
       )
-      SELECT * FROM itens ORDER BY lembrete_em, aula_id, tipo LIMIT 200
+      SELECT itens.*,
+             le.id AS envio_id,
+             COALESCE(le.status,'PENDENTE') AS envio_status,
+             COALESCE(le.tentativas,0)::int AS envio_tentativas,
+             TO_CHAR(le.ultima_tentativa_em,'YYYY-MM-DD"T"HH24:MI') AS envio_ultima_tentativa_em,
+             TO_CHAR(le.enviado_em,'YYYY-MM-DD"T"HH24:MI') AS envio_api_em,
+             le.provider_message_id,
+             le.erro AS envio_erro
+      FROM itens
+      LEFT JOIN autoagenda.lembrete_envios le
+        ON le.aula_id=itens.aula_id AND le.tipo=itens.tipo AND le.canal='WHATSAPP'
+      ORDER BY lembrete_em, aula_id, tipo LIMIT 200
     `,[hojeApp()]);
     const itens = r.rows.map(x => ({...x, atrasado: String(x.lembrete_em) < agoraTexto}));
     const limite = new Date(`${agora.data}T${agora.hora}:00`);
@@ -2853,13 +3230,33 @@ app.get('/api/lembretes', async (req, res) => {
       resumo: {
         pendentes: itens.length,
         atrasados: itens.filter(x => x.atrasado).length,
-        proximos_7_dias: itens.filter(x => String(x.lembrete_em) >= agoraTexto && String(x.lembrete_em) <= limite7).length
+        falhas: itens.filter(x => String(x.envio_status || '').toUpperCase() === 'FALHOU').length,
+        proximos_7_dias: itens.filter(x => String(x.lembrete_em) >= agoraTexto && String(x.lembrete_em) <= limite7).length,
+        whatsapp_automatico_ativo: (await obterConfigLembretes(client)).whatsapp_automatico_ativo,
+        whatsapp_api_configurada: resumoConfiguracaoWhatsAppCloud().whatsapp_api_configurada
       }
     });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error:'Erro ao consultar lembretes.' });
   } finally { client.release(); }
+});
+
+app.post('/api/lembretes/processar-agora', async (req, res) => {
+  try {
+    const cfg = await obterConfigLembretes(pool);
+    if (!cfg.whatsapp_automatico_ativo) {
+      return res.status(409).json({ error: 'O envio automático pelo WhatsApp está desativado nas configurações.' });
+    }
+    if (!cfg.whatsapp_api_configurada) {
+      return res.status(409).json({ error: `Integração do WhatsApp incompleta. Configure no Render: ${cfg.whatsapp_api_ausencias.join(', ')}.` });
+    }
+    const resultado = await processarLembretesAutomaticos({ origem: 'ADMIN', limite: 20 });
+    res.json(resultado);
+  } catch (error) {
+    console.error('Erro ao processar lembretes manualmente:', error);
+    res.status(500).json({ error: 'Erro ao executar a automação de lembretes.' });
+  }
 });
 
 app.patch('/api/aulas/:id/lembretes/:tipo', async (req, res) => {
@@ -2880,6 +3277,27 @@ app.patch('/api/aulas/:id/lembretes/:tipo', async (req, res) => {
       RETURNING id, ${coluna}_enviado AS enviado, ${coluna}_enviado_em AS enviado_em
     `,[enviado,id]);
     if (!r.rowCount) return res.status(404).json({ error:'Aula não encontrada.' });
+    const agendamento = await client.query(`
+      SELECT id,
+             CASE WHEN $1='DIA_ANTERIOR' THEN lembrete_dia_anterior_em ELSE lembrete_horas_antes_em END AS agendado_em
+      FROM autoagenda.aulas WHERE id=$2
+    `, [tipo,id]);
+    if (agendamento.rows[0]?.agendado_em) {
+      await client.query(`
+        INSERT INTO autoagenda.lembrete_envios
+          (aula_id,tipo,canal,agendado_em,status,automatico,enviado_em,erro,atualizado_em)
+        VALUES ($1,$2,'WHATSAPP',$3,$4,$5,CASE WHEN $6 THEN NOW() ELSE NULL END,NULL,NOW())
+        ON CONFLICT (aula_id,tipo,canal) DO UPDATE
+        SET agendado_em=EXCLUDED.agendado_em,
+            status=EXCLUDED.status,
+            automatico=EXCLUDED.automatico,
+            enviado_em=EXCLUDED.enviado_em,
+            processando_em=NULL,
+            provider_message_id=CASE WHEN $6 THEN lembrete_envios.provider_message_id ELSE NULL END,
+            erro=NULL,
+            atualizado_em=NOW()
+      `,[id,tipo,agendamento.rows[0].agendado_em,enviado?'ENVIADO':'PENDENTE',!enviado,enviado]);
+    }
     res.json(r.rows[0]);
   } catch (error) {
     console.error(error);
@@ -4312,7 +4730,8 @@ const EXPORTACOES = {
 
 const EXPORTACOES_SUPORTE = {
   instrutor_indisponibilidades: { tabela: 'instrutor_indisponibilidades', nome: 'Indisponibilidades de instrutores', aba: 'Indisp_Instrutores' },
-  veiculo_indisponibilidades: { tabela: 'veiculo_indisponibilidades', nome: 'Indisponibilidades de veículos', aba: 'Indisp_Veiculos' }
+  veiculo_indisponibilidades: { tabela: 'veiculo_indisponibilidades', nome: 'Indisponibilidades de veículos', aba: 'Indisp_Veiculos' },
+  lembrete_envios: { tabela: 'lembrete_envios', nome: 'Histórico de lembretes', aba: 'Lembretes' }
 };
 
 const EXPORTACOES_COMPLETAS = { ...EXPORTACOES, ...EXPORTACOES_SUPORTE };
@@ -5762,6 +6181,7 @@ async function start() {
     await initDatabase();
     app.listen(PORT, () => {
       console.log(`AutoAgenda V${APP_VERSION} rodando na porta ${PORT}`);
+      iniciarWorkerLembretesAutomaticos();
       if (!LOGIN_READY) {
         console.error('SEGURANÇA: login individual sem administrador ativo. Configure AUTOAGENDA_USER e AUTOAGENDA_PASSWORD para o bootstrap inicial.');
       } else {

@@ -63,7 +63,8 @@ const requiredRoutes = [
   'GET /api/horarios-livres','GET /api/planos','POST /api/planos','POST /api/planos/preview','PATCH /api/planos/:id/encerrar',
   'GET /api/dashboard/resumo','GET /api/relatorios/resumo','GET /api/financeiro','POST /api/financeiro',
   'GET /api/backup/resumo','GET /api/backup/exportar','GET /api/aulas','POST /api/aulas','PUT /api/aulas/:id','DELETE /api/aulas/:id',
-  'POST /api/aulas/:id/reposicao','PUT /api/aulas/:id/serie','PATCH /api/aulas/:id/confirmacao','PATCH /api/aulas/:id/status'
+  'POST /api/aulas/:id/reposicao','PUT /api/aulas/:id/serie','PATCH /api/aulas/:id/confirmacao','PATCH /api/aulas/:id/status',
+  'GET /api/configuracoes/lembretes','PUT /api/configuracoes/lembretes','GET /api/lembretes','POST /api/lembretes/processar-agora'
 ];
 const routeSet=new Set(routes);
 const missingRoutes=requiredRoutes.filter(r=>!routeSet.has(r));
@@ -79,10 +80,27 @@ test('data de nascimento presente', server.includes('data_nascimento') && /dataN
 test('modo escuro presente', /dark/.test(app) && /dark/.test(html) && /dark/.test(css));
 test('backup CSV/Excel/JSON declarado', server.includes("formatos: ['csv','xlsx','json']") && server.includes("['csv','xlsx','json'].includes(formato)"));
 test('backup sem credenciais declarado', server.includes('credenciais_incluidas: false'));
+test('confirmação pública por token presente', server.includes("app.get('/confirmar/:token'") && server.includes("app.post('/confirmar/:token/acao'"));
+test('token público usa randomBytes e hash SHA-256', server.includes('crypto.randomBytes(32)') && server.includes('confirmacao_token_hash'));
+test('token de confirmação é de uso único', server.includes('confirmacao_token_usado_em=NOW()') && server.includes('confirmacao_token_usado_em IS NULL'));
+test('link de confirmação entra no WhatsApp', server.includes('linkConfirmacao') && server.includes('/confirmar/${tokenConfirmacao}'));
+test('backup exclui metadados do token', server.includes("['confirmacao_token_hash','confirmacao_token_expira_em','confirmacao_token_usado_em']"));
+test('API comum remove metadados do token', server.includes('function aulaSemMetadadosToken') && server.includes('res.json(aulaSemMetadadosToken'));
+test('schema contém campos do token público', ['confirmacao_token_hash','confirmacao_token_expira_em','confirmacao_token_usado_em'].every(c=>schema.includes(c)));
+test('WhatsApp Cloud API usa endpoint oficial /messages', server.includes('https://graph.facebook.com/${encodeURIComponent(cfg.apiVersion)}/${encodeURIComponent(cfg.phoneNumberId)}/messages'));
+test('credenciais do WhatsApp ficam somente em variáveis de ambiente', ['WHATSAPP_CLOUD_API_VERSION','WHATSAPP_PHONE_NUMBER_ID','WHATSAPP_ACCESS_TOKEN','WHATSAPP_TEMPLATE_LEMBRETE'].every(x=>server.includes(x)) && !['WHATSAPP_ACCESS_TOKEN','WHATSAPP_PHONE_NUMBER_ID'].some(x=>app.includes(x)||html.includes(x)));
+test('envio automático fica desativado por padrão', schema.includes('whatsapp_automatico_ativo BOOLEAN NOT NULL DEFAULT FALSE') && server.includes('whatsapp_automatico_ativo BOOLEAN NOT NULL DEFAULT FALSE'));
+test('fila de lembretes possui estados auditáveis', ['PENDENTE','PROCESSANDO','ENVIADO','FALHOU','CANCELADO'].every(x=>server.includes(`'${x}'`)) && schema.includes('autoagenda.lembrete_envios'));
+test('worker evita concorrência entre instâncias', server.includes('pg_try_advisory_lock(33003300)') && server.includes('pg_advisory_unlock(33003300)'));
+test('worker não repete falha automaticamente', server.includes("WHERE le.status='PENDENTE'") && !server.includes("WHERE le.status IN ('PENDENTE','FALHOU')"));
+test('lembrete manual permanece disponível', app.includes('WhatsApp manual') && app.includes('/whatsapp/aula/'));
+test('interface possui controle de automação oficial', html.includes('cfgWhatsAppAutoAtivo') && html.includes('processarLembretesAgora') && app.includes('whatsapp_api_configurada'));
+test('histórico de lembretes entra no backup completo', server.includes("lembrete_envios: { tabela: 'lembrete_envios'"));
 
-test('schema contém tabelas principais', ['alunos','instrutores','veiculos','locais','aulas','planos_aula','financeiro','usuarios','sessoes','configuracoes'].every(t=>schema.includes(`autoagenda.${t}`)));
+test('schema contém tabelas principais', ['alunos','instrutores','veiculos','locais','aulas','planos_aula','financeiro','usuarios','sessoes','configuracoes','lembrete_envios'].every(t=>schema.includes(`autoagenda.${t}`)));
 const deps = Object.keys(pkg.dependencies||{}).sort();
 test('dependências diretas esperadas', JSON.stringify(deps)===JSON.stringify(['dotenv','express','pg']), deps.join(', '));
+test('sem automação não oficial de WhatsApp Web', !deps.some(d=>['whatsapp-web.js','puppeteer','playwright','selenium-webdriver'].includes(d)) && !/whatsapp-web\.js|puppeteer|playwright|selenium-webdriver/i.test(server));
 test('nenhum .env versionado no pacote', !exists('.env'));
 
 for (const r of results) console.log(`${r.ok?'OK':'FALHA'} | ${r.name}${r.detail?' | '+r.detail:''}`);

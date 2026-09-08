@@ -1,4 +1,4 @@
-# AutoAgenda V3.2.0
+# AutoAgenda V3.3.0
 
 Sistema de organização de aulas práticas para autoescola, com backend Node/Express, PostgreSQL e deploy no Render.
 
@@ -12,7 +12,7 @@ Sistema de organização de aulas práticas para autoescola, com backend Node/Ex
 - busca de horários livres;
 - reagendamento inteligente;
 - WhatsApp da aula e do plano;
-- confirmação e lembretes;
+- confirmação pelo aluno e lembretes com integração oficial do WhatsApp preparada;
 - Dashboard e relatórios;
 - financeiro simples;
 - backup/exportação CSV, Excel e JSON;
@@ -185,7 +185,7 @@ Nenhuma dependência externa nova foi adicionada.
 
 ## Próximo passo recomendado
 
-As 17 etapas do roteiro principal estão concluídas. O próximo passo recomendado é uma **auditoria técnica final da V3.1**, sem adicionar funcionalidades, antes de iniciar uma nova fase do AutoAgenda.
+A estabilização técnica e as etapas de confirmação/lembretes foram concluídas. O próximo item do roteiro é o **PROMPT 9 — envio de e-mail**, preservando o WhatsApp manual e a integração oficial preparada nesta versão.
 
 ## V3.2.0 — Confirmação pelo próprio aluno
 
@@ -198,3 +198,61 @@ As 17 etapas do roteiro principal estão concluídas. O próximo passo recomenda
 - Campos de token são excluídos dos backups CSV, Excel e JSON e também não são retornados pelas APIs comuns de aula.
 - `PUBLIC_BASE_URL` é opcional; quando definido no Render, deve conter a URL pública do AutoAgenda (ex.: `https://seu-servico.onrender.com`).
 
+
+
+## V3.3.0 — Lembretes automáticos pela WhatsApp Cloud API
+
+A V3.3.0 prepara o envio automático de lembretes usando somente a **WhatsApp Business Platform / Cloud API**. Nenhum serviço pago é ativado automaticamente e a opção nasce desligada.
+
+### Funcionamento
+
+- os horários de lembrete existentes continuam configuráveis (dia anterior e algumas horas antes);
+- o envio manual por `wa.me` continua disponível como alternativa;
+- o ADMIN pode ativar/desativar o envio automático somente quando a API estiver configurada;
+- um worker interno verifica a fila periodicamente enquanto o serviço do AutoAgenda estiver executando;
+- o PostgreSQL registra `PENDENTE`, `PROCESSANDO`, `ENVIADO`, `FALHOU` ou `CANCELADO`;
+- o ID retornado pela Meta é armazenado em `provider_message_id`;
+- falhas não são reenviadas automaticamente, reduzindo risco de duplicidade em respostas ambíguas;
+- um advisory lock do PostgreSQL impede duas instâncias do AutoAgenda de processarem o mesmo lote simultaneamente;
+- se dois lembretes da mesma aula vencerem enquanto o serviço estiver parado, apenas o mais próximo da aula permanece elegível para envio automático;
+- a tabela `lembrete_envios` entra no backup completo, sem incluir tokens ou credenciais da Meta.
+
+### Variáveis a configurar no Render quando a integração for ativada
+
+Não coloque valores reais no GitHub. Configure-os somente em **Environment** do Render:
+
+- `WHATSAPP_CLOUD_API_VERSION` — versão vigente da Graph API no formato `vXX.X`;
+- `WHATSAPP_PHONE_NUMBER_ID` — ID do número registrado na WhatsApp Business Platform;
+- `WHATSAPP_ACCESS_TOKEN` — token de usuário/sistema com permissão `whatsapp_business_messaging` para envio de mensagens;
+- `WHATSAPP_TEMPLATE_LEMBRETE` — nome do template aprovado para lembrete;
+- `WHATSAPP_TEMPLATE_LANGUAGE` — idioma do template; padrão do AutoAgenda: `pt_BR`;
+- `WHATSAPP_WORKER_INTERVAL_MINUTES` — opcional, entre 1 e 60; padrão: `5`.
+
+A versão da Graph API não é fixada no código para evitar que o projeto fique preso a uma versão antiga da plataforma.
+
+### Template esperado
+
+O código envia um template com **6 parâmetros de texto**, nesta ordem:
+
+1. nome do aluno;
+2. data da aula;
+3. horário;
+4. instrutor;
+5. veículo;
+6. local.
+
+Modelo de conteúdo para criar/aprovar na Meta:
+
+`Olá, {{1}}! Lembrete da sua aula prática em {{2}} às {{3}}. Instrutor: {{4}}. Veículo: {{5}}. Local: {{6}}.`
+
+O nome e a categoria final do template dependem da aprovação da Meta. O valor configurado em `WHATSAPP_TEMPLATE_LEMBRETE` deve ser exatamente o nome do template aprovado.
+
+### Sobre o status “ENVIADO”
+
+Nesta versão, `ENVIADO` significa que a **Cloud API aceitou a requisição** e retornou um ID de mensagem. O acompanhamento posterior de entrega/leitura por Webhook não foi ativado nesta etapa.
+
+### Limitação importante do worker interno
+
+O worker só executa enquanto o processo Node.js do AutoAgenda estiver em execução. Se o serviço de hospedagem ficar suspenso/inativo no horário programado, a execução poderá ocorrer mais tarde quando o serviço voltar. Para garantia operacional de horário em produção, pode ser necessário usar futuramente uma hospedagem sempre ativa ou um agendador dedicado.
+
+Nenhuma biblioteca de automação de WhatsApp Web, navegador automatizado ou método não oficial foi adicionada.

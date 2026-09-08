@@ -1,27 +1,21 @@
-AUTOAGENDA V3.2.0 — CONFIRMAÇÃO PELO PRÓPRIO ALUNO
-
-ARQUIVOS DESTA VERSÃO:
-- server.js
-- package.json
-- package-lock.json
-- public/index.html
-- public/app.js
-- sql/schema.sql
-- scripts/test-static.js
-- README.md
-- CHECKLIST_V3.2.0.md
-- RELATORIO_V3.2.0.md
+AUTOAGENDA V3.3.0 — LEMBRETES AUTOMÁTICOS PELO WHATSAPP OFICIAL
 
 O QUE MUDA:
-- o WhatsApp da aula passa a incluir um link individual de confirmação;
-- o aluno pode confirmar a aula ou solicitar reagendamento sem login;
-- o link utiliza token aleatório, hash SHA-256, expiração e uso único;
-- o aluno não altera data/horário diretamente; pedido de reagendamento apenas registra a solicitação;
-- alterações manuais relevantes invalidam links antigos;
-- metadados do token não entram nos backups nem nas respostas comuns da API.
+- prepara integração com WhatsApp Business Platform / Cloud API;
+- envio automático nasce DESATIVADO;
+- envio manual atual continua funcionando;
+- cria fila de envios com status e prevenção de duplicidade;
+- permite ao ADMIN ativar a automação somente depois que a API estiver configurada;
+- adiciona botão “Processar agora” para teste controlado;
+- inclui histórico de lembretes no backup completo.
+
+IMPORTANTE:
+NÃO configure token no código ou GitHub. Quando chegar a hora de ativar, use somente variáveis de ambiente do Render, conforme README.md e CHECKLIST_V3.3.0.md.
 
 NÃO HÁ ARQUIVOS PARA REMOVER DO GITHUB NESTA ETAPA.
 
 APÓS O DEPLOY:
-Execute o CHECKLIST_V3.2.0.md no Render com PostgreSQL real.
-É recomendado configurar PUBLIC_BASE_URL com a URL pública do AutoAgenda; sem ela o sistema tenta detectar o próprio domínio automaticamente.
+1. confirme que o AutoAgenda abre normalmente;
+2. abra Configurações → Lembretes;
+3. sem credenciais da Meta, a API deve aparecer como “ainda não configurada” e o envio manual deve continuar normal;
+4. execute o CHECKLIST_V3.3.0.md antes de ativar qualquer envio real.

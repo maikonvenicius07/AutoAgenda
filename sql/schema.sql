@@ -1,4 +1,4 @@
--- AutoAgenda V3.1.5
+-- AutoAgenda V3.3.0
 -- Schema compatível com o server.js atual.
 -- O servidor cria/migra automaticamente; este arquivo serve para referência e execução manual controlada.
 
@@ -157,6 +157,7 @@ CREATE TABLE IF NOT EXISTS autoagenda.configuracoes (
   lembrete_dia_anterior_hora TIME NOT NULL DEFAULT '18:00',
   lembrete_horas_antes_ativo BOOLEAN NOT NULL DEFAULT TRUE,
   lembrete_horas_antes INTEGER NOT NULL DEFAULT 2 CHECK (lembrete_horas_antes BETWEEN 1 AND 24),
+  whatsapp_automatico_ativo BOOLEAN NOT NULL DEFAULT FALSE,
   atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
 );
 
@@ -199,6 +200,9 @@ CREATE TABLE IF NOT EXISTS autoagenda.aulas (
   confirmacao_origem VARCHAR(20) NOT NULL DEFAULT 'MANUAL'
     CHECK (confirmacao_origem IN ('MANUAL','WHATSAPP','SISTEMA')),
   confirmacao_atualizada_em TIMESTAMP,
+  confirmacao_token_hash VARCHAR(64),
+  confirmacao_token_expira_em TIMESTAMP,
+  confirmacao_token_usado_em TIMESTAMP,
   lembrete_dia_anterior_em TIMESTAMP,
   lembrete_dia_anterior_enviado BOOLEAN NOT NULL DEFAULT FALSE,
   lembrete_dia_anterior_enviado_em TIMESTAMP,
@@ -216,6 +220,28 @@ CREATE TABLE IF NOT EXISTS autoagenda.aulas (
   criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
   atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS autoagenda.lembrete_envios (
+  id BIGSERIAL PRIMARY KEY,
+  aula_id INTEGER NOT NULL REFERENCES autoagenda.aulas(id) ON DELETE CASCADE,
+  tipo VARCHAR(20) NOT NULL CHECK (tipo IN ('DIA_ANTERIOR','HORAS_ANTES')),
+  canal VARCHAR(20) NOT NULL DEFAULT 'WHATSAPP' CHECK (canal = 'WHATSAPP'),
+  agendado_em TIMESTAMP NOT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'PENDENTE'
+    CHECK (status IN ('PENDENTE','PROCESSANDO','ENVIADO','FALHOU','CANCELADO')),
+  automatico BOOLEAN NOT NULL DEFAULT TRUE,
+  tentativas INTEGER NOT NULL DEFAULT 0 CHECK (tentativas >= 0),
+  ultima_tentativa_em TIMESTAMP,
+  processando_em TIMESTAMP,
+  enviado_em TIMESTAMP,
+  provider_message_id VARCHAR(255),
+  erro TEXT,
+  criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+  atualizado_em TIMESTAMP NOT NULL DEFAULT NOW(),
+  UNIQUE (aula_id, tipo, canal)
+);
+CREATE INDEX IF NOT EXISTS idx_autoagenda_lembrete_envios_fila
+  ON autoagenda.lembrete_envios(status, agendado_em);
 
 CREATE TABLE IF NOT EXISTS autoagenda.financeiro (
   id SERIAL PRIMARY KEY,
@@ -284,11 +310,18 @@ ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS reposicao_de_id INTEGER;
 ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS confirmacao_status VARCHAR(30) NOT NULL DEFAULT 'AGUARDANDO';
 ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS confirmacao_origem VARCHAR(20) NOT NULL DEFAULT 'MANUAL';
 ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS confirmacao_atualizada_em TIMESTAMP;
+ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS confirmacao_token_hash VARCHAR(64);
+ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS confirmacao_token_expira_em TIMESTAMP;
+ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS confirmacao_token_usado_em TIMESTAMP;
+CREATE UNIQUE INDEX IF NOT EXISTS ux_autoagenda_aulas_confirmacao_token
+  ON autoagenda.aulas(confirmacao_token_hash)
+  WHERE confirmacao_token_hash IS NOT NULL;
 
 ALTER TABLE autoagenda.configuracoes ADD COLUMN IF NOT EXISTS lembrete_dia_anterior_ativo BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE autoagenda.configuracoes ADD COLUMN IF NOT EXISTS lembrete_dia_anterior_hora TIME NOT NULL DEFAULT '18:00';
 ALTER TABLE autoagenda.configuracoes ADD COLUMN IF NOT EXISTS lembrete_horas_antes_ativo BOOLEAN NOT NULL DEFAULT TRUE;
 ALTER TABLE autoagenda.configuracoes ADD COLUMN IF NOT EXISTS lembrete_horas_antes INTEGER NOT NULL DEFAULT 2;
+ALTER TABLE autoagenda.configuracoes ADD COLUMN IF NOT EXISTS whatsapp_automatico_ativo BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS lembrete_dia_anterior_em TIMESTAMP;
 ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS lembrete_dia_anterior_enviado BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE autoagenda.aulas ADD COLUMN IF NOT EXISTS lembrete_dia_anterior_enviado_em TIMESTAMP;
