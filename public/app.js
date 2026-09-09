@@ -546,6 +546,8 @@ function aulaHtml(x, comAcoes = false) {
   const plano = x.plan_id ? `<span class="plan-badge">🔁 Plano ${x.numero_plano || ''}${x.excecao_plano ? ' • alterada' : ''}</span>` : '';
   const unidades = Number(x.aulas_unidades || 1);
   const unidadeTxt = unidades > 1 ? ` · ${unidades} aulas consecutivas` : '';
+  const statusAtual = String(x.status || '').toUpperCase();
+  const podeCancelarRapido = ['AGENDADA','CONFIRMADA','REMARCADA'].includes(statusAtual) && !x.arquivada;
   const jaTemReposicao = Number(x.reposicao_id_ativa || 0) > 0;
   const reposicao = comAcoes && x.status === 'CANCELADA'
     ? (jaTemReposicao
@@ -572,7 +574,10 @@ function aulaHtml(x, comAcoes = false) {
       ${whatsapp}
       <button type="button" class="mini edit" data-edit-aula="${x.id}">${usuarioInstrutor() ? '📝 Status' : '✏️ Alterar'}</button>
       ${usuarioAdmin() && podeArquivar ? `<button type="button" class="mini delete" data-del-aula="${x.id}">🗃️ Arquivar</button>` : ''}
-    </div>` : (whatsapp ? `<div class="actions-row lesson-actions">${whatsapp}</div>` : '')}
+    </div>` : ((whatsapp || podeCancelarRapido) ? `<div class="actions-row lesson-actions">
+      ${whatsapp}
+      ${podeCancelarRapido ? `<button type="button" class="mini delete" data-cancel-aula-rapido="${x.id}" title="Cancelar esta aula e liberar o horário">❌ Cancelar</button>` : ''}
+    </div>` : '')}
   </div>`;
 }
 
@@ -1461,6 +1466,7 @@ function bindDynamic() {
   $$('[data-finance-aluno]').forEach(b => b.onclick = () => abrirFinanceiroAluno(Number(b.dataset.financeAluno)));
   $$('[data-find-slot-aluno]').forEach(b => b.onclick = () => abrirBuscaHorario({ aluno_id:Number(b.dataset.findSlotAluno) }));
   $$('[data-edit-aula]').forEach(b => b.onclick = () => editarAula(Number(b.dataset.editAula)));
+  $$('[data-cancel-aula-rapido]').forEach(b => b.onclick = () => cancelarAulaRapido(Number(b.dataset.cancelAulaRapido)));
   $$('[data-del-aula]').forEach(b => b.onclick = () => pedirExcluirAula(Number(b.dataset.delAula)));
   $$('[data-repor-aula]').forEach(b => b.onclick = () => reporAula(Number(b.dataset.reporAula)));
   $$('[data-encerrar-plano]').forEach(b => b.onclick = () => pedirEncerrarPlano(Number(b.dataset.encerrarPlano), false));
@@ -1597,7 +1603,7 @@ async function health() {
   try {
     const h = await api('/api/health');
     const seguranca = h.security_ready ? ' · 🔐 login individual ativo' : ' · ⛔ login individual precisa ser inicializado';
-    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '3.8.5'}${seguranca}.`;
+    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '3.8.7'}${seguranca}.`;
     $('#db').className = h.security_ready ? 'db ok' : 'db fail';
   } catch {
     $('#db').textContent = '🔴 Banco não conectado. Verifique DATABASE_URL no Render.';
@@ -2085,6 +2091,40 @@ async function editarAula(id) {
     }
     open('mAula');
   } catch (e) { toast(e.message); }
+}
+
+function cancelarAulaRapido(id) {
+  const a = localizarAulaParaWhatsApp(id);
+  if (!a) return toast('Aula não encontrada.');
+  const status = String(a.status || '').toUpperCase();
+  if (!['AGENDADA','CONFIRMADA','REMARCADA'].includes(status)) {
+    return toast('Esta aula não pode mais ser cancelada pela Agenda de hoje.');
+  }
+
+  confirmar(
+    'Cancelar aula?',
+    `A aula de ${a.aluno_nome || 'este aluno'} em ${fmtData(a.data_aula)} às ${hora(a.hora_inicio)} será cancelada. O horário ficará livre e a aula continuará preservada no histórico.`,
+    async () => {
+      try {
+        await api(`/api/aulas/${id}/status`, {
+          method:'PATCH',
+          body:JSON.stringify({ status:'CANCELADA' })
+        });
+        toast('✅ Aula cancelada. O horário foi liberado.');
+        await load();
+        confirmar(
+          '↪️ Encontrar reposição?',
+          'A aula cancelada permanece no histórico. Deseja procurar um novo horário para este aluno?',
+          () => reporAula(id),
+          'Procurar horários'
+        );
+      } catch (e) {
+        const diag = e?.data?.diagnostico ? ` (código ${e.data.diagnostico})` : '';
+        toast(`${e.message || 'Erro ao cancelar aula.'}${diag}`);
+      }
+    },
+    'Cancelar aula'
+  );
 }
 
 function pedirExcluirAula(id) {
