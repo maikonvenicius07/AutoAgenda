@@ -8,7 +8,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '3.8.2';
+const APP_VERSION = '3.8.3';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -1454,8 +1454,25 @@ app.use((req, res, next) => {
 
 // ========================= UTILITÁRIOS =========================
 function dateOnlyUTC(iso) {
-  const [y, m, d] = String(iso).slice(0, 10).split('-').map(Number);
-  return new Date(Date.UTC(y, m - 1, d));
+  if (iso instanceof Date && !Number.isNaN(iso.getTime())) {
+    return new Date(Date.UTC(iso.getUTCFullYear(), iso.getUTCMonth(), iso.getUTCDate()));
+  }
+
+  const texto = String(iso || '').trim();
+  const match = texto.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) throw erroHttp(400, 'Data inválida.');
+
+  const y = Number(match[1]);
+  const m = Number(match[2]);
+  const d = Number(match[3]);
+  const data = new Date(Date.UTC(y, m - 1, d));
+  if (Number.isNaN(data.getTime())
+      || data.getUTCFullYear() !== y
+      || data.getUTCMonth() !== m - 1
+      || data.getUTCDate() !== d) {
+    throw erroHttp(400, 'Data inválida.');
+  }
+  return data;
 }
 
 function dateTimeUTC(data, hora) {

@@ -1,20 +1,23 @@
-AutoAgenda V3.8.2 — Correção da confirmação na agenda
+AUTOAGENDA V3.8.3 — CORREÇÃO DE ALTERAÇÃO DE AULAS
 
-ATUALIZAÇÃO
-- A confirmação feita pelo aluno agora aparece corretamente na Agenda e na Agenda de hoje.
-- O selo muda para ✅ Confirmada em verde.
-- A tela atualiza silenciosamente a cada 15 segundos.
-- Ao voltar para a janela do AutoAgenda, a atualização é imediata.
-- Pedido de reagendamento também é refletido automaticamente.
+Esta versão corrige o erro genérico "Erro ao atualizar aula." que podia ocorrer ao editar uma aula existente, inclusive aulas pertencentes a plano automático.
 
-Arquivos principais alterados:
+CAUSA CORRIGIDA
+O PostgreSQL pode entregar um campo DATE ao Node.js como objeto Date. A função interna que comparava a data antiga com a nova aceitava apenas texto no formato AAAA-MM-DD. A conversão agora aceita os dois formatos com validação segura.
+
+ARQUIVOS ALTERADOS/ADICIONADOS
 - server.js
-- public/app.js
-- public/index.html
 - package.json
 - package-lock.json
+- public/index.html
+- public/app.js
 - scripts/test-static.js
-- sql/schema.sql (somente identificação da versão)
-- README.md e documentação V3.8.2
+- README.md
+- CHECKLIST_V3.8.3.md
+- RELATORIO_V3.8.3.md
+- LEIA-ME-ATUALIZACAO.txt
 
-Não há arquivos para remover do GitHub nesta versão.
+NÃO HÁ ARQUIVOS PARA REMOVER DO GITHUB.
+
+TESTE APÓS DEPLOY
+Abra uma aula existente, faça uma alteração e salve. Em aula de plano automático, teste também a opção de aplicar a mudança às próximas aulas em um registro de teste.

@@ -85,6 +85,7 @@ test('histórico do aluno inclui avaliações para prova', server.includes('aval
 test('avaliações entram no backup e restauração', server.includes("avaliacoes_aluno: { tabela: 'avaliacoes_aluno'") && server.includes("'avaliacoes_aluno','financeiro'") && server.includes("inserirLoteRestauracao(client, 'avaliacoes_aluno'"));
 test('financeiro possui exclusão definitiva protegida pelo backend', server.includes("app.delete('/api/financeiro/:id'") && server.includes('DELETE FROM autoagenda.financeiro') && app.includes('data-delete-financeiro') && app.includes('excluirLancamentoFinanceiro'));
 test('API de agenda devolve status real da confirmação', server.includes('a.status, a.confirmacao_status, a.confirmacao_origem, a.confirmacao_atualizada_em'));
+test('conversão de data aceita DATE do PostgreSQL como objeto Date', server.includes('iso instanceof Date') && server.includes('iso.getUTCFullYear()') && server.includes("throw erroHttp(400, 'Data inválida.')"));
 test('agenda atualiza confirmação automaticamente', app.includes('INTERVALO_ATUALIZACAO_AGENDA_MS = 15000') && app.includes('atualizarAgendaAutomaticamente') && app.includes("window.addEventListener('focus'") && app.includes("document.addEventListener('visibilitychange'"));
 test('modo escuro presente', /dark/.test(app) && /dark/.test(html) && /dark/.test(css));
 test('backup CSV/Excel/JSON declarado', server.includes("formatos: ['csv','xlsx','json']") && server.includes("['csv','xlsx','json'].includes(formato)"));
