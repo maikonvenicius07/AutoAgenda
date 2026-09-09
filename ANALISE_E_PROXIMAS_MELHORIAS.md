@@ -1,44 +1,20 @@
-# Análise atual — AutoAgenda V3.8.2
+# Análise atual — AutoAgenda V3.8.4
 
 ## Situação
 
-A V3.7.0 acrescenta a automação total de comunicação, unificando WhatsApp oficial e e-mail em um worker interno. Os eventos passam a ser enfileirados sem bloquear as operações principais do AutoAgenda.
+A agenda ativa passa a representar somente horários que ainda ocupam recursos. Aulas **CANCELADAS** deixam de aparecer na agenda diária/semanal e o horário volta a ficar disponível para um novo agendamento.
 
-## Cobertura automática
+## Preservação do histórico
 
-- agendamento individual;
-- resumo de plano criado;
-- lembrete no dia anterior;
-- lembrete algumas horas antes;
-- reagendamento;
-- atualização de plano;
-- cancelamento de aula;
-- encerramento de plano.
+- a aula cancelada continua no PostgreSQL;
+- continua no Histórico completo do aluno;
+- continua sendo contabilizada nos relatórios de cancelamento;
+- não é considerada conflito de horário;
+- não ocupa mais a célula da agenda ativa.
 
-## Segurança e confiabilidade
+## Próximas melhorias registradas
 
-- credenciais somente em variáveis de ambiente do Render;
-- filas auditáveis no PostgreSQL;
-- advisory locks contra processamento simultâneo por duas instâncias;
-- WhatsApp preserva o envio manual e não tenta novamente falhas ambíguas automaticamente;
-- e-mail reutiliza a mesma chave de idempotência e admite até 3 tentativas automáticas;
-- falha de comunicação não desfaz agendamento/reagendamento/cancelamento;
-- backups e restauração contemplam os históricos de comunicação sem incluir credenciais;
-- token do link manual de confirmação não é alterado pelo WhatsApp transacional automático.
-
-## Dependências externas ainda necessárias para envio real
-
-A automação pode ser ligada no AutoAgenda, porém os provedores externos precisam estar configurados no Render para que as mensagens saiam de fato. Consulte `CONFIGURAR_AUTOMACAO_V3.7.0.md`.
-
-## Próxima melhoria registrada
-
-Mensagem automática de **Feliz Aniversário** usando a data de nascimento do aluno, com controle para enviar somente uma vez por ano.
-
-## V3.8.0 — Avaliação do aluno para prova
-
-A versão atual acrescenta o acompanhamento de aptidão para prova com **Em avaliação**, **Apto para prova** e **Ainda não apto**, preservando todas as avaliações anteriores no histórico. O INSTRUTOR só registra avaliação de alunos vinculados às suas aulas; o ADMIN também pode avaliar.
-
-
-
-## Correção V3.8.2
-A confirmação pública do aluno agora é devolvida pela listagem principal de aulas e refletida automaticamente na Agenda diária e na Agenda de hoje.
+1. Feliz Aniversário automático usando `data_nascimento`;
+2. Webhooks do WhatsApp para status de entrega;
+3. Central de modelos de mensagem;
+4. ajustes guiados pelo uso real.

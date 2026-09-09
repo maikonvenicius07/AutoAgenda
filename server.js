@@ -8,7 +8,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '3.8.3';
+const APP_VERSION = '3.8.4';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -7252,6 +7252,8 @@ app.get('/api/aulas', async (req, res) => {
     const instrutorEscopo = instrutorIdDaSessao(req);
     const incluirArquivadas = usuarioEhAdmin(req)
       && ['1','true','sim'].includes(String(req.query?.incluir_arquivadas || '').toLowerCase());
+    const incluirCanceladas = usuarioEhAdmin(req)
+      && ['1','true','sim'].includes(String(req.query?.incluir_canceladas || '').toLowerCase());
     const params = [];
     const condicoes = [];
     if (instrutorEscopo) {
@@ -7259,6 +7261,9 @@ app.get('/api/aulas', async (req, res) => {
       condicoes.push(`a.instrutor_id = $${params.length}`);
     }
     if (!incluirArquivadas) condicoes.push('a.arquivada = FALSE');
+    // Agenda ativa: aula CANCELADA permanece no histórico, mas deixa de ocupar a grade.
+    // ADMIN pode solicitar explicitamente incluir_canceladas=1 para uma consulta técnica.
+    if (!incluirCanceladas) condicoes.push("a.status <> 'CANCELADA'");
     if (data_inicio && data_fim) {
       params.push(data_inicio, data_fim);
       condicoes.push(`a.data_aula BETWEEN $${params.length - 1} AND $${params.length}`);

@@ -87,6 +87,8 @@ test('financeiro possui exclusão definitiva protegida pelo backend', server.inc
 test('API de agenda devolve status real da confirmação', server.includes('a.status, a.confirmacao_status, a.confirmacao_origem, a.confirmacao_atualizada_em'));
 test('conversão de data aceita DATE do PostgreSQL como objeto Date', server.includes('iso instanceof Date') && server.includes('iso.getUTCFullYear()') && server.includes("throw erroHttp(400, 'Data inválida.')"));
 test('agenda atualiza confirmação automaticamente', app.includes('INTERVALO_ATUALIZACAO_AGENDA_MS = 15000') && app.includes('atualizarAgendaAutomaticamente') && app.includes("window.addEventListener('focus'") && app.includes("document.addEventListener('visibilitychange'"));
+test('aulas canceladas não ocupam a agenda ativa', server.includes("if (!incluirCanceladas) condicoes.push(\"a.status <> 'CANCELADA'\")") && app.includes("String(a.status || '').toUpperCase() !== 'CANCELADA'"));
+test('conflito de horário ignora aulas canceladas', server.includes("a.status IN ('AGENDADA', 'CONFIRMADA')"));
 test('modo escuro presente', /dark/.test(app) && /dark/.test(html) && /dark/.test(css));
 test('backup CSV/Excel/JSON declarado', server.includes("formatos: ['csv','xlsx','json']") && server.includes("['csv','xlsx','json'].includes(formato)"));
 test('backup sem credenciais declarado', server.includes('credenciais_incluidas: false'));

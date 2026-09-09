@@ -1,23 +1,14 @@
-AUTOAGENDA V3.8.3 — CORREÇÃO DE ALTERAÇÃO DE AULAS
+AUTOAGENDA V3.8.4 — AULA CANCELADA LIBERA O HORÁRIO
 
-Esta versão corrige o erro genérico "Erro ao atualizar aula." que podia ocorrer ao editar uma aula existente, inclusive aulas pertencentes a plano automático.
+Esta versão ajusta a agenda ativa: uma aula CANCELADA continua preservada no histórico, mas deixa de aparecer na grade e não ocupa mais a célula do horário.
 
-CAUSA CORRIGIDA
-O PostgreSQL pode entregar um campo DATE ao Node.js como objeto Date. A função interna que comparava a data antiga com a nova aceitava apenas texto no formato AAAA-MM-DD. A conversão agora aceita os dois formatos com validação segura.
-
-ARQUIVOS ALTERADOS/ADICIONADOS
-- server.js
-- package.json
-- package-lock.json
-- public/index.html
-- public/app.js
-- scripts/test-static.js
-- README.md
-- CHECKLIST_V3.8.3.md
-- RELATORIO_V3.8.3.md
-- LEIA-ME-ATUALIZACAO.txt
+RESULTADO
+- aula cancelada: permanece no histórico;
+- agenda diária/semanal: não mostra a ocorrência cancelada;
+- célula semanal: volta a mostrar + Livre;
+- novo agendamento no mesmo horário: permitido, desde que não exista outra aula AGENDADA/CONFIRMADA em conflito.
 
 NÃO HÁ ARQUIVOS PARA REMOVER DO GITHUB.
 
 TESTE APÓS DEPLOY
-Abra uma aula existente, faça uma alteração e salve. Em aula de plano automático, teste também a opção de aplicar a mudança às próximas aulas em um registro de teste.
+Cancele uma aula futura de teste, abra a Agenda semanal e cadastre outra aula no mesmo horário. Depois confirme no Histórico do aluno que a aula cancelada continua registrada.

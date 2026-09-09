@@ -1,4 +1,4 @@
-# AutoAgenda V3.8.3
+# AutoAgenda V3.8.4
 
 Sistema de organização de aulas práticas para autoescola, com backend Node/Express, PostgreSQL e deploy no Render.
 
@@ -21,7 +21,11 @@ Sistema de organização de aulas práticas para autoescola, com backend Node/Ex
 - níveis de acesso Administrador e Instrutor.
 
 
+## V3.8.4 — Aula cancelada libera o horário na agenda
 
+Aulas com situação **CANCELADA** continuam preservadas no PostgreSQL e no **Histórico do aluno**, mas deixam de fazer parte da agenda ativa. Na agenda diária e semanal, a ocorrência cancelada não ocupa mais a célula; o horário volta a aparecer como **Livre** e pode receber uma nova aula.
+
+A validação de conflito já considerava somente aulas **AGENDADA** e **CONFIRMADA**. Esta versão alinha a interface e a API de agenda com essa regra, inclusive quando um plano automático é encerrado com cancelamento das aulas futuras. Relatórios e histórico continuam contabilizando os cancelamentos.
 
 ## V3.8.3 — Confirmação refletida automaticamente na agenda
 

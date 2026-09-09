@@ -778,7 +778,7 @@ async function carregarAulasSemana(silencioso = false) {
     // Mantém uma alternativa visual com os dados já carregados.
     aulasSemana = aulas.filter(a => {
       const d = dataISO(a.data_aula);
-      return d >= inicio && d <= fim;
+      return d >= inicio && d <= fim && String(a.status || '').toUpperCase() !== 'CANCELADA';
     });
     renderSemana();
   }
@@ -803,6 +803,7 @@ function renderSemana() {
       });
 
   const visiveis = origemSemana.filter(a =>
+    String(a.status || '').toUpperCase() !== 'CANCELADA' &&
     (!filtroInstrutor || Number(a.instrutor_id) === filtroInstrutor) &&
     (!filtroVeiculo || Number(a.veiculo_id) === filtroVeiculo)
   );
@@ -1406,7 +1407,7 @@ function render() {
   $('#hoje').innerHTML = ah.length ? ah.map(a => aulaHtml(a, false)).join('') : '<div class="empty">Nenhuma aula hoje.</div>';
 
   const f = $('#filtroData').value;
-  const fa = aulas.filter(a => dataISO(a.data_aula) === f);
+  const fa = aulas.filter(a => dataISO(a.data_aula) === f && String(a.status || '').toUpperCase() !== 'CANCELADA');
   $('#listaAgenda').innerHTML = fa.length ? fa.map(a => aulaHtml(a, true)).join('') : '<div class="empty">Nenhuma aula nesta data.</div>';
   $('#listaPlanos').innerHTML = planos.length ? planos.map(planoHtml).join('') : '<div class="empty"><b>Nenhum plano automático criado ainda.</b><br><br>Clique em <b>+ Criar plano automático</b> acima ou em <b>📅 Montar agenda</b> no cartão do aluno.</div>';
 
@@ -1485,7 +1486,7 @@ function renderAgendasAtualizadas() {
   if (hojeEl) hojeEl.innerHTML = listaHoje.length ? listaHoje.map(a => aulaHtml(a, false)).join('') : '<div class="empty">Nenhuma aula hoje.</div>';
 
   const dataSelecionada = $('#filtroData')?.value || hoje;
-  const listaData = aulas.filter(a => dataISO(a.data_aula) === dataSelecionada);
+  const listaData = aulas.filter(a => dataISO(a.data_aula) === dataSelecionada && String(a.status || '').toUpperCase() !== 'CANCELADA');
   const agendaEl = $('#listaAgenda');
   if (agendaEl) agendaEl.innerHTML = listaData.length ? listaData.map(a => aulaHtml(a, true)).join('') : '<div class="empty">Nenhuma aula nesta data.</div>';
 
@@ -1596,7 +1597,7 @@ async function health() {
   try {
     const h = await api('/api/health');
     const seguranca = h.security_ready ? ' · 🔐 login individual ativo' : ' · ⛔ login individual precisa ser inicializado';
-    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '3.8.3'}${seguranca}.`;
+    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '3.8.4'}${seguranca}.`;
     $('#db').className = h.security_ready ? 'db ok' : 'db fail';
   } catch {
     $('#db').textContent = '🔴 Banco não conectado. Verifique DATABASE_URL no Render.';
