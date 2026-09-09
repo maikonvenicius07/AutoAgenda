@@ -1,16 +1,13 @@
-AUTOAGENDA V3.8.5 — CORREÇÃO DE CANCELAMENTO/ATUALIZAÇÃO DE AULA
+AUTOAGENDA V3.8.6 — ATUALIZAÇÃO
 
-Esta versão reforça o salvamento de alterações de aula, especialmente quando o ADMIN muda somente a situação para CANCELADA em uma ocorrência de plano automático.
+Substitua/adicione no GitHub os arquivos e pastas deste pacote mantendo a mesma estrutura.
 
-RESULTADO
-- alteração somente de situação/confirmação usa rota específica;
-- cancelamento não regrava desnecessariamente toda a estrutura da aula;
-- aula cancelada permanece no histórico;
-- horário cancelado fica livre para novo agendamento;
-- datas DATE do PostgreSQL são normalizadas nas validações e alterações em série;
-- erro estrutural inesperado pode mostrar um código diagnóstico curto.
+Não é necessário excluir nenhum arquivo nesta versão.
 
-NÃO HÁ ARQUIVOS PARA REMOVER DO GITHUB.
+Correção principal:
+- cancelamento de aula usa caminho direto no backend;
+- mantém a aula no histórico;
+- libera o horário da agenda;
+- não depende de saldo, conflito ou disponibilidade para cancelar.
 
-TESTE APÓS DEPLOY
-Abra uma aula AGENDADA de um plano, altere somente Situação da aula para CANCELADA e salve. Confirme a mensagem de sucesso e verifique que o horário fica livre. Depois cadastre outra aula no mesmo horário.
+Após o deploy no Render, teste uma aula AGENDADA/CONFIRMADA alterando apenas a Situação para CANCELADA.

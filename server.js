@@ -8,7 +8,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '3.8.5';
+const APP_VERSION = '3.8.6';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -7832,8 +7832,9 @@ app.patch('/api/aulas/:id/status', async (req, res) => {
   const client=await pool.connect();
   try {
     const id=Number(req.params.id);
-    const { status }=req.body;
+    const status=String(req.body?.status || '').trim().toUpperCase();
     const permitidos=['AGENDADA','CONFIRMADA','REALIZADA','REMARCADA','CANCELADA','FALTOU'];
+    if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error:'Aula inválida.' });
     if (!permitidos.includes(status)) return res.status(400).json({ error:'Status inválido.' });
 
     await client.query('BEGIN');
@@ -7851,6 +7852,33 @@ app.patch('/api/aulas/:id/status', async (req, res) => {
       await client.query('ROLLBACK');
       return res.status(409).json({ error:'Aula arquivada não pode ter o status alterado.' });
     }
+
+    // V3.8.6 — cancelar é uma operação de liberação de agenda.
+    // Não deve depender de saldo, disponibilidade, conflito, funcionamento ou
+    // conversões de data. A aula permanece no histórico e apenas deixa de
+    // ocupar o horário ativo.
+    if (status === 'CANCELADA') {
+      const jaCancelada = String(aula.status || '').toUpperCase() === 'CANCELADA';
+      const result=await client.query(`
+        UPDATE autoagenda.aulas
+        SET status='CANCELADA',
+            confirmacao_token_hash=NULL,
+            confirmacao_token_expira_em=NULL,
+            confirmacao_token_usado_em=NULL,
+            excecao_plano=CASE WHEN plan_id IS NULL THEN excecao_plano ELSE TRUE END,
+            atualizado_em=NOW()
+        WHERE id=$1
+        RETURNING *
+      `,[id]);
+      await client.query('COMMIT');
+      res.json(aulaSemMetadadosToken(result.rows[0]));
+      if (!jaCancelada) {
+        dispararEmailAulaSeguro(id, 'CANCELAMENTO', String(result.rows[0].atualizado_em || Date.now()));
+        dispararWhatsAppAulaSeguro(id, 'CANCELAMENTO', String(result.rows[0].atualizado_em || Date.now()));
+      }
+      return;
+    }
+
     validarDataParaStatus(aula.data_aula,status);
     await bloquearChavesTransacao(client,chavesAgenda(aula));
 
@@ -7879,15 +7907,13 @@ app.patch('/api/aulas/:id/status', async (req, res) => {
       WHERE id=$2 RETURNING *
     `,[status,id]);
     await client.query('COMMIT');
-    if (status === 'CANCELADA' && String(aula.status || '').toUpperCase() !== 'CANCELADA') {
-      dispararEmailAulaSeguro(id, 'CANCELAMENTO', String(result.rows[0].atualizado_em || Date.now()));
-      dispararWhatsAppAulaSeguro(id, 'CANCELAMENTO', String(result.rows[0].atualizado_em || Date.now()));
-    }
     res.json(aulaSemMetadadosToken(result.rows[0]));
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
-    console.error(error);
-    res.status(error.statusCode || 500).json({ error:error.statusCode ? error.message : 'Erro ao atualizar status da aula.' });
+    console.error('Erro ao atualizar status da aula:', error);
+    const resposta={ error:error.statusCode ? error.message : 'Erro ao atualizar status da aula.' };
+    if (!error.statusCode && error.code) resposta.diagnostico=String(error.code).slice(0,20);
+    res.status(error.statusCode || 500).json(resposta);
   } finally { client.release(); }
 });
 
