@@ -1,4 +1,4 @@
-# Análise atual — AutoAgenda V3.8.1
+# Análise atual — AutoAgenda V3.8.2
 
 ## Situação
 
@@ -38,3 +38,7 @@ Mensagem automática de **Feliz Aniversário** usando a data de nascimento do al
 
 A versão atual acrescenta o acompanhamento de aptidão para prova com **Em avaliação**, **Apto para prova** e **Ainda não apto**, preservando todas as avaliações anteriores no histórico. O INSTRUTOR só registra avaliação de alunos vinculados às suas aulas; o ADMIN também pode avaliar.
 
+
+
+## Correção V3.8.2
+A confirmação pública do aluno agora é devolvida pela listagem principal de aulas e refletida automaticamente na Agenda diária e na Agenda de hoje.

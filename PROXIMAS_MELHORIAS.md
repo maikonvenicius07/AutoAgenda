@@ -2,7 +2,7 @@
 
 ## Situação atual
 
-Versão: **V3.8.1 — Exclusão de lançamento financeiro incorreto**
+Versão: **V3.8.2 — Atualização automática da confirmação na agenda**
 
 O AutoAgenda agora possui uma camada única de comunicação automática para agendamentos, lembretes, reagendamentos, cancelamentos e resumos de plano. WhatsApp e e-mail podem ser ativados juntos e as filas são processadas automaticamente enquanto o serviço estiver ativo.
 

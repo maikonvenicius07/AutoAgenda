@@ -1,4 +1,4 @@
-# AutoAgenda V3.8.1
+# AutoAgenda V3.8.2
 
 Sistema de organização de aulas práticas para autoescola, com backend Node/Express, PostgreSQL e deploy no Render.
 
@@ -21,6 +21,13 @@ Sistema de organização de aulas práticas para autoescola, com backend Node/Ex
 - níveis de acesso Administrador e Instrutor.
 
 
+
+
+## V3.8.2 — Confirmação refletida automaticamente na agenda
+
+A V3.8.2 corrige a exibição da confirmação feita pelo aluno por meio do link enviado no WhatsApp. A consulta principal de aulas passa a devolver `confirmacao_status`, `confirmacao_origem` e `confirmacao_atualizada_em`, permitindo que a Agenda e a Agenda de hoje mostrem o estado real gravado no PostgreSQL.
+
+Além disso, enquanto o usuário estiver logado, a Agenda é atualizada silenciosamente a cada **15 segundos** e também ao voltar para a janela do navegador. Assim, após o aluno confirmar, o selo muda automaticamente de **🕐 Aguardando confirmação** para **✅ Confirmada** em verde, sem depender de recarregar toda a página. O mesmo mecanismo também atualiza **🔄 Pediu reagendamento** quando essa for a resposta do aluno.
 
 ## V3.8.1 — Exclusão de lançamento financeiro incorreto
 

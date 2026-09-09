@@ -8,7 +8,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '3.8.1';
+const APP_VERSION = '3.8.2';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -7254,7 +7254,8 @@ app.get('/api/aulas', async (req, res) => {
              a.veiculo_id, v.nome AS veiculo_nome, v.placa AS veiculo_placa,
              a.local_id, l.nome AS local_nome, l.endereco AS local_endereco,
              a.data_aula, a.hora_inicio, a.duracao_minutos,
-             a.status, a.observacoes, a.criado_em,
+             a.status, a.confirmacao_status, a.confirmacao_origem, a.confirmacao_atualizada_em,
+             a.observacoes, a.criado_em,
              a.plan_id, a.numero_plano, a.aulas_unidades, a.excecao_plano,
              a.arquivada, a.arquivada_em, a.reposicao_de_id,
              origem.data_aula AS reposicao_data_original,

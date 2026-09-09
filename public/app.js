@@ -81,6 +81,9 @@ let confirmAction = null;
 let ultimoPreviewPlano = null;
 let aulaEdicaoAtual = null;
 let historicoWhatsAppPorAula = new Map();
+let atualizacaoAgendaEmAndamento = false;
+let timerAtualizacaoAgenda = null;
+const INTERVALO_ATUALIZACAO_AGENDA_MS = 15000;
 
 const usuarioAdmin = () => usuarioAtual?.perfil === 'ADMIN';
 const usuarioInstrutor = () => usuarioAtual?.perfil === 'INSTRUTOR';
@@ -300,6 +303,7 @@ function liberarApp(usuario) {
     $$('.tab').forEach(x => x.classList.toggle('active', x.dataset.tab === 'painel'));
     $$('.panel').forEach(p => p.classList.toggle('active', p.id === 'painel'));
   }
+  iniciarAtualizacaoAutomaticaAgenda();
 }
 
 async function api(u, o = {}) {
@@ -385,6 +389,7 @@ async function sairSessao() {
     await api('/api/auth/logout', { method:'POST', body:'{}' });
   } catch (_) {}
   usuarioAtual = null;
+  pararAtualizacaoAutomaticaAgenda();
   usuariosData = [];
   usuariosCarregados = false;
   $$('.tab').forEach(x => x.classList.toggle('active', x.dataset.tab === 'painel'));
@@ -1473,6 +1478,58 @@ function bindDynamic() {
   ));
 }
 
+function renderAgendasAtualizadas() {
+  const hoje = iso();
+  const listaHoje = aulasHoje.filter(a => dataISO(a.data_aula) === hoje && a.status !== 'CANCELADA');
+  const hojeEl = $('#hoje');
+  if (hojeEl) hojeEl.innerHTML = listaHoje.length ? listaHoje.map(a => aulaHtml(a, false)).join('') : '<div class="empty">Nenhuma aula hoje.</div>';
+
+  const dataSelecionada = $('#filtroData')?.value || hoje;
+  const listaData = aulas.filter(a => dataISO(a.data_aula) === dataSelecionada);
+  const agendaEl = $('#listaAgenda');
+  if (agendaEl) agendaEl.innerHTML = listaData.length ? listaData.map(a => aulaHtml(a, true)).join('') : '<div class="empty">Nenhuma aula nesta data.</div>';
+
+  bindDynamic();
+}
+
+async function atualizarAgendaAutomaticamente() {
+  if (!usuarioAtual || document.hidden || atualizacaoAgendaEmAndamento) return;
+  atualizacaoAgendaEmAndamento = true;
+  try {
+    const hoje = iso();
+    const dataSelecionada = $('#filtroData')?.value || hoje;
+    const endpoint = data => `/api/aulas?data_inicio=${encodeURIComponent(data)}&data_fim=${encodeURIComponent(data)}`;
+
+    if (dataSelecionada === hoje) {
+      const lista = await api(endpoint(hoje));
+      aulas = lista;
+      aulasHoje = lista.map(x => ({ ...x }));
+    } else {
+      [aulas, aulasHoje] = await Promise.all([api(endpoint(dataSelecionada)), api(endpoint(hoje))]);
+    }
+
+    renderAgendasAtualizadas();
+
+    if ($('#semana')?.classList.contains('active')) {
+      await carregarAulasSemana(true);
+    }
+  } catch (e) {
+    if (e?.status !== 401) console.warn('Atualização automática da agenda indisponível:', e);
+  } finally {
+    atualizacaoAgendaEmAndamento = false;
+  }
+}
+
+function iniciarAtualizacaoAutomaticaAgenda() {
+  if (timerAtualizacaoAgenda) clearInterval(timerAtualizacaoAgenda);
+  timerAtualizacaoAgenda = setInterval(atualizarAgendaAutomaticamente, INTERVALO_ATUALIZACAO_AGENDA_MS);
+}
+
+function pararAtualizacaoAutomaticaAgenda() {
+  if (timerAtualizacaoAgenda) clearInterval(timerAtualizacaoAgenda);
+  timerAtualizacaoAgenda = null;
+}
+
 async function load() {
   try {
     const dataSelecionada = $('#filtroData').value || iso();
@@ -1539,7 +1596,7 @@ async function health() {
   try {
     const h = await api('/api/health');
     const seguranca = h.security_ready ? ' · 🔐 login individual ativo' : ' · ⛔ login individual precisa ser inicializado';
-    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '3.8.1'}${seguranca}.`;
+    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '3.8.2'}${seguranca}.`;
     $('#db').className = h.security_ready ? 'db ok' : 'db fail';
   } catch {
     $('#db').textContent = '🔴 Banco não conectado. Verifique DATABASE_URL no Render.';
@@ -3458,5 +3515,12 @@ $('#semanaProxima').onclick = () => {
 const botaoTema = $('#alternarTema');
 if (botaoTema) botaoTema.onclick = alternarTema;
 atualizarBotaoTema();
+
+// A confirmação pode acontecer em outro celular enquanto esta tela permanece aberta.
+// Ao voltar para a janela, atualizamos imediatamente; o timer faz o mesmo a cada 15 s.
+window.addEventListener('focus', () => atualizarAgendaAutomaticamente());
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) atualizarAgendaAutomaticamente();
+});
 
 iniciarAutenticacao();

@@ -1,14 +1,20 @@
-AutoAgenda V3.8.1 — Exclusão de lançamento financeiro incorreto
+AutoAgenda V3.8.2 — Correção da confirmação na agenda
 
 ATUALIZAÇÃO
-- Adiciona botão 🗑️ Excluir no módulo Financeiro.
-- Exclusão definitiva somente após confirmação.
-- Restrita ao ADMIN pela barreira de permissões existente.
-- Não altera aulas, planos ou saldo de aulas.
-- Arquivar/Reativar continuam disponíveis.
+- A confirmação feita pelo aluno agora aparece corretamente na Agenda e na Agenda de hoje.
+- O selo muda para ✅ Confirmada em verde.
+- A tela atualiza silenciosamente a cada 15 segundos.
+- Ao voltar para a janela do AutoAgenda, a atualização é imediata.
+- Pedido de reagendamento também é refletido automaticamente.
 
-Arquivos desta versão:
-- CHECKLIST_V3.8.1.md
-- RELATORIO_V3.8.1.md
+Arquivos principais alterados:
+- server.js
+- public/app.js
+- public/index.html
+- package.json
+- package-lock.json
+- scripts/test-static.js
+- sql/schema.sql (somente identificação da versão)
+- README.md e documentação V3.8.2
 
 Não há arquivos para remover do GitHub nesta versão.
