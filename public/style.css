@@ -380,3 +380,28 @@ html[data-theme="dark"] .backup-restore-card{border-color:#6b5c31}html[data-them
 .backup-auto-card{margin-top:12px;border:1px solid #cfd9e7}.backup-auto-status{margin:10px 0 12px}.backup-auto-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.backup-auto-grid>div{padding:10px;border:1px solid #e1e5eb;border-radius:9px;background:#f8fafc;min-width:0}.backup-auto-grid small{display:block;color:#697386}.backup-auto-grid b{display:block;margin:3px 0;overflow-wrap:anywhere}.backup-auto-grid span{display:block;font-size:11px;color:#6b7280}.backup-auto-ok{color:#18733b}.backup-auto-erro{color:#a52424}.backup-auto-andamento{color:#8a6500}.backup-auto-empty{padding:11px 12px;border:1px dashed #c9d2df;border-radius:9px;background:#fafbfd;color:#596273}.backup-auto-error{margin-top:8px;padding:9px 10px;border:1px solid #e7b4b4;border-radius:8px;background:#fff1f1;color:#7a2424;font-size:12px;overflow-wrap:anywhere}.backup-auto-card code{font-size:11px}
 @media(max-width:900px){.backup-auto-grid{grid-template-columns:1fr 1fr}}@media(max-width:520px){.backup-auto-grid{grid-template-columns:1fr}}
 html[data-theme="dark"] .backup-auto-card{border-color:#465363}html[data-theme="dark"] .backup-auto-grid>div{background:#252a31;border-color:#454d58}html[data-theme="dark"] .backup-auto-empty{background:#23272d;border-color:#505864;color:#c7ccd3}html[data-theme="dark"] .backup-auto-error{background:#3a2020;border-color:#6e3d3d;color:#ffd2d2}html[data-theme="dark"] .backup-auto-grid small,html[data-theme="dark"] .backup-auto-grid span{color:#b9c0c8}
+
+
+/* ========================= V3.8 — AVALIAÇÃO PARA PROVA ========================= */
+.student-status-stack{display:grid;gap:6px;justify-items:end;align-content:start}
+.evaluation-badge{display:inline-flex;align-items:center;width:max-content;max-width:100%;padding:5px 9px;border-radius:999px;border:1px solid transparent;font-size:10px;font-weight:900;line-height:1.2}
+.evaluation-badge.apto{background:#def3e5;color:#145c31;border-color:#a8d7b7}
+.evaluation-badge.nao_apto{background:#fde2df;color:#941f16;border-color:#e8b6b1}
+.evaluation-badge.em_avaliacao{background:#fff4cc;color:#6b5200;border-color:#ead575}
+.evaluation-badge.nao_avaliado{background:#eef2f5;color:#596273;border-color:#d6dce2}
+.evaluation-button{background:#4b3b78!important;color:#fff!important}
+.evaluation-box{width:min(580px,100%)}
+.evaluation-student{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:10px 0 14px;padding:12px;border:1px solid #e2e2dd;border-left:5px solid var(--yellow);border-radius:10px;background:#fafafa}
+.evaluation-student>div{display:grid;gap:2px}.evaluation-student span{font-size:11px}.evaluation-student strong{font-size:17px}
+.evaluation-note{padding:10px 12px;border:1px solid #d7dfeb;border-left:4px solid #5573a6;border-radius:9px;background:#f5f8fc;color:#536174;font-size:12px;line-height:1.45}
+.evaluation-history{display:grid;gap:9px}.evaluation-history-item{padding:11px 12px;border:1px solid #e2e2dd;border-left:5px solid #c5cbd3;border-radius:10px;background:#fafafa;display:grid;gap:4px}.evaluation-history-item.apto{border-left-color:#2f9656}.evaluation-history-item.nao_apto{border-left-color:#c0392b}.evaluation-history-item.em_avaliacao{border-left-color:#d19a08}.evaluation-history-head{display:flex;justify-content:space-between;align-items:center;gap:10px}.evaluation-history-head small,.evaluation-history-item>small{color:#737373}
+@media(max-width:560px){.student-status-stack{justify-items:start}.student-top{align-items:flex-start}.evaluation-student,.evaluation-history-head{align-items:flex-start;flex-direction:column}}
+html[data-theme="dark"] .evaluation-badge.apto{background:#173222;color:#8fe0aa;border-color:#315c40}
+html[data-theme="dark"] .evaluation-badge.nao_apto{background:#4b2320;color:#ffb8b2;border-color:#75423e}
+html[data-theme="dark"] .evaluation-badge.em_avaliacao{background:#4a3d12;color:#ffe68b;border-color:#74631f}
+html[data-theme="dark"] .evaluation-badge.nao_avaliado{background:#303030;color:#ddd;border-color:#494949}
+html[data-theme="dark"] .evaluation-student,html[data-theme="dark"] .evaluation-history-item{background:#202020;border-color:#444}
+html[data-theme="dark"] .evaluation-student{border-left-color:var(--yellow)}
+html[data-theme="dark"] .evaluation-history-item.apto{border-left-color:#4ca56a}html[data-theme="dark"] .evaluation-history-item.nao_apto{border-left-color:#db6258}html[data-theme="dark"] .evaluation-history-item.em_avaliacao{border-left-color:#d7ad32}
+html[data-theme="dark"] .evaluation-note{background:#202936;border-color:#3a506c;color:#cfdef2}
+html[data-theme="dark"] .evaluation-history-head small,html[data-theme="dark"] .evaluation-history-item>small{color:#bbb}

@@ -8,7 +8,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '3.7.0';
+const APP_VERSION = '3.8.0';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -863,6 +863,23 @@ async function initDatabase() {
       )
     `);
 
+    // V3.8 — avaliação do aluno para encaminhamento à prova.
+    // Cada nova avaliação vira um registro histórico; a avaliação mais recente representa o status atual.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS autoagenda.avaliacoes_aluno (
+        id SERIAL PRIMARY KEY,
+        aluno_id INTEGER NOT NULL REFERENCES autoagenda.alunos(id) ON DELETE CASCADE,
+        instrutor_id INTEGER REFERENCES autoagenda.instrutores(id) ON DELETE SET NULL,
+        avaliador_nome VARCHAR(150) NOT NULL,
+        avaliador_perfil VARCHAR(20) NOT NULL CHECK (avaliador_perfil IN ('ADMIN','INSTRUTOR')),
+        resultado VARCHAR(20) NOT NULL CHECK (resultado IN ('EM_AVALIACAO','APTO','NAO_APTO')),
+        observacoes TEXT,
+        criado_em TIMESTAMP NOT NULL DEFAULT NOW()
+      )
+    `);
+    await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_avaliacoes_aluno_data ON autoagenda.avaliacoes_aluno(aluno_id, criado_em DESC, id DESC)');
+    await client.query('CREATE INDEX IF NOT EXISTS idx_autoagenda_avaliacoes_instrutor ON autoagenda.avaliacoes_aluno(instrutor_id, criado_em DESC)');
+
     await client.query(`
       CREATE TABLE IF NOT EXISTS autoagenda.veiculos (
         id SERIAL PRIMARY KEY,
@@ -1404,7 +1421,8 @@ function rotaPermitidaAoInstrutor(req) {
   }
 
   if (metodo === 'POST') {
-    return /^\/api\/aulas\/\d+\/reposicao$/.test(caminho);
+    return /^\/api\/aulas\/\d+\/reposicao$/.test(caminho)
+      || /^\/api\/alunos\/\d+\/avaliacoes$/.test(caminho);
   }
 
   return false;
@@ -3456,6 +3474,9 @@ app.get('/api/alunos', async (req, res) => {
              a.aulas_contratadas, a.aulas_realizadas,
              a.aulas_realizadas_anteriores,
              a.ativo, a.criado_em,
+             (SELECT av.resultado FROM autoagenda.avaliacoes_aluno av WHERE av.aluno_id=a.id ORDER BY av.criado_em DESC, av.id DESC LIMIT 1) AS avaliacao_resultado,
+             (SELECT av.avaliador_nome FROM autoagenda.avaliacoes_aluno av WHERE av.aluno_id=a.id ORDER BY av.criado_em DESC, av.id DESC LIMIT 1) AS avaliacao_avaliador_nome,
+             (SELECT av.criado_em FROM autoagenda.avaliacoes_aluno av WHERE av.aluno_id=a.id ORDER BY av.criado_em DESC, av.id DESC LIMIT 1) AS avaliacao_criado_em,
              CASE WHEN LENGTH(COALESCE(a.cpf,'')) = 11
                   THEN '***.***.***-' || RIGHT(a.cpf, 2)
                   ELSE NULL END AS cpf_mascarado,
@@ -3507,7 +3528,10 @@ app.get('/api/alunos/:id', async (req, res) => {
                   ELSE NULL END AS cpf_mascarado,
              a.whatsapp, a.email, TO_CHAR(a.data_nascimento, 'YYYY-MM-DD') AS data_nascimento, a.categoria,
              a.aulas_contratadas, a.aulas_realizadas, a.aulas_realizadas_anteriores,
-             a.observacoes, a.ativo, a.criado_em, a.atualizado_em
+             a.observacoes, a.ativo, a.criado_em, a.atualizado_em,
+             (SELECT av.resultado FROM autoagenda.avaliacoes_aluno av WHERE av.aluno_id=a.id ORDER BY av.criado_em DESC, av.id DESC LIMIT 1) AS avaliacao_resultado,
+             (SELECT av.avaliador_nome FROM autoagenda.avaliacoes_aluno av WHERE av.aluno_id=a.id ORDER BY av.criado_em DESC, av.id DESC LIMIT 1) AS avaliacao_avaliador_nome,
+             (SELECT av.criado_em FROM autoagenda.avaliacoes_aluno av WHERE av.aluno_id=a.id ORDER BY av.criado_em DESC, av.id DESC LIMIT 1) AS avaliacao_criado_em
       FROM autoagenda.alunos a
       WHERE a.id = $1
         AND ($2::int = 0 OR EXISTS (
@@ -3549,7 +3573,7 @@ app.get('/api/alunos/:id/historico', async (req, res) => {
     if (!alunoQ.rowCount) return res.status(404).json({ error: 'Aluno não encontrado.' });
 
     const hoje = hojeApp();
-    const [metricasQ, aulasQ, planosQ] = await Promise.all([
+    const [metricasQ, aulasQ, planosQ, avaliacoesQ] = await Promise.all([
       query(`
         SELECT
           COALESCE(SUM(CASE
@@ -3611,6 +3635,15 @@ app.get('/api/alunos/:id/historico', async (req, res) => {
           AND ($2::int = 0 OR p.instrutor_id=$2)
         ORDER BY p.criado_em DESC, p.id DESC
       `, [id, instrutorEscopo])
+,
+      query(`
+        SELECT av.id, av.resultado, av.observacoes, av.avaliador_nome, av.avaliador_perfil,
+               av.instrutor_id, i.nome AS instrutor_nome, av.criado_em
+        FROM autoagenda.avaliacoes_aluno av
+        LEFT JOIN autoagenda.instrutores i ON i.id=av.instrutor_id
+        WHERE av.aluno_id=$1
+        ORDER BY av.criado_em DESC, av.id DESC
+      `, [id])
     ]);
 
     const aluno = alunoQ.rows[0];
@@ -3646,10 +3679,69 @@ app.get('/api/alunos/:id/historico', async (req, res) => {
       ultima_realizada: m.ultima_realizada || null
     };
 
-    res.json({ aluno, resumo, planos: planosQ.rows, aulas: aulasQ.rows });
+    res.json({ aluno, resumo, planos: planosQ.rows, aulas: aulasQ.rows, avaliacoes: avaliacoesQ.rows });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao consultar histórico do aluno.' });
+  }
+});
+
+
+// ========================= V3.8 — AVALIAÇÃO DO ALUNO PARA PROVA =========================
+const RESULTADOS_AVALIACAO_ALUNO = ['EM_AVALIACAO','APTO','NAO_APTO'];
+
+app.post('/api/alunos/:id/avaliacoes', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const alunoId = Number(req.params.id);
+    const instrutorEscopo = instrutorIdDaSessao(req);
+    const resultado = String(req.body?.resultado || '').trim().toUpperCase();
+    const observacoes = String(req.body?.observacoes || '').trim().slice(0, 2000);
+
+    if (!Number.isInteger(alunoId) || alunoId < 1) return res.status(400).json({ error: 'Aluno inválido.' });
+    if (!RESULTADOS_AVALIACAO_ALUNO.includes(resultado)) {
+      return res.status(400).json({ error: 'Resultado da avaliação inválido.' });
+    }
+    if (resultado === 'NAO_APTO' && observacoes.length < 3) {
+      return res.status(400).json({ error: 'Ao marcar “Ainda não apto”, informe nas observações o que o aluno precisa melhorar.' });
+    }
+
+    await client.query('BEGIN');
+    const alunoQ = await client.query(`
+      SELECT a.id, a.nome, a.ativo
+      FROM autoagenda.alunos a
+      WHERE a.id=$1
+        AND a.ativo=TRUE
+        AND ($2::int = 0 OR EXISTS (
+          SELECT 1 FROM autoagenda.aulas rel
+          WHERE rel.aluno_id=a.id AND rel.instrutor_id=$2
+        ))
+      FOR UPDATE
+    `, [alunoId, instrutorEscopo]);
+    if (!alunoQ.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Aluno não encontrado, inativo ou fora do vínculo deste instrutor.' });
+    }
+
+    const avaliadorNome = String(req.usuario?.nome || (usuarioEhAdmin(req) ? 'Administrador' : 'Instrutor')).trim().slice(0,150) || 'Usuário';
+    const avaliadorPerfil = usuarioEhAdmin(req) ? 'ADMIN' : 'INSTRUTOR';
+    const instrutorId = avaliadorPerfil === 'INSTRUTOR' ? instrutorEscopo : null;
+
+    const r = await client.query(`
+      INSERT INTO autoagenda.avaliacoes_aluno
+        (aluno_id, instrutor_id, avaliador_nome, avaliador_perfil, resultado, observacoes)
+      VALUES ($1,$2,$3,$4,$5,$6)
+      RETURNING id, aluno_id, instrutor_id, avaliador_nome, avaliador_perfil, resultado, observacoes, criado_em
+    `, [alunoId, instrutorId, avaliadorNome, avaliadorPerfil, resultado, observacoes || null]);
+
+    await client.query('COMMIT');
+    res.status(201).json({ ok:true, avaliacao:r.rows[0], aluno_nome:alunoQ.rows[0].nome });
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch {}
+    console.error('Erro ao registrar avaliação do aluno:', error);
+    res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Erro ao registrar avaliação do aluno.' });
+  } finally {
+    client.release();
   }
 });
 
@@ -5763,6 +5855,7 @@ const EXPORTACOES = {
 const EXPORTACOES_SUPORTE = {
   instrutor_indisponibilidades: { tabela: 'instrutor_indisponibilidades', nome: 'Indisponibilidades de instrutores', aba: 'Indisp_Instrutores' },
   veiculo_indisponibilidades: { tabela: 'veiculo_indisponibilidades', nome: 'Indisponibilidades de veículos', aba: 'Indisp_Veiculos' },
+  avaliacoes_aluno: { tabela: 'avaliacoes_aluno', nome: 'Avaliações dos alunos', aba: 'Avaliacoes' },
   lembrete_envios: { tabela: 'lembrete_envios', nome: 'Histórico de lembretes', aba: 'Lembretes' },
   whatsapp_envios: { tabela: 'whatsapp_envios', nome: 'Histórico WhatsApp automático', aba: 'WhatsApp' },
   email_envios: { tabela: 'email_envios', nome: 'Histórico de e-mails', aba: 'Emails' }
@@ -6337,6 +6430,10 @@ function validarReferenciasBackup(dados) {
   for (const r of dados.financeiro || []) {
     validarReferencia(r.aluno_id, ids.alunos, 'Financeiro referencia aluno inexistente no backup: {id}.');
   }
+  for (const r of dados.avaliacoes_aluno || []) {
+    validarReferencia(r.aluno_id, ids.alunos, 'Avaliação referencia aluno inexistente no backup: {id}.');
+    validarReferencia(r.instrutor_id, ids.instrutores, 'Avaliação referencia instrutor inexistente no backup: {id}.');
+  }
   for (const r of dados.lembrete_envios || []) {
     validarReferencia(r.aula_id, ids.aulas, 'Lembrete referencia aula inexistente no backup: {id}.');
   }
@@ -6491,7 +6588,7 @@ async function executarRestauracaoBackup(client, payload, validacao) {
   // durante a janela curta de substituição dos dados. Leituras/escritas aguardam o fim da transação.
   await client.query(`
     LOCK TABLE
-      autoagenda.email_envios, autoagenda.whatsapp_envios, autoagenda.lembrete_envios, autoagenda.financeiro,
+      autoagenda.email_envios, autoagenda.whatsapp_envios, autoagenda.lembrete_envios, autoagenda.avaliacoes_aluno, autoagenda.financeiro,
       autoagenda.aulas, autoagenda.planos_aula, autoagenda.instrutor_indisponibilidades,
       autoagenda.veiculo_indisponibilidades, autoagenda.configuracoes, autoagenda.alunos,
       autoagenda.locais, autoagenda.veiculos, autoagenda.instrutores
@@ -6518,7 +6615,7 @@ async function executarRestauracaoBackup(client, payload, validacao) {
   await client.query(`UPDATE autoagenda.aulas SET reposicao_de_id=NULL WHERE reposicao_de_id IS NOT NULL`);
 
   const ordemExclusao = [
-    'email_envios','whatsapp_envios','lembrete_envios','financeiro','aulas','planos',
+    'email_envios','whatsapp_envios','lembrete_envios','avaliacoes_aluno','financeiro','aulas','planos',
     'instrutor_indisponibilidades','veiculo_indisponibilidades','configuracoes',
     'alunos','locais','veiculos','instrutores'
   ];
@@ -6539,6 +6636,7 @@ async function executarRestauracaoBackup(client, payload, validacao) {
   await inserirLoteRestauracao(client, 'locais', dados.locais, colunas('locais'));
   await inserirLoteRestauracao(client, 'configuracoes', dados.configuracoes, colunas('configuracoes'));
 
+  await inserirLoteRestauracao(client, 'avaliacoes_aluno', dados.avaliacoes_aluno, colunas('avaliacoes_aluno'));
   await inserirLoteRestauracao(client, 'instrutor_indisponibilidades', dados.instrutor_indisponibilidades, colunas('instrutor_indisponibilidades'));
   await inserirLoteRestauracao(client, 'veiculo_indisponibilidades', dados.veiculo_indisponibilidades, colunas('veiculo_indisponibilidades'));
   await inserirLoteRestauracao(client, 'planos', dados.planos, colunas('planos'));

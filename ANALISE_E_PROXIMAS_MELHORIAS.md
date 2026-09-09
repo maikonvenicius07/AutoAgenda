@@ -1,4 +1,4 @@
-# Análise atual — AutoAgenda V3.7.0
+# Análise atual — AutoAgenda V3.8.0
 
 ## Situação
 
@@ -33,3 +33,8 @@ A automação pode ser ligada no AutoAgenda, porém os provedores externos preci
 ## Próxima melhoria registrada
 
 Mensagem automática de **Feliz Aniversário** usando a data de nascimento do aluno, com controle para enviar somente uma vez por ano.
+
+## V3.8.0 — Avaliação do aluno para prova
+
+A versão atual acrescenta o acompanhamento de aptidão para prova com **Em avaliação**, **Apto para prova** e **Ainda não apto**, preservando todas as avaliações anteriores no histórico. O INSTRUTOR só registra avaliação de alunos vinculados às suas aulas; o ADMIN também pode avaliar.
+

@@ -1,20 +1,16 @@
-AUTOAGENDA V3.7.0 — AUTOMAÇÃO TOTAL DE WHATSAPP + E-MAIL
+AutoAgenda V3.8.0 — Avaliação do aluno para prova
 
-Objetivo:
-- automatizar agendamento, lembretes, reagendamento, cancelamento e resumo de plano;
-- manter WhatsApp manual como alternativa;
-- permitir ligar WhatsApp e e-mail juntos;
-- manter filas aguardando enquanto as integrações externas não estiverem configuradas.
+Arquivos alterados/adicionados nesta atualização:
+- server.js
+- public/index.html
+- public/app.js
+- public/style.css
+- sql/schema.sql
+- scripts/test-static.js
+- package.json
+- package-lock.json
+- README.md
+- CHECKLIST_V3.8.0.md
+- RELATORIO_V3.8.0.md
 
-Depois do deploy:
-1. abra Configurações;
-2. clique em “Ativar WhatsApp + e-mail”;
-3. configure as variáveis externas conforme CONFIGURAR_AUTOMACAO_V3.7.0.md;
-4. faça testes com um aluno de teste antes de usar com alunos reais.
-
-Arquivos de apoio:
-- CHECKLIST_V3.7.0.md
-- RELATORIO_V3.7.0.md
-- CONFIGURAR_AUTOMACAO_V3.7.0.md
-
-Nenhum arquivo precisa ser removido do GitHub nesta versão.
+Não há arquivos para remover do GitHub nesta versão.

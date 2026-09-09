@@ -462,6 +462,23 @@ function realizadasAluno(a) {
   return Math.max(0, anteriores) + Math.max(0, sistema);
 }
 
+function avaliacaoProvaLabel(resultado) {
+  return ({
+    APTO: '✅ Apto para prova',
+    NAO_APTO: '⚠️ Ainda não apto',
+    EM_AVALIACAO: '🔄 Em avaliação'
+  })[String(resultado || '').toUpperCase()] || '○ Não avaliado';
+}
+
+function avaliacaoProvaClasse(resultado) {
+  const r = String(resultado || '').toUpperCase();
+  return r === 'APTO' ? 'apto' : (r === 'NAO_APTO' ? 'nao_apto' : (r === 'EM_AVALIACAO' ? 'em_avaliacao' : 'nao_avaliado'));
+}
+
+function avaliacaoProvaBadge(resultado) {
+  return `<span class="evaluation-badge ${avaliacaoProvaClasse(resultado)}">${esc(avaliacaoProvaLabel(resultado))}</span>`;
+}
+
 function studentHtml(a) {
   const contratadas = Number(a.aulas_contratadas || 0);
   const realizadas = realizadasAluno(a);
@@ -484,7 +501,10 @@ function studentHtml(a) {
         <p>🎂 ${a.data_nascimento ? esc(fmtData(a.data_nascimento)) : 'Data de nascimento não informada'}</p>
         <p>🚘 Categoria ${esc(a.categoria)}</p>
       </div>
-      <span class="remaining-badge">${ativo ? `${restantes} restantes` : 'Inativo'}</span>
+      <div class="student-status-stack">
+        <span class="remaining-badge">${ativo ? `${restantes} restantes` : 'Inativo'}</span>
+        ${avaliacaoProvaBadge(a.avaliacao_resultado)}
+      </div>
     </div>
 
     <div class="student-numbers">
@@ -498,9 +518,11 @@ function studentHtml(a) {
 
     <div class="actions-row">
       ${usuarioInstrutor()
-        ? `<button type="button" class="mini history-button" data-history-aluno="${a.id}">📚 Histórico</button>`
+        ? `<button type="button" class="mini history-button" data-history-aluno="${a.id}">📚 Histórico</button>
+           ${ativo ? `<button type="button" class="mini evaluation-button" data-evaluate-aluno="${a.id}">🎯 Avaliar</button>` : ''}`
         : (ativo ? `
           <button type="button" class="mini history-button" data-history-aluno="${a.id}">📚 Histórico</button>
+          <button type="button" class="mini evaluation-button" data-evaluate-aluno="${a.id}">🎯 Avaliar</button>
           <button type="button" class="mini secondary" data-find-slot-aluno="${a.id}">🔎 Horário livre</button>
           <button type="button" class="mini plan" data-plan-aluno="${a.id}">📅 Montar agenda</button>
           <button type="button" class="mini finance-button" data-finance-aluno="${a.id}">💰 Financeiro</button>
@@ -1403,6 +1425,7 @@ function preencherSelects() {
 function bindDynamic() {
   $$('[data-edit-aluno]').forEach(b => b.onclick = () => editarAluno(Number(b.dataset.editAluno)));
   $$('[data-history-aluno]').forEach(b => b.onclick = () => abrirHistoricoAluno(Number(b.dataset.historyAluno)));
+  $$('[data-evaluate-aluno]').forEach(b => b.onclick = () => abrirAvaliacaoAluno(Number(b.dataset.evaluateAluno)));
   $$('[data-del-aluno]').forEach(b => b.onclick = () => pedirExcluirAluno(Number(b.dataset.delAluno)));
   $$('[data-reactivate-aluno]').forEach(b => b.onclick = () => reativarAluno(Number(b.dataset.reactivateAluno)));
   $$('[data-plan-aluno]').forEach(b => b.onclick = () => abrirPlano(Number(b.dataset.planAluno)));
@@ -1493,7 +1516,7 @@ async function health() {
   try {
     const h = await api('/api/health');
     const seguranca = h.security_ready ? ' · 🔐 login individual ativo' : ' · ⛔ login individual precisa ser inicializado';
-    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '3.7.0'}${seguranca}.`;
+    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '3.8.0'}${seguranca}.`;
     $('#db').className = h.security_ready ? 'db ok' : 'db fail';
   } catch {
     $('#db').textContent = '🔴 Banco não conectado. Verifique DATABASE_URL no Render.';
@@ -1616,6 +1639,41 @@ $('#fAluno').onsubmit = async e => {
 
 
 
+// ========================= V3.8 — AVALIAÇÃO DO ALUNO PARA PROVA =========================
+function abrirAvaliacaoAluno(id) {
+  const a = [...alunos, ...alunosTodos].find(x => Number(x.id) === Number(id));
+  if (!a) return toast('Aluno não encontrado na lista atual.');
+  $('#fAvaliacaoAluno').reset();
+  $('#avaliacaoAlunoId').value = String(a.id);
+  $('#avaliacaoAlunoNome').textContent = a.nome || 'Aluno';
+  $('#avaliacaoResultado').value = a.avaliacao_resultado || 'EM_AVALIACAO';
+  const badge = $('#avaliacaoAtualBadge');
+  badge.textContent = avaliacaoProvaLabel(a.avaliacao_resultado);
+  badge.className = `evaluation-badge ${avaliacaoProvaClasse(a.avaliacao_resultado)}`;
+  $('#erroAvaliacaoAluno').classList.add('hide');
+  open('mAvaliacaoAluno');
+}
+
+$('#fAvaliacaoAluno').onsubmit = async e => {
+  e.preventDefault();
+  const alunoId = Number($('#avaliacaoAlunoId').value || 0);
+  const resultado = $('#avaliacaoResultado').value;
+  const observacoes = $('#avaliacaoObservacoes').value.trim();
+  $('#erroAvaliacaoAluno').classList.add('hide');
+  try {
+    await api(`/api/alunos/${alunoId}/avaliacoes`, {
+      method:'POST',
+      body:JSON.stringify({ resultado, observacoes })
+    });
+    close('mAvaliacaoAluno');
+    toast(`✅ Avaliação registrada: ${avaliacaoProvaLabel(resultado).replace(/^[^ ]+ /,'')}.`);
+    await load();
+  } catch (e2) {
+    $('#erroAvaliacaoAluno').textContent = e2.message || 'Erro ao registrar avaliação.';
+    $('#erroAvaliacaoAluno').classList.remove('hide');
+  }
+};
+
 // ========================= V2.2 — HISTÓRICO COMPLETO DO ALUNO =========================
 function historicoMetricHtml(rotulo, valor, detalhe = '') {
   return `<div class="history-metric"><span>${esc(rotulo)}</span><b>${esc(valor)}</b>${detalhe ? `<small>${esc(detalhe)}</small>` : ''}</div>`;
@@ -1668,11 +1726,27 @@ function historicoAulaHtml(a) {
   </div>`;
 }
 
+function historicoAvaliacaoHtml(av) {
+  const perfil = String(av.avaliador_perfil || '').toUpperCase() === 'ADMIN' ? 'Administrador' : 'Instrutor';
+  const quando = av.criado_em ? new Date(av.criado_em).toLocaleString('pt-BR') : 'Data não informada';
+  return `<div class="evaluation-history-item ${avaliacaoProvaClasse(av.resultado)}">
+    <div class="evaluation-history-head">
+      ${avaliacaoProvaBadge(av.resultado)}
+      <small>${esc(quando)}</small>
+    </div>
+    <b>${esc(av.avaliador_nome || av.instrutor_nome || perfil)}</b>
+    <small>${esc(perfil)}</small>
+    ${av.observacoes ? `<div class="history-note">📝 ${esc(av.observacoes).replace(/\n/g,'<br>')}</div>` : '<small>Sem observações.</small>'}
+  </div>`;
+}
+
 async function abrirHistoricoAluno(id) {
   $('#historicoTitulo').textContent = '📚 Histórico do aluno';
   $('#historicoSubtitulo').textContent = 'Carregando informações...';
   $('#historicoSituacao').textContent = '—';
   $('#historicoResumo').innerHTML = '<div class="empty small-empty">Carregando resumo...</div>';
+  $('#historicoAvaliacoes').innerHTML = '<div class="empty small-empty">Carregando avaliações...</div>';
+  $('#historicoAvaliacoesQtd').textContent = '0';
   $('#historicoPlanos').innerHTML = '<div class="empty small-empty">Carregando planos...</div>';
   $('#historicoAulas').innerHTML = '<div class="empty small-empty">Carregando aulas...</div>';
   $('#historicoPlanosQtd').textContent = '0';
@@ -1686,6 +1760,7 @@ async function abrirHistoricoAluno(id) {
     const r = h.resumo || {};
     const planosHistorico = Array.isArray(h.planos) ? h.planos : [];
     const aulasHistorico = Array.isArray(h.aulas) ? h.aulas : [];
+    const avaliacoesHistorico = Array.isArray(h.avaliacoes) ? h.avaliacoes : [];
     historicoWhatsAppPorAula = new Map(aulasHistorico.map(x => [Number(x.id), {
       ...x,
       aluno_id: Number(a.id),
@@ -1701,6 +1776,7 @@ async function abrirHistoricoAluno(id) {
     $('#historicoResumo').innerHTML = [
       historicoMetricHtml('Contratadas', Number(r.contratadas || 0)),
       historicoMetricHtml('Realizadas', Number(r.realizadas || 0), Number(r.realizadas_anteriores || 0) ? `${Number(r.realizadas_anteriores)} anteriores ao AutoAgenda` : ''),
+      historicoMetricHtml('Aptidão para prova', avaliacaoProvaLabel(avaliacoesHistorico[0]?.resultado)),
       historicoMetricHtml('Aulas futuras', Number(r.futuras || 0)),
       historicoMetricHtml('Saldo restante', Number(r.restantes || 0), 'desconta realizadas e faltas sem justificativa'),
       historicoMetricHtml('A programar', Number(r.a_programar || 0), 'descontando também as aulas futuras'),
@@ -1712,6 +1788,11 @@ async function abrirHistoricoAluno(id) {
       historicoMetricHtml('Última no histórico', r.ultima_aula ? fmtData(r.ultima_aula) : '—'),
       historicoMetricHtml('Última realizada', r.ultima_realizada ? fmtData(r.ultima_realizada) : '—')
     ].join('');
+
+    $('#historicoAvaliacoesQtd').textContent = String(avaliacoesHistorico.length);
+    $('#historicoAvaliacoes').innerHTML = avaliacoesHistorico.length
+      ? avaliacoesHistorico.map(historicoAvaliacaoHtml).join('')
+      : '<div class="empty small-empty">Nenhuma avaliação para prova registrada.</div>';
 
     $('#historicoPlanosQtd').textContent = String(planosHistorico.length);
     $('#historicoPlanos').innerHTML = planosHistorico.length
@@ -1726,6 +1807,7 @@ async function abrirHistoricoAluno(id) {
     $('#erroHistoricoAluno').textContent = e.message || 'Erro ao carregar histórico.';
     $('#erroHistoricoAluno').classList.remove('hide');
     $('#historicoResumo').innerHTML = '';
+    $('#historicoAvaliacoes').innerHTML = '';
     $('#historicoPlanos').innerHTML = '';
     $('#historicoAulas').innerHTML = '';
   }

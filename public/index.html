@@ -14,7 +14,7 @@
       document.documentElement.dataset.theme = 'light';
     }
   </script>
-  <link rel="stylesheet" href="style.css?v=3.7.0">
+  <link rel="stylesheet" href="style.css?v=3.8.0">
 </head>
 <body class="auth-locked">
 <section id="loginScreen" class="login-screen">
@@ -725,6 +725,33 @@
   </form>
 </div>
 
+<!-- V3.8 — AVALIAÇÃO DO ALUNO PARA PROVA -->
+<div id="mAvaliacaoAluno" class="modal hide">
+  <form id="fAvaliacaoAluno" class="box evaluation-box">
+    <button type="button" class="x" data-close="mAvaliacaoAluno">✕</button>
+    <h2>🎯 Avaliação para prova</h2>
+    <input id="avaliacaoAlunoId" type="hidden">
+    <div class="evaluation-student">
+      <div><span>Aluno</span><strong id="avaliacaoAlunoNome">—</strong></div>
+      <span id="avaliacaoAtualBadge" class="evaluation-badge nao_avaliado">Não avaliado</span>
+    </div>
+    <label>Resultado da avaliação
+      <select id="avaliacaoResultado" required>
+        <option value="EM_AVALIACAO">🔄 Em avaliação</option>
+        <option value="APTO">✅ Apto para prova</option>
+        <option value="NAO_APTO">⚠️ Ainda não apto</option>
+      </select>
+    </label>
+    <label>Observações do instrutor
+      <textarea id="avaliacaoObservacoes" maxlength="2000" placeholder="Ex.: pontos fortes, dificuldades e o que precisa melhorar antes da prova."></textarea>
+      <small class="field-help">Ao marcar “Ainda não apto”, informe o que o aluno precisa melhorar.</small>
+    </label>
+    <div class="evaluation-note">ℹ️ Esta avaliação é um registro interno de acompanhamento e não substitui a decisão do órgão examinador.</div>
+    <div id="erroAvaliacaoAluno" class="erro hide"></div>
+    <button type="submit" id="salvarAvaliacaoAluno">💾 Registrar avaliação</button>
+  </form>
+</div>
+
 <!-- V2.2 — HISTÓRICO COMPLETO DO ALUNO -->
 <div id="mHistoricoAluno" class="modal hide">
   <div class="box box-wide history-box">
@@ -738,6 +765,14 @@
     </div>
 
     <div id="historicoResumo" class="history-summary"></div>
+
+    <section class="history-section evaluation-history-section">
+      <div class="history-section-title">
+        <div><h3>🎯 Avaliações para prova</h3><small>Registros do instrutor sobre a preparação do aluno para a prova.</small></div>
+        <span id="historicoAvaliacoesQtd" class="plan-badge">0</span>
+      </div>
+      <div id="historicoAvaliacoes" class="evaluation-history"></div>
+    </section>
 
     <section class="history-section">
       <div class="history-section-title">
@@ -1014,6 +1049,6 @@
 </div>
 
 <div id="toast" class="toast hide"></div>
-<script src="app.js?v=3.7.0"></script>
+<script src="app.js?v=3.8.0"></script>
 </body>
 </html>

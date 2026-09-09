@@ -58,7 +58,7 @@ test('sem uso de eval()', !/\beval\s*\(/.test(server+app));
 
 const requiredRoutes = [
   'POST /api/auth/login','POST /api/auth/logout','GET /api/auth/status',
-  'GET /api/alunos','POST /api/alunos','PUT /api/alunos/:id','DELETE /api/alunos/:id','GET /api/alunos/:id/historico',
+  'GET /api/alunos','POST /api/alunos','PUT /api/alunos/:id','DELETE /api/alunos/:id','GET /api/alunos/:id/historico','POST /api/alunos/:id/avaliacoes',
   'POST /api/instrutores','PUT /api/instrutores/:id','POST /api/veiculos','PUT /api/veiculos/:id','POST /api/locais','PUT /api/locais/:id',
   'GET /api/horarios-livres','GET /api/planos','POST /api/planos','POST /api/planos/preview','PATCH /api/planos/:id/encerrar',
   'GET /api/dashboard/resumo','GET /api/relatorios/resumo','GET /api/financeiro','POST /api/financeiro',
@@ -78,6 +78,11 @@ test('bloqueios FOR UPDATE presentes', server.includes('FOR UPDATE'));
 test('regras de conflito presentes', /conflito/i.test(server));
 test('controle de saldo presente', /saldo/i.test(server));
 test('data de nascimento presente', server.includes('data_nascimento') && /dataNascimento|data_nascimento/.test(app));
+test('avaliação para prova possui histórico próprio', schema.includes('autoagenda.avaliacoes_aluno') && server.includes("app.post('/api/alunos/:id/avaliacoes'") && app.includes('avaliacaoProvaLabel'));
+test('instrutor pode registrar avaliação apenas pela rota específica', server.includes("|| /^\\/api\\/alunos\\/\\d+\\/avaliacoes$/.test(caminho);") && server.includes('fora do vínculo deste instrutor'));
+test('avaliação oferece APTO, NÃO APTO e EM AVALIAÇÃO', ['APTO','NAO_APTO','EM_AVALIACAO'].every(x=>server.includes(`'${x}'`)) && html.includes('Apto para prova') && html.includes('Ainda não apto'));
+test('histórico do aluno inclui avaliações para prova', server.includes('avaliacoes: avaliacoesQ.rows') && html.includes('historicoAvaliacoes') && app.includes('historicoAvaliacaoHtml'));
+test('avaliações entram no backup e restauração', server.includes("avaliacoes_aluno: { tabela: 'avaliacoes_aluno'") && server.includes("'avaliacoes_aluno','financeiro'") && server.includes("inserirLoteRestauracao(client, 'avaliacoes_aluno'"));
 test('modo escuro presente', /dark/.test(app) && /dark/.test(html) && /dark/.test(css));
 test('backup CSV/Excel/JSON declarado', server.includes("formatos: ['csv','xlsx','json']") && server.includes("['csv','xlsx','json'].includes(formato)"));
 test('backup sem credenciais declarado', server.includes('credenciais_incluidas: false'));
@@ -148,7 +153,7 @@ test('histórico técnico de backup PostgreSQL existe no schema', schema.include
 test('API e interface exibem status do backup automático', server.includes("app.get('/api/backup/automatico/status'") && html.includes('backupAutoStatus') && app.includes('carregarBackupAutomaticoStatus'));
 test('histórico técnico não entra no backup JSON operacional', !server.includes("backup_execucoes: { tabela: 'backup_execucoes'"));
 
-test('schema contém tabelas principais', ['alunos','instrutores','veiculos','locais','aulas','planos_aula','financeiro','usuarios','sessoes','configuracoes','lembrete_envios','whatsapp_envios','email_envios','backup_execucoes'].every(t=>schema.includes(`autoagenda.${t}`)));
+test('schema contém tabelas principais', ['alunos','instrutores','veiculos','locais','aulas','planos_aula','financeiro','usuarios','sessoes','configuracoes','lembrete_envios','whatsapp_envios','email_envios','backup_execucoes','avaliacoes_aluno'].every(t=>schema.includes(`autoagenda.${t}`)));
 const deps = Object.keys(pkg.dependencies||{}).sort();
 test('dependências diretas esperadas', JSON.stringify(deps)===JSON.stringify(['dotenv','express','pg']), deps.join(', '));
 test('sem automação não oficial de WhatsApp Web', !deps.some(d=>['whatsapp-web.js','puppeteer','playwright','selenium-webdriver'].includes(d)) && !/whatsapp-web\.js|puppeteer|playwright|selenium-webdriver/i.test(server));

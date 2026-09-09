@@ -1,4 +1,4 @@
-# AutoAgenda V3.7.0
+# AutoAgenda V3.8.0
 
 Sistema de organização de aulas práticas para autoescola, com backend Node/Express, PostgreSQL e deploy no Render.
 
@@ -20,6 +20,12 @@ Sistema de organização de aulas práticas para autoescola, com backend Node/Ex
 - login individual com senha em hash e sessão segura;
 - níveis de acesso Administrador e Instrutor.
 
+
+## V3.8.0 — Avaliação do aluno para prova
+
+A V3.8.0 acrescenta uma área de avaliação pedagógica/operacional do aluno. ADMIN e INSTRUTOR autorizado podem registrar o aluno como **Em avaliação**, **Apto para prova** ou **Ainda não apto**. Cada nova avaliação é preservada no histórico com data, avaliador e observações; ao marcar “Ainda não apto”, a observação é obrigatória para registrar o que precisa melhorar.
+
+O perfil INSTRUTOR só consegue avaliar alunos que já possuem vínculo com suas aulas. A avaliação aparece no cartão do aluno e no histórico completo. Ela é um acompanhamento interno e não substitui a decisão do órgão examinador. As avaliações também passam a integrar o backup completo e a restauração segura.
 
 ## V3.7.0 — Automação total de WhatsApp + e-mail
 

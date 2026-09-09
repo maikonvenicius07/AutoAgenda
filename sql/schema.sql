@@ -1,4 +1,4 @@
--- AutoAgenda V3.6.0
+-- AutoAgenda V3.8.0
 -- Schema compatível com o server.js atual.
 -- O servidor cria/migra automaticamente; este arquivo serve para referência e execução manual controlada.
 
@@ -111,6 +111,24 @@ CREATE TABLE IF NOT EXISTS autoagenda.alunos (
   criado_em TIMESTAMP NOT NULL DEFAULT NOW(),
   atualizado_em TIMESTAMP NOT NULL DEFAULT NOW()
 );
+
+-- V3.8 — histórico de avaliações do aluno para encaminhamento à prova.
+CREATE TABLE IF NOT EXISTS autoagenda.avaliacoes_aluno (
+  id SERIAL PRIMARY KEY,
+  aluno_id INTEGER NOT NULL REFERENCES autoagenda.alunos(id) ON DELETE CASCADE,
+  instrutor_id INTEGER REFERENCES autoagenda.instrutores(id) ON DELETE SET NULL,
+  avaliador_nome VARCHAR(150) NOT NULL,
+  avaliador_perfil VARCHAR(20) NOT NULL CHECK (avaliador_perfil IN ('ADMIN','INSTRUTOR')),
+  resultado VARCHAR(20) NOT NULL CHECK (resultado IN ('EM_AVALIACAO','APTO','NAO_APTO')),
+  observacoes TEXT,
+  criado_em TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_autoagenda_avaliacoes_aluno_data
+ON autoagenda.avaliacoes_aluno(aluno_id, criado_em DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_autoagenda_avaliacoes_instrutor
+ON autoagenda.avaliacoes_aluno(instrutor_id, criado_em DESC);
 
 CREATE TABLE IF NOT EXISTS autoagenda.veiculos (
   id SERIAL PRIMARY KEY,

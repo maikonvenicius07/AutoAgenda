@@ -2,7 +2,7 @@
 
 ## Situação atual
 
-Versão: **V3.7.0 — Automação total de WhatsApp + e-mail**
+Versão: **V3.8.0 — Avaliação do aluno para prova**
 
 O AutoAgenda agora possui uma camada única de comunicação automática para agendamentos, lembretes, reagendamentos, cancelamentos e resumos de plano. WhatsApp e e-mail podem ser ativados juntos e as filas são processadas automaticamente enquanto o serviço estiver ativo.
 
@@ -22,4 +22,4 @@ Permitir que o ADMIN personalize textos/modelos de comunicação sem alterar o c
 
 ### 4. Melhorias guiadas pelo uso real
 
-Após utilizar a V3.7.0 em produção, priorizar correções e ajustes de acordo com o fluxo diário dos instrutores e administradores.
+Após utilizar a V3.8.0 em produção, priorizar correções e ajustes de acordo com o fluxo diário dos instrutores e administradores.
