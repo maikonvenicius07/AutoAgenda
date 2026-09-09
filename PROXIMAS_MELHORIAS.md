@@ -2,7 +2,7 @@
 
 ## Situação atual
 
-Versão: **V3.8.4 — Horário liberado ao cancelar aula**
+Versão: **V3.8.5 — Horário liberado ao cancelar aula**
 
 A agenda diária e semanal agora oculta aulas canceladas, preservando-as no histórico, e o horário fica disponível para um novo agendamento.
 

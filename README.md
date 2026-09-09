@@ -1,4 +1,4 @@
-# AutoAgenda V3.8.4
+# AutoAgenda V3.8.5
 
 Sistema de organização de aulas práticas para autoescola, com backend Node/Express, PostgreSQL e deploy no Render.
 
@@ -19,6 +19,14 @@ Sistema de organização de aulas práticas para autoescola, com backend Node/Ex
 - modo claro/escuro;
 - login individual com senha em hash e sessão segura;
 - níveis de acesso Administrador e Instrutor.
+
+
+## V3.8.5 — Cancelamento e atualização de aula mais robustos
+
+- Cancelamento/status isolado pelo ADMIN usa rota específica, sem regravar toda a aula.
+- Datas `DATE` do PostgreSQL são normalizadas antes de comparações de status, saldo e alterações em série.
+- Erro estrutural inesperado pode exibir código diagnóstico seguro.
+- 107/107 testes automáticos aprovados.
 
 
 ## V3.8.4 — Aula cancelada libera o horário na agenda

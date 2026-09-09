@@ -8,7 +8,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '3.8.4';
+const APP_VERSION = '3.8.5';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -1476,9 +1476,15 @@ function dateOnlyUTC(iso) {
 }
 
 function dateTimeUTC(data, hora) {
-  const [y, m, d] = String(data).slice(0, 10).split('-').map(Number);
-  const [hh, mm] = String(hora).slice(0, 5).split(':').map(Number);
-  return new Date(Date.UTC(y, m - 1, d, hh, mm, 0));
+  const base = dateOnlyUTC(data);
+  const matchHora = String(hora || '').match(/^(\d{1,2}):(\d{2})/);
+  if (!matchHora) throw erroHttp(400, 'Horário inválido.');
+  const hh = Number(matchHora[1]);
+  const mm = Number(matchHora[2]);
+  if (!Number.isInteger(hh) || !Number.isInteger(mm) || hh < 0 || hh > 23 || mm < 0 || mm > 59) {
+    throw erroHttp(400, 'Horário inválido.');
+  }
+  return new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth(), base.getUTCDate(), hh, mm, 0));
 }
 
 function isoDateUTC(d) {
@@ -1501,7 +1507,7 @@ function statusContaSaldo(status, dataAula) {
   // FALTOU representa falta sem justificativa: permanece registrada como falta no histórico,
   // mas para o saldo equivale a uma aula consumida.
   if (['REALIZADA','FALTOU'].includes(st)) return true;
-  if (['AGENDADA','CONFIRMADA'].includes(st)) return String(dataAula || '').slice(0,10) >= hojeApp();
+  if (['AGENDADA','CONFIRMADA'].includes(st)) return isoDateUTC(dateOnlyUTC(dataAula)) >= hojeApp();
   return false;
 }
 
@@ -1553,7 +1559,7 @@ async function validarSaldoAula(client, { aluno_id, status, data_aula, aulas_uni
 }
 
 function validarDataParaStatus(dataAula, status) {
-  const data = String(dataAula || '').slice(0,10);
+  const data = isoDateUTC(dateOnlyUTC(dataAula));
   const st = String(status || '').toUpperCase();
   if (['AGENDADA','CONFIRMADA'].includes(st) && data < hojeApp()) {
     throw erroHttp(400, 'Aulas agendadas ou confirmadas não podem ser criadas em data passada. Use REALIZADA para registrar uma aula já ocorrida.');
@@ -3349,7 +3355,7 @@ async function bloquearChavesTransacao(client, chaves) {
 }
 
 function chavesAgenda(dados) {
-  const data = String(dados.data_aula || '').slice(0,10);
+  const data = isoDateUTC(dateOnlyUTC(dados.data_aula));
   return [
     `saldo:aluno:${Number(dados.aluno_id)}`,
     `agenda:aluno:${Number(dados.aluno_id)}:${data}`,
@@ -7600,8 +7606,11 @@ app.put('/api/aulas/:id', async (req, res) => {
     res.json(aulaSemMetadadosToken(result.rows[0]));
   } catch (error) {
     try { await client.query('ROLLBACK'); } catch {}
-    console.error(error);
-    res.status(error.statusCode || 500).json({ error:error.statusCode ? error.message : 'Erro ao atualizar aula.' });
+    console.error('Erro ao atualizar aula:', error);
+    const statusHttp = error.statusCode || 500;
+    const resposta = { error: error.statusCode ? error.message : 'Erro ao atualizar aula.' };
+    if (!error.statusCode && error.code) resposta.diagnostico = String(error.code).slice(0, 20);
+    res.status(statusHttp).json(resposta);
   } finally { client.release(); }
 });
 

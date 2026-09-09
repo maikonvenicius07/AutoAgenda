@@ -1,4 +1,4 @@
-# Análise atual — AutoAgenda V3.8.4
+# Análise atual — AutoAgenda V3.8.5
 
 ## Situação
 

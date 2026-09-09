@@ -1597,7 +1597,7 @@ async function health() {
   try {
     const h = await api('/api/health');
     const seguranca = h.security_ready ? ' · 🔐 login individual ativo' : ' · ⛔ login individual precisa ser inicializado';
-    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '3.8.4'}${seguranca}.`;
+    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '3.8.5'}${seguranca}.`;
     $('#db').className = h.security_ready ? 'db ok' : 'db fail';
   } catch {
     $('#db').textContent = '🔴 Banco não conectado. Verifique DATABASE_URL no Render.';
@@ -2132,6 +2132,24 @@ $('#whatsappAula').onclick = () => {
 $('#aStatus').addEventListener('change', atualizarAjudaConfirmacao);
 $('#aConfirmacao').addEventListener('change', atualizarAjudaConfirmacao);
 
+function dadosEstruturaisAulaIguais(aula, payload) {
+  if (!aula) return false;
+  return Number(aula.aluno_id) === Number(payload.aluno_id)
+    && Number(aula.instrutor_id) === Number(payload.instrutor_id)
+    && Number(aula.veiculo_id) === Number(payload.veiculo_id)
+    && Number(aula.local_id) === Number(payload.local_id)
+    && dataISO(aula.data_aula) === dataISO(payload.data_aula)
+    && hora(aula.hora_inicio) === hora(payload.hora_inicio)
+    && Number(aula.duracao_minutos || 50) === Number(payload.duracao_minutos || 50)
+    && Number(aula.aulas_unidades || 1) === Number(payload.aulas_unidades || 1)
+    && String(aula.observacoes || '') === String(payload.observacoes || '');
+}
+
+function statusOperacionalNaTela(aula) {
+  const st = String(aula?.status || 'AGENDADA').toUpperCase();
+  return st === 'CONFIRMADA' ? 'AGENDADA' : st;
+}
+
 document.addEventListener('click', e => {
   const b = e.target.closest('[data-whatsapp-aula]');
   if (!b) return;
@@ -2199,6 +2217,47 @@ $('#fAula').onsubmit = async e => {
       return;
     }
 
+    // V3.8.5: se o ADMIN alterou somente situação/confirmação, use as rotas
+    // específicas. Isso evita submeter novamente toda a estrutura da aula e
+    // torna cancelamento/realização/falta mais robustos, inclusive em planos.
+    if (id && !usuarioInstrutor() && !$('#aplicarProximas').checked
+        && dadosEstruturaisAulaIguais(aulaEdicaoAtual, payload)) {
+      const statusOriginalTela = statusOperacionalNaTela(aulaEdicaoAtual);
+      const confirmacaoOriginal = confirmacaoStatusAula(aulaEdicaoAtual || {});
+      const statusMudou = String(payload.status || '').toUpperCase() !== statusOriginalTela;
+      const confirmacaoMudou = String(payload.confirmacao_status || '').toUpperCase() !== String(confirmacaoOriginal || '').toUpperCase();
+
+      if (statusMudou || confirmacaoMudou) {
+        if (statusMudou) {
+          await api(`/api/aulas/${id}/status`, {
+            method:'PATCH',
+            body:JSON.stringify({ status: payload.status })
+          });
+        }
+        if (confirmacaoMudou && ['AGENDADA','CONFIRMADA'].includes(String(payload.status || '').toUpperCase())) {
+          await api(`/api/aulas/${id}/confirmacao`, {
+            method:'PATCH',
+            body:JSON.stringify({ confirmacao_status: payload.confirmacao_status })
+          });
+        }
+
+        const virouCancelada = statusOriginalTela !== 'CANCELADA'
+          && String(payload.status || '').toUpperCase() === 'CANCELADA';
+        close('mAula');
+        await load();
+        toast(virouCancelada ? '✅ Aula cancelada. O horário foi liberado.' : '✅ Situação da aula atualizada.');
+        if (virouCancelada) {
+          confirmar(
+            '↪️ Encontrar reposição?',
+            'A aula cancelada permanece no histórico. Deseja procurar um novo horário para este aluno?',
+            () => reporAula(id),
+            'Procurar horários'
+          );
+        }
+        return;
+      }
+    }
+
     if (usuarioInstrutor() && !id && !reposicaoDeId) {
       throw new Error('O perfil Instrutor não pode criar aula avulsa.');
     }
@@ -2233,6 +2292,7 @@ $('#fAula').onsubmit = async e => {
   } catch (x) {
     let msg = x.message;
     if (x.status === 409) msg = x.data?.error || '⚠️ Conflito de horário. Escolha outro horário.';
+    if (x.data?.diagnostico) msg += ` (código ${x.data.diagnostico})`;
     $('#erroAula').textContent = msg;
     $('#erroAula').classList.remove('hide');
   }
