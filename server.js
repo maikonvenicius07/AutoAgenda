@@ -8,7 +8,7 @@ const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const APP_VERSION = '3.8.0';
+const APP_VERSION = '3.8.1';
 const APP_TIMEZONE = process.env.APP_TIMEZONE || 'America/Porto_Velho';
 
 function hojeApp() {
@@ -5834,6 +5834,29 @@ app.patch('/api/financeiro/:id/situacao', async (req, res) => {
   } catch (error) {
     console.error('Erro ao alterar situação financeira:', error);
     res.status(500).json({ error: 'Erro ao alterar situação financeira.' });
+  }
+});
+
+
+// V3.8.1 — exclusão definitiva de lançamento cadastrado por engano.
+// O módulo Financeiro é acessível somente ao ADMIN pela barreira central de permissões.
+// A exclusão não altera aulas, planos ou saldo de aulas do aluno.
+app.delete('/api/financeiro/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id < 1) return res.status(400).json({ error: 'Lançamento inválido.' });
+
+    const result = await query(`
+      DELETE FROM autoagenda.financeiro
+      WHERE id=$1
+      RETURNING id, aluno_id, pacote, valor_pacote, valor_pago
+    `, [id]);
+
+    if (!result.rowCount) return res.status(404).json({ error: 'Lançamento financeiro não encontrado.' });
+    res.json({ ok: true, removido: result.rows[0] });
+  } catch (error) {
+    console.error('Erro ao excluir lançamento financeiro:', error);
+    res.status(500).json({ error: 'Erro ao excluir lançamento financeiro.' });
   }
 });
 

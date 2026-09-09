@@ -61,7 +61,7 @@ const requiredRoutes = [
   'GET /api/alunos','POST /api/alunos','PUT /api/alunos/:id','DELETE /api/alunos/:id','GET /api/alunos/:id/historico','POST /api/alunos/:id/avaliacoes',
   'POST /api/instrutores','PUT /api/instrutores/:id','POST /api/veiculos','PUT /api/veiculos/:id','POST /api/locais','PUT /api/locais/:id',
   'GET /api/horarios-livres','GET /api/planos','POST /api/planos','POST /api/planos/preview','PATCH /api/planos/:id/encerrar',
-  'GET /api/dashboard/resumo','GET /api/relatorios/resumo','GET /api/financeiro','POST /api/financeiro',
+  'GET /api/dashboard/resumo','GET /api/relatorios/resumo','GET /api/financeiro','POST /api/financeiro','DELETE /api/financeiro/:id',
   'GET /api/backup/resumo','GET /api/backup/automatico/status','GET /api/backup/exportar','POST /api/backup/restaurar/validar','POST /api/backup/restaurar/executar','GET /api/aulas','POST /api/aulas','PUT /api/aulas/:id','DELETE /api/aulas/:id',
   'POST /api/aulas/:id/reposicao','PUT /api/aulas/:id/serie','PATCH /api/aulas/:id/confirmacao','PATCH /api/aulas/:id/status',
   'GET /api/configuracoes/lembretes','PUT /api/configuracoes/lembretes','GET /api/lembretes','POST /api/lembretes/processar-agora',
@@ -83,6 +83,7 @@ test('instrutor pode registrar avaliação apenas pela rota específica', server
 test('avaliação oferece APTO, NÃO APTO e EM AVALIAÇÃO', ['APTO','NAO_APTO','EM_AVALIACAO'].every(x=>server.includes(`'${x}'`)) && html.includes('Apto para prova') && html.includes('Ainda não apto'));
 test('histórico do aluno inclui avaliações para prova', server.includes('avaliacoes: avaliacoesQ.rows') && html.includes('historicoAvaliacoes') && app.includes('historicoAvaliacaoHtml'));
 test('avaliações entram no backup e restauração', server.includes("avaliacoes_aluno: { tabela: 'avaliacoes_aluno'") && server.includes("'avaliacoes_aluno','financeiro'") && server.includes("inserirLoteRestauracao(client, 'avaliacoes_aluno'"));
+test('financeiro possui exclusão definitiva protegida pelo backend', server.includes("app.delete('/api/financeiro/:id'") && server.includes('DELETE FROM autoagenda.financeiro') && app.includes('data-delete-financeiro') && app.includes('excluirLancamentoFinanceiro'));
 test('modo escuro presente', /dark/.test(app) && /dark/.test(html) && /dark/.test(css));
 test('backup CSV/Excel/JSON declarado', server.includes("formatos: ['csv','xlsx','json']") && server.includes("['csv','xlsx','json'].includes(formato)"));
 test('backup sem credenciais declarado', server.includes('credenciais_incluidas: false'));

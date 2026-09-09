@@ -1,16 +1,14 @@
-AutoAgenda V3.8.0 — Avaliação do aluno para prova
+AutoAgenda V3.8.1 — Exclusão de lançamento financeiro incorreto
 
-Arquivos alterados/adicionados nesta atualização:
-- server.js
-- public/index.html
-- public/app.js
-- public/style.css
-- sql/schema.sql
-- scripts/test-static.js
-- package.json
-- package-lock.json
-- README.md
-- CHECKLIST_V3.8.0.md
-- RELATORIO_V3.8.0.md
+ATUALIZAÇÃO
+- Adiciona botão 🗑️ Excluir no módulo Financeiro.
+- Exclusão definitiva somente após confirmação.
+- Restrita ao ADMIN pela barreira de permissões existente.
+- Não altera aulas, planos ou saldo de aulas.
+- Arquivar/Reativar continuam disponíveis.
+
+Arquivos desta versão:
+- CHECKLIST_V3.8.1.md
+- RELATORIO_V3.8.1.md
 
 Não há arquivos para remover do GitHub nesta versão.

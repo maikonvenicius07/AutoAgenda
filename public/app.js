@@ -1234,6 +1234,7 @@ function financeiroItemHtml(x) {
       ${ativo
         ? `<button type="button" class="mini delete" data-situacao-financeiro="${Number(x.id)}" data-financeiro-ativo="0">🗃️ Arquivar</button>`
         : `<button type="button" class="mini plan" data-situacao-financeiro="${Number(x.id)}" data-financeiro-ativo="1">▶️ Reativar</button>`}
+      <button type="button" class="mini delete" data-delete-financeiro="${Number(x.id)}">🗑️ Excluir</button>
     </div>
   </article>`;
 }
@@ -1333,6 +1334,7 @@ function editarLancamentoFinanceiro(id) {
 function bindFinanceiroDynamic() {
   $$('[data-edit-financeiro]').forEach(b => b.onclick = () => editarLancamentoFinanceiro(Number(b.dataset.editFinanceiro)));
   $$('[data-situacao-financeiro]').forEach(b => b.onclick = () => alterarSituacaoFinanceiro(Number(b.dataset.situacaoFinanceiro), b.dataset.financeiroAtivo === '1'));
+  $$('[data-delete-financeiro]').forEach(b => b.onclick = () => excluirLancamentoFinanceiro(Number(b.dataset.deleteFinanceiro)));
 }
 
 function alterarSituacaoFinanceiro(id, ativo) {
@@ -1351,6 +1353,27 @@ function alterarSituacaoFinanceiro(id, ativo) {
       } catch (e) { toast(e.message); }
     },
     ativo ? 'Reativar' : 'Arquivar'
+  );
+}
+
+
+function excluirLancamentoFinanceiro(id) {
+  const x = (financeiroData.itens || []).find(i => Number(i.id) === Number(id));
+  if (!x) return toast('Lançamento financeiro não encontrado.');
+
+  const resumo = `${x.aluno_nome || 'Aluno'} · ${x.pacote || 'Pacote'} · pacote ${moedaBR(x.valor_pacote)} · pago ${moedaBR(x.valor_pago)}`;
+  confirmar(
+    'Excluir lançamento definitivamente?',
+    `${resumo}. Use esta opção somente quando o lançamento foi cadastrado por engano. A exclusão é permanente e não altera aulas, planos ou saldo de aulas. Para apenas retirar um registro válido da lista principal, use Arquivar.`,
+    async () => {
+      try {
+        await api(`/api/financeiro/${id}`, { method: 'DELETE' });
+        toast('✅ Lançamento financeiro excluído definitivamente.');
+        financeiroCarregado = false;
+        await carregarFinanceiro(true);
+      } catch (e) { toast(e.message || 'Erro ao excluir lançamento financeiro.'); }
+    },
+    'Excluir definitivamente'
   );
 }
 
@@ -1516,7 +1539,7 @@ async function health() {
   try {
     const h = await api('/api/health');
     const seguranca = h.security_ready ? ' · 🔐 login individual ativo' : ' · ⛔ login individual precisa ser inicializado';
-    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '3.8.0'}${seguranca}.`;
+    $('#db').textContent = `🟢 Banco conectado — AutoAgenda V${h.version || '3.8.1'}${seguranca}.`;
     $('#db').className = h.security_ready ? 'db ok' : 'db fail';
   } catch {
     $('#db').textContent = '🔴 Banco não conectado. Verifique DATABASE_URL no Render.';

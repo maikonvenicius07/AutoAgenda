@@ -1,4 +1,4 @@
-# AutoAgenda V3.8.0
+# AutoAgenda V3.8.1
 
 Sistema de organização de aulas práticas para autoescola, com backend Node/Express, PostgreSQL e deploy no Render.
 
@@ -20,6 +20,13 @@ Sistema de organização de aulas práticas para autoescola, com backend Node/Ex
 - login individual com senha em hash e sessão segura;
 - níveis de acesso Administrador e Instrutor.
 
+
+
+## V3.8.1 — Exclusão de lançamento financeiro incorreto
+
+A V3.8.1 acrescenta ao módulo **Financeiro** a opção **🗑️ Excluir** para remover definitivamente um lançamento cadastrado por engano, por exemplo quando um valor foi associado ao aluno errado. Antes de apagar, o AutoAgenda mostra uma confirmação com aluno, pacote, valor do pacote e valor pago.
+
+A exclusão é permanente e fica restrita ao ADMIN, assim como o restante do módulo Financeiro. Ela não cria, cancela nem modifica aulas, planos ou saldo de aulas. Para registros válidos que apenas não devem mais aparecer na lista principal, continua disponível a opção **Arquivar**.
 
 ## V3.8.0 — Avaliação do aluno para prova
 
