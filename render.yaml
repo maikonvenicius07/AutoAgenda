@@ -1,0 +1,40 @@
+services:
+  - type: web
+    name: autoagenda
+    runtime: node
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: APP_TIMEZONE
+        value: America/Porto_Velho
+      - key: DATABASE_URL
+        sync: false
+      - key: AUTOAGENDA_USER
+        sync: false
+      - key: AUTOAGENDA_PASSWORD
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: WHATSAPP_CLOUD_API_VERSION
+        sync: false
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+      - key: WHATSAPP_ACCESS_TOKEN
+        sync: false
+      - key: WHATSAPP_TEMPLATE_LEMBRETE
+        sync: false
+      - key: WHATSAPP_TEMPLATE_COMUNICACAO
+        sync: false
+      - key: WHATSAPP_TEMPLATE_LANGUAGE
+        value: pt_BR
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: EMAIL_REPLY_TO
+        sync: false
+      - key: AUTOAGENDA_COMM_WORKER_INTERVAL_MINUTES
+        value: 1

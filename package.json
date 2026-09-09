@@ -1,0 +1,19 @@
+{
+  "name": "autoagenda",
+  "version": "3.8.8",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check public/app.js",
+    "test:static": "node scripts/test-static.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "dotenv": "16.4.7",
+    "express": "4.21.2",
+    "pg": "8.13.1"
+  }
+}

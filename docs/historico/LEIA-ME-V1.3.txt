@@ -1,0 +1,91 @@
+AUTOAGENDA V1.3 — AGENDA AUTOMÁTICA DO ALUNO
+
+Esta versão foi criada sobre a V1.2 com o carro 3D e mantém o banco PostgreSQL atual.
+NÃO é necessário criar outro banco e NÃO é necessário executar SQL manualmente.
+Ao iniciar, o server.js faz a migração automática das novas tabelas/colunas.
+
+PRINCIPAIS NOVIDADES
+
+1. PLANO AUTOMÁTICO DE AULAS
+- Na ficha do aluno existe o botão "Montar agenda".
+- Informe a data de início e o horário fixo.
+- O dia da semana correspondente à data inicial é marcado automaticamente.
+- É possível selecionar mais de um dia da semana.
+- Informe quantas aulas deseja programar.
+- O sistema gera automaticamente todos os encontros futuros.
+
+2. AULA DUPLA
+- É possível escolher 1 ou 2 aulas consecutivas por encontro.
+- Ex.: 2 aulas de 50 minutos geram um encontro de 100 minutos e consomem 2 aulas do pacote.
+
+3. PRÉVIA ANTES DE SALVAR
+- O sistema mostra todas as datas que serão criadas.
+- Verifica conflito de aluno, instrutor e veículo.
+- Quando existe conflito, mostra uma sugestão de horário livre no mesmo dia.
+- A agenda só pode ser confirmada depois de uma prévia sem conflitos.
+
+4. ALTERAÇÃO DURANTE O CURSO
+- Uma aula de um plano automático pode ser alterada individualmente.
+- Também existe a opção "aplicar a esta aula e às próximas".
+- Ex.: quarta 14:00 passa para quinta 16:00 e todas as próximas são deslocadas pelo mesmo intervalo.
+- O servidor volta a verificar os conflitos antes de salvar.
+
+5. CONTROLE MAIS CLARO DAS AULAS
+Cada aluno passa a mostrar:
+- aulas contratadas;
+- realizadas;
+- agendadas;
+- ainda a programar;
+- aulas restantes;
+- barra de progresso.
+
+6. REPOSIÇÃO
+- Aulas canceladas ou faltas exibem o botão "Repor".
+- A reposição abre um novo agendamento já preenchido com aluno, instrutor, veículo e local.
+
+7. PLANOS
+- Nova aba "Planos".
+- Mostra os horários fixos, dias da semana, quantidade de encontros e aulas.
+- O plano pode ser encerrado sem apagar as aulas já criadas.
+
+BANCO DE DADOS
+A V1.3 cria automaticamente:
+- autoagenda.planos_aula
+
+E adiciona em autoagenda.aulas:
+- plan_id
+- numero_plano
+- aulas_unidades
+- excecao_plano
+
+As tabelas e dados anteriores são preservados.
+
+COMO ATUALIZAR NO GITHUB
+
+Recomendado: substitua os arquivos do projeto pelos arquivos deste pacote, mantendo a mesma estrutura:
+
+public/
+  index.html
+  app.js
+  style.css
+  assets/
+    carro-autoescola.png
+server.js
+package.json
+render.yaml
+.gitignore
+.env.example
+
+Faça Commit changes.
+O Render deverá iniciar um novo deploy automaticamente.
+
+NOS LOGS DO RENDER, PROCURE:
+
+Schema autoagenda V1.3 verificado/criado com sucesso.
+AutoAgenda V1.3 rodando na porta ...
+
+IMPORTANTE
+- Não altere DATABASE_URL.
+- Não envie a URL/senha do PostgreSQL ao GitHub.
+- O banco continua sendo o mesmo banco compartilhado com o Mau-Mau, usando o schema autoagenda.
+- O PostgreSQL Free do Render continua sujeito à data de expiração informada no painel do Render.
