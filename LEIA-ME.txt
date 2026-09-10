@@ -1,0 +1,12 @@
+AUTOAGENDA V3.8.8 - COMPLEMENTO DE LIMPEZA
+
+Este pacote contém somente os 2 ajustes que faltavam:
+
+1. .gitignore
+   - adicionar na raiz do repositório.
+
+2. sql/schema.sql
+   - substituir o arquivo atual por este.
+   - única alteração: cabeçalho atualizado de V3.8.2 para V3.8.8.
+
+Nenhuma funcionalidade foi alterada.
